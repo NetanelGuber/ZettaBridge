@@ -1,4 +1,7 @@
 add_library(zbcore STATIC
+    src/cp15.cpp
+    src/guest_memory.cpp
+    src/guest_thread.cpp
     src/log.cpp
 )
 target_include_directories(zbcore PUBLIC include PRIVATE src)

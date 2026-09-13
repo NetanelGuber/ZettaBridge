@@ -1,4 +1,6 @@
 set(ZB_HOST_TESTS
+    guest_memory_test
+    t1_blob_test
 )
 
 foreach(test_name ${ZB_HOST_TESTS})
