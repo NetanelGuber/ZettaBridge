@@ -1,0 +1,16 @@
+# build outputs
+build/
+out/
+*.o
+*.so.dbg
+
+# extracted arm32 system files and downloaded images
+sysroot/
+*.img
+*.zip
+
+# test APKs (large, third-party)
+*.apk
+
+# local scratch
+.cache/

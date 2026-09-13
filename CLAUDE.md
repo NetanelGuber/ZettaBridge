@@ -1,0 +1,243 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+# ZettaBridge
+
+**Current state: design done, no code yet.** Present in the directory:
+- this file
+- `zettabridge-import-surface.md`
+- the test APK `orange-roulette-1-0-0.apk`
+- `docs/superpowers/specs/2026-09-13-guest-system-boundary-design.md`
+
+Local git repo (no remote yet; pushing to GitHub is done together with the user).
+Commit locally after each finished task. Do not invent build/test commands; add them
+here once they exist.
+
+Run 32-bit (armeabi / armeabi-v7a) Android apps on 64-bit-only ARM devices.
+
+Target device: OnePlus 13, Snapdragon 8 Elite, OxygenOS 16, rooted (KernelSU + LSPosed).
+This SoC has **no AArch32 at EL0**. There is no hardware fallback, no `lib/armeabi`
+loading, no Tango (Xiaomi CN builds only). The only paths are emulation or translation.
+
+## What this is
+
+A launcher app that runs a 32-bit guest app **inside its own process**, translating
+only the guest's native code. The translator lives once in the launcher; each added
+game costs only the size of its own APK.
+
+```
+ZettaBridge.apk (arm64)
+  |
+  +-- Library screen: import APK, parse manifest, extract icon/label
+  +-- ShortcutManager.requestPinShortcut()  -> home-screen icon per game
+  +-- :guest process
+        +-- GuestActivity (proxy)
+        |     +-- DexClassLoader          -> guest dex, runs on host's real 64-bit ART
+        |     +-- AssetManager.addAssetPath -> guest resources
+        |     +-- lifecycle proxying      -> guest Activity
+        +-- libzbridge.so (arm64)
+        |     +-- Dynarmic A32 JIT (one per executing thread), 4 GiB fastmem guest space
+        |     +-- syscall layer: arm32 EABI syscalls -> aarch64 kernel
+        |     +-- threads (incl. borrowed carriers), guest signals
+        |     +-- host-call dispatcher: svc #0x5Axxxx -> gl* / AAsset* / JNI
+        +-- guest sysroot (arm32, from AOSP GSI): linker, libc, libm, libdl, liblog, libz, libc++
+        +-- our arm32 binaries: zbhost, stub libGLESv2.so / libandroid.so, libzbcompat.so
+```
+
+The detailed design of the translator/system boundary is in
+`docs/superpowers/specs/2026-09-13-guest-system-boundary-design.md`. Read it before
+touching core code.
+
+## Key architectural decisions (and why)
+
+**Guest Java runs natively on the host's 64-bit ART. Only native code is translated.**
+This is the decision the whole project rests on. It removes the need for a 32-bit ART,
+zygote32, a restored 32-bit userspace tree, SELinux policy work, and a custom ROM.
+Do not drift from this.
+
+**The guest runs a real arm32 bionic; we translate syscalls, not libc.** Guest libc,
+libm, libdl, liblog, libz, libc++ and `/system/bin/linker` come from an AOSP arm32
+build and run as translated code.
+- **Why not trampolines into host libc.** Trampolining 386 libc imports into 64-bit
+  bionic would need hand-written 32->64 struct marshaling plus reimplementing
+  `__aeabi_*`, the unwinder and `setjmp`.
+- **The guest linker does the loader work for free.** Given the guest's targetSdk
+  (< 23) it handles full-path `DT_NEEDED`, `DT_TEXTREL`, `dlopen`/`dlsym` and EXIDX.
+- **Host calls are few.** Only GLES, `AAsset*` and JNI need them.
+
+**Translator: Dynarmic (Vita3K fork, 0BSD), not qemu.** It is embeddable, has an
+AArch64 host backend for A32, and none of its unimplemented AArch64-backend opcodes is
+reachable from A32. qemu is GPLv2 and would force GPL on the first distributed APK;
+giving an APK to testers counts as distribution. qemu may be used only as a developer
+reference tool, never linked or shipped. Keep all third-party code license-compatible
+with a closed-source release; the license decision is deferred to release time.
+
+**No APK repackaging, no installing the guest.** A stub `.so` inside a separately
+installed APK cannot reach a translator living in the launcher: different UID,
+different sandbox. `sharedUserId` is forbidden for new apps; `<static-library>` ties
+you to a certDigest and breaks updates. So: nothing is installed, the guest is a
+plugin, and the home-screen icon is a pinned shortcut. Visually indistinguishable
+from an installed app. Prior art: VirtualApp, RePlugin, Shadow.
+
+**System-wide native bridge is explicitly out of scope.** Android's
+`NativeBridgeCallbacks` interface (`ro.dalvik.vm.isa.arm`,
+`ro.dalvik.vm.native.bridge`) is the "proper" way and is how houdini and
+ndk_translation plug in, but on a 64-bit-only ROM it requires rebuilding 32-bit
+userspace. Not this project.
+
+**Borrow plumbing ideas from Berberis, not code wholesale.** AOSP
+`platform/frameworks/libs/binary_translation` (Apache 2.0) has JNI wrapping
+(`WrapGuestJNIOnLoad`, `ANativeActivity_onCreate`), trampoline generation from API
+JSON, and `guest_state/arm` + `guest_abi/arm`. Its `kernel_api` exists only for
+riscv64, and it only marshals between same-bitness ABIs. Read it before writing JNI
+or stub generators by hand.
+
+## Non-goals
+
+- 3D-heavy games. The per-call cost across the boundary makes this a 2D / utility-app
+  tool. Say so honestly in the README.
+- Supporting apps that need real package installation (their own UID, per-app
+  permissions, being visible to other apps, accounts, push).
+- A general-purpose emulator. One app brought up well beats ten half-working.
+
+## Phases
+
+Each phase has an acceptance test. T1-T6 are defined in the spec. Phase 0 and
+Phases 1-2 are independent tracks (the core is tested without an APK); Phase 3 needs
+both. Within a track, do not start the next phase until the previous one passes.
+
+**Phase 0 - plugin skeleton (no translation at all).**
+Proxy Activity + DexClassLoader + addAssetPath + pinned shortcut, running an
+**arm64** APK as a plugin in the `:guest` process. Accept: a normal 64-bit game
+launches from a pinned shortcut, renders, takes touch input.
+
+**Phase 1 - `zbrun` + Dynarmic, static arm32 (T1-T2).**
+`core/` built as a Linux aarch64 CLI on this machine, no APK. Accept: a hand-written
+arm32 blob returns the right value, and a static NDK arm32 hello prints and exits.
+
+**Phase 2 - guest linker + GSI bionic under `zbrun` (T3-T5).**
+Extract the arm32 sysroot from an AOSP `aosp_arm64` GSI. Accept:
+- dynamic hello, threads and file I/O work;
+- the C++ exception / setjmp / guest-SIGSEGV / LDREX-STREX / TEXTREL / kuser suite passes;
+- all 6 Orange Roulette libs `dlopen` with targetSdk 16 and no unresolved symbols.
+
+**Phase 3 - `libzbridge.so` in the `:guest` process on device (T6).**
+Accept: T3-T5 pass next to ART, and guest `__android_log_print` shows in logcat.
+
+**Phase 4 - synthesized 32-bit JNIEnv.** Needs its own spec (part 1: loadLibrary
+interception, `JNI_OnLoad`, `RegisterNatives` thunks, handle tables). Accept: guest
+native code calls back into a Java method and gets the right return value.
+
+**Phase 5 - GLES passthrough and first frame.** Needs its own spec (part 4). 128
+`gl*` imports as generated stubs. `egl*` is not needed: the context is created
+Java-side via GLSurfaceView. Accept: Orange Roulette draws its intro screen.
+
+**Phase 6 - input, audio, assets.** 20 Java `native` methods drive everything (19 in
+`org.haxe.lime.Lime`, 1 in `org.haxe.HXCPP`), plus guest `JNI_OnLoad` in `liblime.so`
+and `libopenal.so`. OpenAL outputs through Java `AudioTrack` via JNI. `AAsset*` is 6
+functions. Accept: the game is playable start to finish.
+
+## Known gotchas
+
+- **Guest address space is `base + guest_addr` inside one 4 GiB reservation, not
+  host addresses below 4 GB.** Guest address arithmetic cannot escape it. Pointers
+  that cross the boundary must be translated: add `base` on guest->host; never hand a
+  host pointer to the guest (copy into guest memory, or use a 32-bit handle for
+  `AAsset*`, JNI refs, direct ByteBuffers). Host 64-bit values that do not fit become
+  `EOVERFLOW`.
+- **`svc` numbering.** `svc #0` is a syscall. `svc #0x5A0000|index` is a host call.
+  `svc #0x5AFFFF` returns from a host->guest call. Never do host work inside a
+  Dynarmic callback: record, `HaltExecution`, act after `Run()` returns.
+- **Java threads entering the guest borrow a parked guest "carrier" thread's TLS and
+  stack**, so GL calls stay on `GLThread`. `tgkill` to a carrier tid must be redirected.
+- **`lib/armeabi` does not mean ARMv5.** Orange Roulette's libs are ARMv7-A (Thumb-1/2,
+  VFP, no NEON, softfp). Other guests range from v5 to v7+NEON. Real v5 code uses
+  kuser helpers at `0xFFFF0Fxx`; they are emulated.
+- **Guest targetSdk must be passed to the guest linker**
+  (`android_set_application_target_sdk_version`). Without it (< 23) old libs fail on
+  absolute `DT_NEEDED` paths (`C:\Development\ndk/...`, `/home/joshua/...`) and on
+  `DT_TEXTREL` (`libApplicationMain.so`, `liblime.so`).
+- **Guest `dlopen`/`dlsym` are guest linker calls.** hxcpp loads its ndlls as
+  `lib<name>.ndll`/`.so` and resolves primitives as `name__N`.
+- **Guest Java calls `System.loadLibrary` on arm32 libs** (`std`, `regexp`, `zlib`,
+  `openal`, `lime`, then `ApplicationMain` via `org.haxe.HXCPP`). Host ART cannot load
+  them; interception is part 1 and not designed yet.
+- **JNI thunks follow 32-bit AAPCS softfp.** Floats go in core registers; 64-bit
+  args take an even register pair or an 8-byte-aligned stack slot
+  (`Lime.onTouch(IFFIFF)I`, `Lime.releaseReference(J)V`).
+- **`fork`/`vfork`/`execve`/`ptrace` are refused** inside the ART process (libstd from
+  hxcpp imports `fork`/`execvp`/`system`).
+- **Signals.** Guest handlers and masks are emulated and never installed on the host.
+  On device, libsigchain runs ART's handlers first, then ours. Dynarmic has its own
+  SIGSEGV handler for fastmem and chains the rest.
+- **`targetSdk` and exec from app data dirs.** SELinux blocks exec from app data dirs
+  at `targetSdk >= 29`. We are not exec'ing anything (translation is in-process), but
+  if that ever changes, the Termux-style `targetSdk = 28` trick is the fallback.
+
+## First test case (not the end goal)
+
+Orange Roulette 1.0.0: `orange-roulette-1-0-0.apk`, package
+`com.heyhouser.OrangeRoulette`, minSdk 9, targetSdk 16, GLES 2.0, landscape, launcher
+activity `com.heyhouser.OrangeRoulette.MainActivity` (a lime `GameActivity`). The dex
+also bundles Google Mobile Ads (`com.google.android.gms.ads.AdActivity`).
+
+It is the **first bring-up target and first proof the approach works, not the
+product.** The goal is running 32-bit apps in general. Keep the loader, syscall layer,
+stubs and JNI glue generic (generated from headers and signatures, not from this
+APK's import list) and do not special-case Haxe/lime.
+
+HaxePunk + OpenFL/lime legacy, compiled through hxcpp, so all game logic is native arm32
+in `libApplicationMain.so`: no managed bytecode, nothing to swap, no source. That is
+exactly why it is the right first test case: it cannot be solved any other way.
+Measured surface in `zettabridge-import-surface.md` (counts re-verified: 91 / 386 / 71 /
+23 / 89 / 32 imports, 443 unique). That doc files 258 symbols under "libc / libm"; the
+real split is in the spec.
+
+Assets (`assets/gfx/*.png`, `assets/font`, `assets/manifest`) are plain files and
+architecture-independent, useful for isolating "did rendering break" from
+"did asset loading break".
+
+## Toolchain on this machine
+
+This machine is Ubuntu 24.04 aarch64 userland on the device kernel, so it cannot run
+arm32 code natively either (an arm32 binary dies with `Bus error`). That is why
+`zbrun` exists.
+
+- **NDK r29** (`29.0.14206865`): `~/android-ndk-r29`. Its
+  `toolchains/llvm/prebuilt/linux-arm64` works here. arm32 compiler:
+  `armv7a-linux-androideabi21-clang`; API 21 is the lowest in r29. There is also a
+  copy at `~/android-sdk/ndk/29.0.14206865`; ignore the `.broken` one.
+- **SDK**: `~/android-sdk` with build-tools 33-36, platforms 33/34/36, cmake 3.22.1,
+  cmdline-tools, platform-tools.
+- **System tools**: clang, gcc, cmake, ninja, meson, git, java/javac, `simg2img`, `7z`,
+  `debugfs`. Not installed: erofs-utils, qemu-user.
+- **Disk is ~99% full (~11 GiB free).** Delete GSI images after extracting the sysroot.
+
+## Inspecting a guest APK
+
+`readelf`, `nm`, `aapt`, `aapt2` and `baksmali` are available.
+
+```
+D=/tmp/or; unzip -oq orange-roulette-1-0-0.apk 'lib/*' classes.dex AndroidManifest.xml -d $D; for f in $D/lib/armeabi/*.so; do echo "== $f"; readelf -d $f | grep -E 'NEEDED|TEXTREL'; readelf -A $f | grep -E 'CPU_arch:|THUMB|FP_arch|VFP_args|SIMD'; done
+```
+```
+nm -D --undefined-only /tmp/or/lib/armeabi/liblime.so; nm -D --defined-only /tmp/or/lib/armeabi/liblime.so | grep -E ' (Java_|JNI_On)'
+```
+```
+aapt dump badging orange-roulette-1-0-0.apk; baksmali d /tmp/or/classes.dex -o /tmp/or/smali; grep -rn loadLibrary /tmp/or/smali
+```
+
+## Working conventions
+
+- Terminal pastes only the first line of a multi-line block. Write shell commands as
+  **one line with `;` separators**.
+- Build commands go in plain markdown code blocks, not inside tool echo calls.
+- Patch files with **Python `str.replace()` heredoc scripts**, not `sed`: sed
+  whitespace/quoting matching has failed repeatedly on this setup.
+- **ASCII only** inside scripts. Cyrillic renders broken in this terminal.
+- No background `&` processes.
+- Gradle wrapper: `8.11.1`, using the existing jar in the project. Never overwrite
+  wrapper files. AndroidIDE on-device builds, NDK r29.
+- Prefer tasks that can be finished in a single session, and say plainly when
+  something cannot be.
