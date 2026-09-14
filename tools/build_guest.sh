@@ -29,6 +29,9 @@ for src in "$ROOT"/guest/tests/*_dynamic.c; do
     "$CC" -O2 -Wall -o "$OUT/$name" "$src" -llog
 done
 
+"$CC" -O2 -Wall -I"$ROOT/core/include" -o "$OUT/zbhost" \
+    "$ROOT/guest/zbhost/zbhost.c" -ldl
+
 cp "$TOOLCHAIN/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" "$OUT/lib/"
 "$CXX" -shared -O2 -Wall -nostdlib++ -Wl,-soname,libzbthrow.so -o "$OUT/lib/libzbthrow.so" \
     "$ROOT/guest/testlib/zbthrow.cpp" -lc++_shared

@@ -26,6 +26,13 @@ target_link_libraries(host_call_dispatch_test PRIVATE zbcore)
 add_test(NAME host_call_dispatch_test COMMAND host_call_dispatch_test
     ${CMAKE_SOURCE_DIR}/build/guest/host_call_static)
 
+add_executable(zbhost_protocol_test zbhost_protocol_test.cpp)
+target_link_libraries(zbhost_protocol_test PRIVATE zbcore)
+add_test(NAME zbhost_protocol_test COMMAND zbhost_protocol_test
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/zbhost
+    ${CMAKE_SOURCE_DIR}/build/guest/lib)
+
 # Needs tools/build_guest.sh and the extracted sysroot.
 add_executable(async_signal_test async_signal_test.cpp)
 target_link_libraries(async_signal_test PRIVATE zbcore)
