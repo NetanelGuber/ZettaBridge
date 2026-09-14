@@ -102,7 +102,8 @@ final class LoadedPlugin {
                 p.providers.add(provider);
                 Log.i(TAG, "plugin " + p.packageName + ": provider " + pi.name + " started");
             } catch (Throwable t) {
-                Log.w(TAG, "plugin " + p.packageName + ": provider " + pi.name + " failed", t);
+                Diagnostics.report(p.application, "plugin " + p.packageName + ": provider " + pi.name + " failed", t,
+                        false);
             }
         }
     }
