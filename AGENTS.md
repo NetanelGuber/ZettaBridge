@@ -110,3 +110,26 @@ plans". Use the same format as the 4a plan: TDD tasks with complete code.
 - **Every app manifest must remove the `LogWireInitializer` provider** that AndroidIDE
   injects (see CLAUDE.md).
 - **Commit messages:** plain English, imperative subject line.
+
+## HANDOFF 2026-09-15 (Claude limit reached mid-task)
+
+A Claude Opus agent was working through the 4b review fixes (decisions D1-D14 are in the Claude session and summarized here).
+
+- **Committed:** `a15b86c`. IT state is cleared on calls; guest exit and a stray host-return svc inside a call are fatal.
+- **UNCOMMITTED in this worktree (do not lose it):** a working Task 4-5 implementation used as a prototype:
+  - `core/include/zb/library_runtime.h`, `core/src/library_runtime.cpp`
+  - `tests/host/library_runtime_test.cpp`, `guest/testlib/zbcallprobe.c`
+  - edits to `zbhost.c`, `library_protocol.h`, `signals.cpp`, `guest_thread.*`, `process.h`, `gen_stubs.py`, `build_guest.sh` and both CMakeLists
+- **Last known state of that work:**
+  - 14/14 host tests pass, and 50 repeated runs had 0 failures.
+  - The guest suite passes and the Android build links.
+  - First borrow takes about 31 ms, first call about 0.43 ms.
+  - A snapshot is in the Claude scratchpad `task5/tracked.diff`.
+- **Was in progress:** red-checks (temporarily break the code and confirm the test fails) for tgkill borrower-first routing and for D7 sigmask inheritance.
+- **Remaining:**
+  1. Finish those checks.
+  2. Commit the Task 4-5 work in focused commits.
+  3. Rewrite plan Tasks 4-6 to match.
+  4. Amend the specs: carrier state inheritance, futex park woken by signals, exit-in-call policy, process-lifetime runtime, loader on a carrier.
+  5. Run the regression suite and Android link again, then update this table.
+- **Note:** ninja once warned "premature end of file"; check disk space (the disk is about 99% full).
