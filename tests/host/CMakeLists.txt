@@ -1,6 +1,7 @@
 set(ZB_HOST_TESTS
     fault_pc_test
     guest_memory_test
+    jni_mangle_test
     t1_blob_test
 )
 
