@@ -1431,7 +1431,7 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
     }
     case NR_getrusage: {
         rusage ru;
-        if (::getrusage(static_cast<__rusage_who_t>(static_cast<int>(c.a[0])), &ru) != 0) {
+        if (::getrusage(static_cast<int>(c.a[0]), &ru) != 0) {
             res = -errno;
             break;
         }

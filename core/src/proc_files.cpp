@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <sched.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -19,6 +20,8 @@ namespace zb {
 namespace {
 
 constexpr std::uint32_t kKuserPage = 0xFFFF0000;
+// memfd_create(2) flag; the libc wrapper is missing from bionic before API 30.
+constexpr unsigned kMfdCloexec = 0x0001;
 
 bool is_self_path(std::string_view path, std::string_view leaf) {
     if (path == std::string("/proc/self/") + std::string(leaf)) return true;
@@ -53,7 +56,7 @@ std::string cpuinfo_text() {
 }
 
 int memfd_with(const std::string& text, int flags) {
-    const int fd = ::memfd_create("zbridge-proc", (flags & O_CLOEXEC) ? MFD_CLOEXEC : 0);
+    const int fd = static_cast<int>(::syscall(SYS_memfd_create, "zbridge-proc", (flags & O_CLOEXEC) ? kMfdCloexec : 0u));
     if (fd < 0) return -errno;
     std::size_t done = 0;
     while (done < text.size()) {
