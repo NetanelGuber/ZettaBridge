@@ -38,6 +38,7 @@ run_case hello_dynamic 3 "$GUEST/zb_io.tmp"
 if [ -f "$APK" ]; then
     mkdir -p "$OR_LIBS"
     unzip -ojq "$APK" 'lib/armeabi/*' -d "$OR_LIBS"
+    python3 "$ROOT/tools/fix_guest_lib.py" "$OR_LIBS"/*.so >"$GUEST/or_fixups.log"
     CASE_ENV="LD_LIBRARY_PATH=$GUEST/lib"
     run_case or_dlopen_dynamic 0 "$OR_LIBS"
     CASE_ENV=""

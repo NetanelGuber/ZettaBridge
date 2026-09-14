@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "gen/syscall_nrs_arm.h"
+#include "zb/elf_fixups.h"
 #include "zb/guest_abi.h"
 #include "zb/guest_memory.h"
 #include "zb/guest_thread.h"
@@ -226,9 +227,13 @@ std::int32_t sys_mmap2(Ctx& c) {
         if (at == 0) return -ENOMEM;
     }
 
+    // Code of libraries marked DT_ZB_TEXTREL stays writable so the linker can relocate it.
+    const bool textrel = !(flags & MAP_ANONYMOUS) && (prot & PROT_EXEC) && elf_has_textrel_marker(fd);
+    const int effective_prot = textrel ? (prot | PROT_WRITE) : prot;
+
     errno = 0;
-    const bool ok = (flags & MAP_ANONYMOUS) ? c.mem.map_anon(at, size, prot)
-                                            : c.mem.map_file(at, size, prot, flags, fd, offset);
+    const bool ok = (flags & MAP_ANONYMOUS) ? c.mem.map_anon(at, size, effective_prot)
+                                            : c.mem.map_file(at, size, effective_prot, flags, fd, offset);
     if (!ok) return errno ? -errno : -ENOMEM;
     if (flags & MAP_ANONYMOUS) {
         c.proc.forget_mappings(at, size);
@@ -239,6 +244,7 @@ std::int32_t sys_mmap2(Ctx& c) {
         const ssize_t n = ::readlink(link, target, sizeof target - 1);
         c.proc.record_file_mapping(at, static_cast<std::uint32_t>(size), offset,
                                    n > 0 ? std::string(target, static_cast<std::size_t>(n)) : std::string("fd"));
+        if (textrel) c.proc.add_textrel_range(at, static_cast<std::uint32_t>(size));
     }
     c.proc.invalidate(at, static_cast<std::uint32_t>(size));
     return static_cast<std::int32_t>(at);
@@ -261,7 +267,9 @@ std::int32_t sys_mprotect(Ctx& c) {
     if (c.a[1] == 0) return 0;
     const std::uint64_t size = page_round_up(c.a[1]);
     if (!c.mem.accessible(addr, size, 0)) return -ENOMEM;
-    if (!c.mem.protect(addr, size, static_cast<int>(c.a[2]))) return -EACCES;
+    int prot = static_cast<int>(c.a[2]);
+    if ((prot & PROT_EXEC) && c.proc.overlaps_textrel_range(addr, size)) prot |= PROT_WRITE;
+    if (!c.mem.protect(addr, size, prot)) return -EACCES;
     c.proc.invalidate(addr, static_cast<std::uint32_t>(size));
     return 0;
 }

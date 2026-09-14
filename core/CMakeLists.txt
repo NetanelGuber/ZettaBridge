@@ -1,5 +1,6 @@
 add_library(zbcore STATIC
     src/cp15.cpp
+    src/elf_fixups.cpp
     src/elf_loader.cpp
     src/guest_memory.cpp
     src/guest_thread.cpp

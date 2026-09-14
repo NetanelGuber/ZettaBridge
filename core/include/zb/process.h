@@ -5,6 +5,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "zb/guest_abi.h"
@@ -61,6 +62,11 @@ public:
     // "libc.so offset 0x1234" style description, or "?" if the address is not file-backed.
     std::string describe_address(std::uint32_t addr) const;
 
+    // Executable segments of libraries marked DT_ZB_TEXTREL (see elf_fixups.h). They stay
+    // writable inside the emulator so text relocations can be applied. forget_mappings drops them.
+    void add_textrel_range(std::uint32_t start, std::uint32_t length);
+    bool overlaps_textrel_range(std::uint32_t start, std::uint64_t length) const;
+
     std::uint32_t brk_start = 0;
     std::uint32_t brk_current = 0;
     std::uint32_t mmap_limit = kMmapLimit;
@@ -87,6 +93,7 @@ private:
     std::unique_ptr<GuestThread> main_;
     std::set<std::uint64_t> seen_;
     std::vector<FileMapping> file_mappings_;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> textrel_ranges_;
     std::string sysroot_;
     std::string exe_path_;
     int exit_status_ = 0;

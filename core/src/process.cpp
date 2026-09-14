@@ -126,6 +126,21 @@ void Process::forget_mappings(std::uint32_t start, std::uint64_t length) {
     std::erase_if(file_mappings_, [&](const FileMapping& m) {
         return m.start < end && static_cast<std::uint64_t>(m.start) + m.length > start;
     });
+    std::erase_if(textrel_ranges_, [&](const std::pair<std::uint32_t, std::uint32_t>& r) {
+        return r.first < end && static_cast<std::uint64_t>(r.first) + r.second > start;
+    });
+}
+
+void Process::add_textrel_range(std::uint32_t start, std::uint32_t length) {
+    textrel_ranges_.emplace_back(start, length);
+}
+
+bool Process::overlaps_textrel_range(std::uint32_t start, std::uint64_t length) const {
+    const std::uint64_t end = static_cast<std::uint64_t>(start) + length;
+    for (const auto& [range_start, range_length] : textrel_ranges_) {
+        if (range_start < end && static_cast<std::uint64_t>(range_start) + range_length > start) return true;
+    }
+    return false;
 }
 
 std::string Process::describe_address(std::uint32_t addr) const {
