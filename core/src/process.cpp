@@ -476,6 +476,10 @@ std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std
 
 void Process::thread_main(std::unique_ptr<GuestThread> thread) {
     thread_loop(*thread);
+    // Stop naming the thread before finish_thread() and the unique_ptr free it: a host signal
+    // landing here afterwards must not take the forwarding fast path to a freed GuestThread.
+    // Handlers on this host thread run synchronously with this code, so there is no race.
+    set_current_thread(nullptr);
     finish_thread(*thread);
 }
 

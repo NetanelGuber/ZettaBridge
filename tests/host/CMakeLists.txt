@@ -41,12 +41,24 @@ add_test(NAME zbhost_protocol_test COMMAND zbhost_protocol_test
 add_executable(library_runtime_test library_runtime_test.cpp)
 target_link_libraries(library_runtime_test PRIVATE zbcore)
 # Hold a real signal-forwarding reader at post_signal without a production test hook.
+# The wrap relies on no LTO for this target: the call must stay a cross-object symbol reference.
 target_link_options(library_runtime_test PRIVATE
     -Wl,--wrap=_ZN2zb11GuestThread11post_signalERKNS_1g9siginfo32E)
 add_test(NAME library_runtime_test COMMAND library_runtime_test
     ${CMAKE_SOURCE_DIR}/sysroot
     ${CMAKE_SOURCE_DIR}/build/guest/zbhost
     ${CMAKE_SOURCE_DIR}/build/guest/lib/libzbcallprobe.so)
+
+# Needs tools/build_guest.sh and the extracted sysroot.
+add_executable(thread_exit_test thread_exit_test.cpp)
+target_link_libraries(thread_exit_test PRIVATE zbcore)
+# Observe thread retirement at clear_process_signal_target. The wrap relies on no LTO for this
+# target: the call from process.cpp must stay a cross-object symbol reference.
+target_link_options(thread_exit_test PRIVATE
+    -Wl,--wrap=_ZN2zb7Process27clear_process_signal_targetEPNS_11GuestThreadE)
+add_test(NAME thread_exit_test COMMAND thread_exit_test
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/threads_dynamic)
 
 # Needs tools/build_guest.sh and the extracted sysroot.
 add_executable(async_signal_test async_signal_test.cpp)
