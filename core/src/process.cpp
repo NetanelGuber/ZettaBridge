@@ -71,6 +71,13 @@ constexpr HostCallName kHostCallNames[] = {
 #include "gen/hostcalls.inc"
 };
 
+std::pair<const char*, const char*> host_call_name(std::uint32_t index) {
+    for (const auto& host_call : kHostCallNames) {
+        if (host_call.index == index) return {host_call.library, host_call.name};
+    }
+    return {"?", "?"};
+}
+
 struct PathMapping {
     std::string_view guest_prefix;
     std::string_view sysroot_prefix;
@@ -348,59 +355,63 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
     return exiting_ ? exit_status_.load() : main_status;
 }
 
+bool Process::dispatch_stop(GuestThread& thread, const Stop& stop) {
+    switch (stop.kind) {
+    case StopKind::Svc:
+        if (stop.swi == 0) {
+            if (handle_syscall(*this, thread)) return true;
+            if (exiting_ && thread_count() > 1) exit_host_process();
+            return false;
+        }
+        if ((stop.swi & 0xFF0000u) == kHostCallBase && stop.swi != kHostReturnSwi) {
+            const std::uint32_t index = stop.swi & 0xFFFFu;
+            if (host_call_handler_ && host_call_handler_(index, thread)) return !exiting_;
+            if (first_time(kSeenHostCall | index)) {
+                const auto [library, name] = host_call_name(index);
+                log("host call %s:%s is not implemented yet", library, name);
+            }
+            thread.regs()[0] = 0;
+            return true;
+        }
+        if (first_time(kSeenUnexpectedSvc | stop.swi)) {
+            log("unexpected svc #0x%x at pc 0x%08x", stop.swi, stop.pc);
+        }
+        thread.regs()[0] = static_cast<std::uint32_t>(-ENOSYS);
+        return true;
+    case StopKind::Interrupted:
+        return true;
+    case StopKind::MemoryFault:
+    case StopKind::Exception:
+        if (deliver_fault(thread, stop)) return true;
+        crash_report(stop, thread);
+        request_exit(128 + (stop.kind == StopKind::MemoryFault ? SIGSEGV : SIGILL));
+        if (thread_count() > 1) exit_host_process();
+        return false;
+    case StopKind::None:
+        log("guest stopped without a reason at pc 0x%08x", stop.pc);
+        request_exit(1);
+        if (thread_count() > 1) exit_host_process();
+        return false;
+    }
+    return false;
+}
+
 void Process::thread_loop(GuestThread& thread) {
     set_current_thread(&thread);
     for (;;) {
-        const Stop stop = thread.run();
-        switch (stop.kind) {
-        case StopKind::Svc:
-            if (stop.swi == 0) {
-                if (!handle_syscall(*this, thread)) {
-                    if (exiting_ && thread_count() > 1) exit_host_process();
-                    return;
-                }
-                break;
-            }
-            if ((stop.swi & 0xFF0000u) == kHostCallBase && stop.swi != kHostReturnSwi) {
-                const std::uint32_t index = stop.swi & 0xFFFFu;
-                if (first_time(kSeenHostCall | index)) {
-                    const char* library = "?";
-                    const char* name = "?";
-                    for (const auto& h : kHostCallNames) {
-                        if (h.index == index) {
-                            library = h.library;
-                            name = h.name;
-                            break;
-                        }
-                    }
-                    log("host call %s:%s is not implemented yet", library, name);
-                }
-                thread.regs()[0] = 0;
-                break;
-            }
-            if (first_time(kSeenUnexpectedSvc | stop.swi)) log("unexpected svc #0x%x at pc 0x%08x", stop.swi, stop.pc);
-            thread.regs()[0] = static_cast<std::uint32_t>(-ENOSYS);
-            break;
-        case StopKind::Interrupted:
-            break;
-        case StopKind::MemoryFault:
-        case StopKind::Exception:
-            if (deliver_fault(thread, stop)) break;
-            crash_report(stop, thread);
-            request_exit(128 + (stop.kind == StopKind::MemoryFault ? SIGSEGV : SIGILL));
-            if (thread_count() > 1) exit_host_process();
-            return;
-        case StopKind::None:
-            log("guest stopped without a reason at pc 0x%08x", stop.pc);
-            request_exit(1);
-            if (thread_count() > 1) exit_host_process();
-            return;
-        }
+        if (!dispatch_stop(thread, thread.run())) return;
         if (thread.has_pending_signals(thread.sigmask) && !dispatch_pending_signals(thread)) {
             if (thread_count() > 1) exit_host_process();
             return;
         }
     }
+}
+
+std::optional<GuestResult> Process::call_guest(GuestThread& thread, std::uint32_t target, const GuestCall& args) {
+    return thread.call(target, args, [&](const Stop& stop) {
+        if (!dispatch_stop(thread, stop)) return false;
+        return !thread.has_pending_signals(thread.sigmask) || dispatch_pending_signals(thread);
+    });
 }
 
 std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std::uint32_t stack,

@@ -986,6 +986,9 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
     Ctx c{proc, thread, proc.memory(), {regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]}};
     const std::uint32_t nr = regs[7];
     std::int32_t res = -ENOSYS;
+    const auto guest_tid = [&] {
+        return thread.tid != 0 ? thread.tid : static_cast<std::int32_t>(::syscall(SYS_gettid));
+    };
 
     switch (nr) {
     case NR_exit:
@@ -1148,11 +1151,11 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
 
     case NR_set_tid_address:
         thread.clear_child_tid = c.a[0];
-        res = result_of(::syscall(SYS_gettid));
+        res = guest_tid();
         break;
     case NR_getpid: res = result_of(::getpid()); break;
     case NR_getppid: res = result_of(::getppid()); break;
-    case NR_gettid: res = result_of(::syscall(SYS_gettid)); break;
+    case NR_gettid: res = guest_tid(); break;
     case NR_getuid32: res = static_cast<std::int32_t>(::getuid()); break;
     case NR_geteuid32: res = static_cast<std::int32_t>(::geteuid()); break;
     case NR_getgid32: res = static_cast<std::int32_t>(::getgid()); break;

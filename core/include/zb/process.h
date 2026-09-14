@@ -5,6 +5,7 @@
 #include <bitset>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -25,6 +26,8 @@ namespace zb {
 // One guest process: its address space, emulated kernel state and threads.
 class Process {
 public:
+    using HostCallHandler = std::function<bool(std::uint32_t index, GuestThread& thread)>;
+
     static constexpr std::uint32_t kStackTop = 0xFF000000;
     static constexpr std::uint32_t kStackSize = 8 * 1024 * 1024;
     static constexpr std::uint32_t kMmapLimit = 0xFE000000;
@@ -45,6 +48,9 @@ public:
     // Loads an arm32 executable (and its PT_INTERP), builds its stack and runs it until the
     // process exits. Returns the guest exit status, or 128 + signal for a fatal guest fault.
     int run(const std::string& path, const std::vector<std::string>& argv, const std::vector<std::string>& envp);
+
+    void set_host_call_handler(HostCallHandler handler) { host_call_handler_ = std::move(handler); }
+    std::optional<GuestResult> call_guest(GuestThread& thread, std::uint32_t target, const GuestCall& args);
 
     GuestMemory& memory() { return mem_; }
     // Process-wide exit (exit_group, fatal signal). Threads other than the caller are not
@@ -129,6 +135,7 @@ private:
 
     int allocate_processor_id();
     void register_thread(GuestThread* thread);
+    bool dispatch_stop(GuestThread& thread, const Stop& stop);
     // Runs a guest thread until it exits. Process-wide exits with other live threads end the
     // host process from here.
     void thread_loop(GuestThread& thread);
@@ -164,6 +171,7 @@ private:
     std::uint32_t linker_end_ = 0;
     std::atomic<bool> exiting_{false};
     std::atomic<int> exit_status_{0};
+    HostCallHandler host_call_handler_;
 };
 
 }  // namespace zb
