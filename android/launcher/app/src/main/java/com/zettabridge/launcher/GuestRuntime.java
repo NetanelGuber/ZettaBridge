@@ -150,7 +150,7 @@ final class GuestRuntime {
             LoadedPlugin p = load(packageName);
             return (Activity) p.classLoader.loadClass(activity).getDeclaredConstructor().newInstance();
         } catch (Throwable t) {
-            Log.e(TAG, "cannot instantiate " + packageName + "/" + activity, t);
+            Diagnostics.report(host, "cannot instantiate " + packageName + "/" + activity, t, true);
             return null;
         }
     }

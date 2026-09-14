@@ -30,8 +30,9 @@ public class GuestLaunchActivity extends Activity {
         try {
             launch(packageName);
         } catch (Throwable t) {
-            Log.e(TAG, "cannot launch " + packageName, t);
-            Toast.makeText(this, "Cannot launch " + packageName + ": " + t, Toast.LENGTH_LONG).show();
+            Diagnostics.report(this, "cannot launch " + packageName, t, true);
+            Toast.makeText(this, "Cannot launch " + packageName + ": " + t + "\nFull error copied to the clipboard",
+                    Toast.LENGTH_LONG).show();
         }
         finish();
     }

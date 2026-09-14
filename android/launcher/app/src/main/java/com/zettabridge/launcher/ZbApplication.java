@@ -14,7 +14,10 @@ public class ZbApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
-        if (processName().endsWith(GUEST_SUFFIX)) GuestRuntime.get().install(this);
+        if (processName().endsWith(GUEST_SUFFIX)) {
+            Diagnostics.installCrashRecorder(this);
+            GuestRuntime.get().install(this);
+        }
     }
 
     static String processName() {
