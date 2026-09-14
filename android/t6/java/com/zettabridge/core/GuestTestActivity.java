@@ -108,7 +108,10 @@ public class GuestTestActivity extends Activity {
 
         List<String> env = new ArrayList<>();
         for (Map.Entry<String, String> e : System.getenv().entrySet()) {
-            if (!e.getKey().equals("LD_LIBRARY_PATH")) env.add(e.getKey() + "=" + e.getValue());
+            // Host loader variables describe 64-bit libraries; the 32-bit guest linker must not see them.
+            if (!e.getKey().equals("LD_LIBRARY_PATH") && !e.getKey().equals("LD_PRELOAD")) {
+                env.add(e.getKey() + "=" + e.getValue());
+            }
         }
         if (test.needsGuestLibs) env.add("LD_LIBRARY_PATH=" + guestLibs);
 

@@ -15,7 +15,12 @@ int zb_run_executable(const char* sysroot, int argc, const char* const* argv, co
     if (envp != nullptr) {
         for (const char* const* e = envp; *e != nullptr; ++e) guest_envp.emplace_back(*e);
     } else {
-        for (char** e = environ; *e != nullptr; ++e) guest_envp.emplace_back(*e);
+        // Host loader variables describe 64-bit host libraries and would break the guest linker.
+        for (char** e = environ; *e != nullptr; ++e) {
+            const std::string entry = *e;
+            if (entry.rfind("LD_PRELOAD=", 0) == 0 || entry.rfind("LD_LIBRARY_PATH=", 0) == 0) continue;
+            guest_envp.push_back(entry);
+        }
     }
 
     zb::Process process;

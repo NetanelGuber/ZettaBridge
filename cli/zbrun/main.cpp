@@ -27,8 +27,14 @@ int main(int argc, char** argv) {
     if (const char* env = std::getenv("ZB_SYSROOT")) sysroot = env;
     bool precise_faults = false;
 
+    // Host loader variables describe 64-bit host libraries; the 32-bit guest linker would try to
+    // load them (Termux sets LD_PRELOAD) and fail. Pass guest ones explicitly with --env.
     std::vector<std::string> guest_envp;
-    for (char** e = environ; *e != nullptr; ++e) guest_envp.emplace_back(*e);
+    for (char** e = environ; *e != nullptr; ++e) {
+        const std::string entry = *e;
+        if (entry.rfind("LD_PRELOAD=", 0) == 0 || entry.rfind("LD_LIBRARY_PATH=", 0) == 0) continue;
+        guest_envp.push_back(entry);
+    }
 
     int i = 1;
     while (i < argc && std::strncmp(argv[i], "--", 2) == 0) {
