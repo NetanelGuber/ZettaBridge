@@ -14,14 +14,13 @@ English and ASCII only.
   `docs/superpowers/specs/2026-09-14-jni-bridge-design.md`. Follow it; do not redesign
   without asking the user.
 - **Phase 4a (JNI host units) done.** All 10 host tests and all 9 guest tests pass.
-- **Phase 4b Tasks 1-3 done and independently reviewed.** The real arm32 `zbhost`
-  starts through the bionic linker and publishes its service ABI. Host tests are 13/13.
+- **Phase 4b Tasks 1-3 done, reviewed, and fixed after review** (`a15b86c`). Tasks 4-6
+  are ready: the plan was revised after review (`203d8ac`) and its Task 4-5 code was
+  prototyped, built and tested before being written down. Host tests are 13/13.
 - Work continues on branch `codex/phase4b-library-runtime` in worktree
   `.worktrees/phase4b-library-runtime`. The parent branch is
   `codex/phase4a-jni-host-units`.
-- The user allows pushing the dedicated Codex branch, but this checkout currently has
-  no Git remote. Do not push another branch; configure/confirm the remote with the user
-  first.
+- Commit locally; pushing is done together with the user (no Git remote is configured).
 
 ## Phase 4a completed (JNI host units)
 
@@ -45,23 +44,28 @@ All Phase 4a review notes were folded into the implementation, tests, plan, and 
 
 The executable TDD plan is
 `docs/superpowers/plans/2026-09-14-phase4b-library-runtime.md`. Continue at **Task 4**;
-no Task 4 production or test file is currently modified.
+no Task 4 production or test file is currently modified. The plan's "Review decisions"
+table (D1-D14) says where each review decision lands; the specs were amended to match.
 
 | Task | State | Commit |
 |---|---|---|
-| 1. Nested host-to-guest call frame | done, reviewed | `d0708d8` |
-| 2. Reusable Process stop dispatch | done, reviewed | `fcaef77` |
+| 1. Nested host-to-guest call frame | done, reviewed, review fixes | `d0708d8`, `a15b86c` |
+| 2. Reusable Process stop dispatch | done, reviewed, review fixes | `fcaef77`, `a15b86c` |
 | 3. Fixed `zbhost` service protocol | done, reviewed | `49608ec` |
-| 4. Service-thread library runtime | next | |
-| 5. Carrier leases and guest-tid routing | not started | |
-| 6. Regression, Android link, and docs | not started | |
+| 4. Service-thread library runtime | ready, plan revised after review | `203d8ac` (plan) |
+| 5. Carrier leases and guest-tid routing | ready, plan revised after review | `203d8ac` (plan) |
+| 6. Regression, Android link, and docs | ready, plan revised after review | `203d8ac` (plan) |
+
+`a15b86c` fixed: IT/E bits cleared on call entry, `call_depth`, thread exit inside a call
+ends the host process, stray or wrong-`sp` return svc is SIGILL, shared `after_stop`,
+code cache size parameter, guest tid in crash reports, `_Exit` in `check.h`, and the
+extended `guest_call_test`.
 
 Phase 4a hardening after review (thunk abort/CFI/exception barrier, handle serials and LIFO
 reclaim) landed on this branch before Task 4.
 
-Task 1 has one deferred minor review note: make the intermediate host-call register
-mutation observable in `guest_call_test` and exercise handler-false after execution.
-It is not blocking and can be folded into Task 6.
+The Task 1 review note (observable register mutation, handler-false after execution) is
+done in `a15b86c`.
 
 The Superpowers SDD scratch ledger and generated Task 1-4 briefs are under
 `.superpowers/sdd/2026-09-14-phase4b-library-runtime/` in the Phase 4b worktree. The
@@ -74,7 +78,7 @@ required: a clean recorded Dynarmic revision fails `fault_pc_test` and encounter
 unsupported `ldab` in the Android linker. Never stage the submodule pointer or modify
 that patch as part of Phase 4b.
 
-Last verified at `49608ec`:
+Last verified at `203d8ac`:
 
 ```text
 tools/build_guest.sh                         PASS
