@@ -6,6 +6,7 @@ add_library(zbcore STATIC
     src/guest_thread.cpp
     src/initial_stack.cpp
     src/jni/mangle.cpp
+    src/jni/shorty.cpp
     src/log.cpp
     src/proc_files.cpp
     src/process.cpp
