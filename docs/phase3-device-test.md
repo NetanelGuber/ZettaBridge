@@ -23,7 +23,7 @@ without Android's `/system`, so an Android binary cannot run on it.
     `LD_PRELOAD`/`LD_LIBRARY_PATH` to guests.
 - **Still open:**
   - the in-app run inside the ART process (below);
-  - the logcat check: `su -c logcat -d -s zbguest` must show
+  - the logcat check: `su -c 'logcat -d -s zbguest'` (quoted, or su eats the flags) must show
     "hello from arm32 guest" after `log_dynamic`.
 
 ## 1. Build the pieces (on this machine)

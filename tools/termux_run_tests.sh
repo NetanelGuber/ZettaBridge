@@ -43,4 +43,4 @@ if [ "$failures" -ne 0 ]; then
     exit 1
 fi
 echo "all guest tests passed"
-echo "Phase 3 check: the guest log line must appear in: su -c logcat -d -s zbguest"
+echo "Phase 3 check: the guest log line must appear in: su -c 'logcat -d -s zbguest'"
