@@ -8,64 +8,50 @@ English and ASCII only.
 
 - **Phases 1-3 done.** T1-T6 pass: host tests, and the guest suite in Termux and inside
   an app process on the OnePlus 13. Branch `phase1-zbrun`.
-- **Phase 0 launcher works on the phone.** arm64 plugins launch, including an app with
-  Firebase/AdMob.
-  - It lives on branch `worktree-agent-a79da63fd7f33c735`, worktree
-    `.claude/worktrees/agent-a79da63fd7f33c735`, code in `android/launcher/`.
-  - The phone copy is `/sdcard/AndroidIDEProjects/ZettaBridge`; the user builds it in
-    AndroidIDE.
-  - **Todo 1:** merge that branch into `phase1-zbrun` (only `android/launcher/**`,
-    `docs/phase0-launcher.md` and one CLAUDE.md bullet should conflict), then remove
-    the worktree.
+- **Phase 0 launcher works on the phone** and is merged into `phase1-zbrun`
+  (`android/launcher/`, phone copy `/sdcard/AndroidIDEProjects/ZettaBridge`).
 - **Part 1 (JNI bridge) spec approved:**
-  `docs/superpowers/specs/2026-09-14-jni-bridge-design.md`. Follow it, and do not
-  redesign without asking the user.
+  `docs/superpowers/specs/2026-09-14-jni-bridge-design.md`. Follow it; do not redesign
+  without asking the user.
 - **Local commits only.** Pushing to GitHub is done together with the user later.
 
-## Next: Phase 4 plan and implementation
+## Now: Phase 4a (JNI host units)
 
-**Todo 2:** write `docs/superpowers/plans/2026-09-14-phase4-jni-bridge.md`, then implement
-in this order. Each step ends with a passing test and a local commit.
+Plan: `docs/superpowers/plans/2026-09-14-phase4a-jni-host-units.md`. It has 6 TDD tasks
+with complete code. Work through them in order. For each task, run the full host suite
+(`ninja -C build/host && ctest --test-dir build/host --output-on-failure`) and make one
+local commit.
 
-1. **`tools/gen_jni.py`.** Parse `JNINativeInterface` / `JNIInvokeInterface` from NDK
-   `jni.h`. Emit the slot table for `guest/zbjni` and the host-call list, plus a config
-   marking slots "guest C" or "host stub" (performance fallback; all "guest C" for now).
-2. **`core/src/jni/mangle.cpp` + `jni_mangle_test`.** `Java_*` decoding: `_1` `_2` `_3`
-   `_0xxxx`, `__sig`.
-3. **`core/src/jni/handles.cpp` + `jni_handles_test`.** 32-bit handles, low 2 bits kind
-   (01 local, 10 global, 11 weak), local frames, append-only method/field id table,
-   invalid handle -> `FatalError`.
-4. **`core/src/jni/native_call.cpp` + `thunks.S` + `jni_abi_test`.**
-   - 16384-entry thunk pool (`movz x16,#i; b zb_native_common`).
-   - AAPCS32 softfp layout from shorty: even pair for J/D, stack spill after a 64-bit
-     argument, return values.
-   - Table-driven tests including `(IFFIFF)I` and `(J)V`.
-5. **Library mode of the guest process.**
-   - `guest/zbhost/zbhost.c`: parks, serves `dlopen`/`dlsym`/call.
-   - Host-to-guest call helper on `GuestThread` (the `svc #0x5AFFFF` return), plus
-     carriers per part 3 spec "Threads".
-6. **`guest/zbjni/zbjni.c` -> `libzbjni.so`** (arm32).
-   - All 229 + 6 slots.
-   - `...` / `va_list` -> `jvalue[]` via `va_arg` and a shorty cache.
-   - Buffers via guest `malloc` + `Region` host calls, with the release modes 0 /
-     `JNI_COMMIT` / `JNI_ABORT`.
-7. **`core/src/jni/host_jni.cpp`.** About 70 flat host calls onto a `JNIEnv` interface.
-   - **Mock JNI backend** (toy Java model) so the guest test `jni_mock_dynamic` runs
-     under `zbrun` on this machine with no ART.
-8. **`android/proxy/zbproxy.c` -> `libzbproxy.so`** plus
-   `ZBridge.onProxyLoaded(String)` in `core/android/zbridge_jni.cpp` and
-   `core/src/jni/loader.cpp` (dlopen, bind `Java_*` via `RegisterNatives`, guest
-   `JNI_OnLoad`).
-   - **Launcher change:** the plugin class loader delegates `com.zettabridge.core.*` to
-     the launcher loader, and `findLibrary` returns proxy copies for `armeabi*` libs.
-9. **Device test T7** (extend `android/t6/project`).
-   - Test dex via `d8`, a `BaseDexClassLoader` with `findLibrary` -> proxy, arm32
-     `libjniprobe.so`.
-   - Coverage list is in spec section 4.
-   - Produce the phone project like `tools/make_t6_bundle.sh` and ask the user to build
-     and run it.
-10. **Acceptance.** T7 passes, then the Orange Roulette smoke test (spec "Phase 4
-    acceptance").
+**Progress (2026-09-14):**
+
+| Task | State | Commits |
+|---|---|---|
+| 1. `Java_*` name decoding | done, reviewed | `5eeada8`, `96250bc` (strict ART-canonical decoding after review; the plan's Task 1 code was synced) |
+| 2. Signature -> shorty | done, reviewed | `cbfe969`, `7558c25` (strict class-name scan, 255-dimension limit; plan synced), `44362e8` (docs) |
+| 3. AAPCS64 -> AAPCS32 marshaling | implemented | `fe12334`; the review may still be pending, so rerun `jni_abi_test` and read the diff before building on it |
+| 4. Handle tables | not started | |
+| 5. Thunk pool (`thunks.S`), dispatcher, slots | not started | the assembly in the plan was prototyped and verified on this machine |
+| 6. Regression run + docs | not started | |
+
+**Open review notes to fold into later tasks:**
+- **Spec wording.** Spec section 2 still describes thunks as `movz x16, #i; b ...`. The
+  plan and implementation use `adr x16, .; b zb_native_common`. Fix the spec wording in
+  Task 6.
+- **Task 1 nits.**
+  - The comment at `core/src/jni/mangle.cpp` near line 90 says "lone separator"; it
+    should say "a lone '_' meaning '/'".
+  - The trailing-`/` and `//` path checks are defensive only.
+  - A test for `Java_pkg_Foo_bar_4x` would help.
+  - One sentence noting that name parts starting with digits 0-3 cannot be decoded.
+- **Task 2 nit.** The header says "malformed"; it only rejects structurally malformed
+  descriptors. Characters inside class names are not validated.
+
+## Next: plans 4b, 4c, 4d
+
+Write each plan after 4a lands, using the real interfaces. The scope and the review
+notes (per-method `RegisterNatives`, the `!` prefix, host-computed shorties, slot
+release only for never-bound slots) are at the end of the 4a plan under "Following
+plans". Use the same format as the 4a plan: TDD tasks with complete code.
 
 ## Practical notes
 
