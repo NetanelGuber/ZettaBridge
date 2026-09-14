@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -23,7 +24,7 @@ class Cp15;
 // svc immediate used to return from a host->guest call.
 inline constexpr std::uint32_t kHostReturnSwi = 0x5AFFFF;
 
-enum class StopKind { None, Svc, MemoryFault, Exception };
+enum class StopKind { None, Svc, MemoryFault, Exception, Interrupted };
 
 struct Stop {
     StopKind kind = StopKind::None;
@@ -52,15 +53,24 @@ public:
     void set_tls(std::uint32_t value) { tpidruro_ = value; }
     std::size_t processor_id() const { return processor_id_; }
 
+    // Runs until a callback stops the JIT, or until post_signal() interrupts it (Interrupted).
     Stop run();
     // Drop translated code for [addr, addr + len). Safe to call from other host threads.
     void invalidate(std::uint32_t addr, std::uint32_t len);
+
+    // Queues a signal for this thread and interrupts its JIT. Async-signal-safe.
+    void post_signal(const g::siginfo32& info);
+    // Takes the lowest-numbered pending signal not in `blocked`; false if there is none.
+    bool take_signal(std::uint64_t blocked, g::siginfo32& out);
+    bool has_pending_signals(std::uint64_t blocked) const { return (pending_signals_.load() & ~blocked) != 0; }
 
     // Emulated per-thread kernel state.
     std::uint64_t sigmask = 0;
     g::stack32 altstack{0, 2 /* SS_DISABLE */, 0};
     std::uint32_t clear_child_tid = 0;
     int exit_status = 0;
+    // Host tid of the host thread running this guest thread.
+    std::int32_t tid = 0;
 
     std::uint8_t MemoryRead8(std::uint32_t vaddr) override;
     std::uint16_t MemoryRead16(std::uint32_t vaddr) override;
@@ -92,6 +102,8 @@ private:
     std::shared_ptr<Cp15> cp15_;
     std::unique_ptr<Dynarmic::A32::Jit> jit_;
     Stop pending_;
+    std::atomic<std::uint64_t> pending_signals_{0};
+    std::array<g::siginfo32, 65> pending_info_{};
 };
 
 }  // namespace zb

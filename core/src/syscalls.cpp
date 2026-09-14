@@ -50,8 +50,6 @@ constexpr SyscallName kSyscallNames[] = {
 };
 
 constexpr int kPrSetVma = 0x53564d41;
-constexpr int kSigDfl = 0;
-constexpr int kSigIgn = 1;
 
 // Keys for Process::first_time, kept apart from raw syscall numbers.
 constexpr std::uint64_t kSeenIoctl = 1ULL << 33;
@@ -66,6 +64,8 @@ struct Ctx {
     GuestMemory& mem;
     std::uint32_t a[6];
     bool stop = false;
+    // Set by rt_sigreturn: r0 was restored from the signal frame and must not be overwritten.
+    bool no_result = false;
 };
 
 // ZB_STRACE=1 logs every guest syscall with its first four arguments and result.
@@ -292,6 +292,14 @@ std::int32_t sys_rt_sigaction(Ctx& c) {
     if (has_new) {
         if (sig == SIGKILL || sig == SIGSTOP) return -EINVAL;
         if (!read_guest(c.mem, c.a[1], act)) return -EFAULT;
+        // The guest linker installs Android's debuggerd crash handlers, which fork and exec
+        // crash_dump. zbrun has no crash_dump (and refuses fork), so those handlers would turn
+        // every crash into exit(1). Keep the default action instead: the process then dies with
+        // the signal and zbrun prints its own crash report. Application handlers are unaffected.
+        if (act.handler > 1 && c.proc.in_guest_linker(act.handler & ~1u)) {
+            if (trace_enabled()) log("not installing the guest linker's crash handler for signal %u", sig);
+            act = g::ksigaction32{};
+        }
     }
     if (c.a[2] != 0 && !write_guest(c.mem, c.a[2], c.proc.sigactions[sig])) return -EFAULT;
     if (has_new) c.proc.sigactions[sig] = act;
@@ -327,28 +335,36 @@ std::int32_t sys_sigaltstack(Ctx& c) {
     return 0;
 }
 
-bool default_ignored(std::uint32_t sig) {
-    return sig == SIGCHLD || sig == SIGCONT || sig == SIGURG || sig == SIGWINCH;
-}
-
-// kill/tkill/tgkill. Only signals aimed at the guest itself are supported for now.
-std::int32_t sys_signal_self(Ctx& c, bool is_self, std::uint32_t sig) {
+// kill / tkill / tgkill / rt_tgsigqueueinfo inside the guest process. The signal is queued on
+// the target guest thread; Process delivers it at that thread's next stop.
+std::int32_t sys_send_signal(Ctx& c, bool process_directed, std::int32_t tgid, std::int32_t tid, std::uint32_t sig,
+                             const g::siginfo32* queued_info, std::int32_t code) {
     if (sig > 64) return -EINVAL;
-    if (!is_self) {
-        if (c.proc.first_time(kSeenSignal | sig)) log("signal %u to another process or thread refused", sig);
-        return -EPERM;
+    const auto pid = static_cast<std::int32_t>(::getpid());
+    GuestThread* target = nullptr;
+    if (process_directed) {
+        if (tgid != pid && tgid != 0) {
+            if (c.proc.first_time(kSeenSignal | sig)) log("signal %u to another process refused", sig);
+            return -EPERM;
+        }
+        target = &c.thread;
+    } else {
+        if (tgid != -1 && tgid != pid) return -ESRCH;
+        target = c.proc.find_thread(tid);
+        if (target == nullptr) return -ESRCH;
     }
     if (sig == 0) return 0;
-    const std::uint32_t handler = c.proc.sigactions[sig].handler;
-    if (sig != SIGKILL && (handler == static_cast<std::uint32_t>(kSigIgn) || (handler == kSigDfl && default_ignored(sig)))) {
-        return 0;
+
+    g::siginfo32 info{};
+    if (queued_info != nullptr) {
+        info = *queued_info;
+    } else {
+        info.si_code = code;
+        info.fields[0] = static_cast<std::uint32_t>(pid);
+        info.fields[1] = static_cast<std::uint32_t>(::getuid());
     }
-    if (sig != SIGKILL && handler != kSigDfl) {
-        log("guest signal handlers are not delivered yet; treating signal %u as fatal", sig);
-    }
-    log("guest terminated by signal %u", sig);
-    c.proc.request_exit(128 + static_cast<int>(sig));
-    c.stop = true;
+    info.si_signo = static_cast<std::int32_t>(sig);
+    target->post_signal(info);
     return 0;
 }
 
@@ -757,13 +773,23 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
     case NR_rt_sigprocmask: res = sys_rt_sigprocmask(c); break;
     case NR_sigaltstack: res = sys_sigaltstack(c); break;
     case NR_kill:
-        res = sys_signal_self(c, static_cast<pid_t>(c.a[0]) == ::getpid() || c.a[0] == 0, c.a[1]);
+        res = sys_send_signal(c, true, static_cast<std::int32_t>(c.a[0]), 0, c.a[1], nullptr, SI_USER);
         break;
     case NR_tkill:
-        res = sys_signal_self(c, static_cast<pid_t>(c.a[0]) == ::syscall(SYS_gettid), c.a[1]);
+        res = sys_send_signal(c, false, -1, static_cast<std::int32_t>(c.a[0]), c.a[1], nullptr, SI_TKILL);
         break;
     case NR_tgkill:
-        res = sys_signal_self(c, static_cast<pid_t>(c.a[0]) == ::getpid() && static_cast<pid_t>(c.a[1]) == ::syscall(SYS_gettid), c.a[2]);
+        res = sys_send_signal(c, false, static_cast<std::int32_t>(c.a[0]), static_cast<std::int32_t>(c.a[1]), c.a[2],
+                              nullptr, SI_TKILL);
+        break;
+    case NR_rt_sigreturn:
+    case NR_sigreturn:
+        if (!proc.sigreturn(thread, nr == NR_rt_sigreturn)) {
+            log("%s with an unreadable signal frame", syscall_name(nr));
+            proc.request_exit(128 + SIGSEGV);
+            return false;
+        }
+        c.no_result = true;
         break;
 
     case NR_clock_gettime: res = sys_clock_get(c, false, false); break;
@@ -809,9 +835,16 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
                                      : result_of(::syscall(SYS_connect, static_cast<int>(c.a[0]), addr, c.a[2]));
         break;
     }
-    case NR_rt_tgsigqueueinfo:
-        res = sys_signal_self(c, static_cast<pid_t>(c.a[0]) == ::getpid() && static_cast<pid_t>(c.a[1]) == ::syscall(SYS_gettid), c.a[2]);
+    case NR_rt_tgsigqueueinfo: {
+        g::siginfo32 queued{};
+        if (c.a[3] != 0 && !read_guest(c.mem, c.a[3], queued)) {
+            res = -EFAULT;
+            break;
+        }
+        res = sys_send_signal(c, false, static_cast<std::int32_t>(c.a[0]), static_cast<std::int32_t>(c.a[1]), c.a[2],
+                              c.a[3] != 0 ? &queued : nullptr, SI_QUEUE);
         break;
+    }
 
     default:
         if (proc.first_time(nr)) log("unimplemented syscall %s (%u)", syscall_name(nr), nr);
@@ -823,7 +856,7 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
         log("%s(0x%x, 0x%x, 0x%x, 0x%x) = %d", syscall_name(nr), c.a[0], c.a[1], c.a[2], c.a[3], res);
     }
     if (c.stop) return false;
-    regs[0] = static_cast<std::uint32_t>(res);
+    if (!c.no_result) regs[0] = static_cast<std::uint32_t>(res);
     return true;
 }
 

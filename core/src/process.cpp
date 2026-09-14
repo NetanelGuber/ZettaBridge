@@ -241,6 +241,14 @@ int Process::allocate_processor_id() {
     return -1;
 }
 
+GuestThread* Process::find_thread(std::int32_t tid) {
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    for (GuestThread* t : threads_) {
+        if (t->tid == tid) return t;
+    }
+    return nullptr;
+}
+
 void Process::register_thread(GuestThread* thread) {
     std::lock_guard<std::mutex> lock(threads_mutex_);
     threads_.push_back(thread);
@@ -274,6 +282,8 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
                             interp_path, true);
         interp_base = interp.bias;
         start_pc = interp.entry;
+        linker_start_ = interp.load_start;
+        linker_end_ = interp.load_end;
     }
 
     if (!mem_.map_anon(kStackTop - kStackSize, kStackSize, PROT_READ | PROT_WRITE)) {
@@ -315,7 +325,9 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
     regs[13] = sp;
     regs[15] = start_pc & ~1u;
     main_->set_cpsr(kCpsrUserMode | ((start_pc & 1) ? kCpsrThumb : 0));
+    main_->tid = static_cast<std::int32_t>(::syscall(SYS_gettid));
     register_thread(main_.get());
+    install_host_signal_forwarding();
 
     thread_loop(*main_);
     if (exiting_) return exit_status_;
@@ -328,14 +340,17 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
 }
 
 void Process::thread_loop(GuestThread& thread) {
+    set_current_thread(&thread);
     for (;;) {
         const Stop stop = thread.run();
         switch (stop.kind) {
         case StopKind::Svc:
             if (stop.swi == 0) {
-                if (handle_syscall(*this, thread)) break;
-                if (exiting_ && thread_count() > 1) exit_host_process();
-                return;
+                if (!handle_syscall(*this, thread)) {
+                    if (exiting_ && thread_count() > 1) exit_host_process();
+                    return;
+                }
+                break;
             }
             if ((stop.swi & 0xFF0000u) == kHostCallBase && stop.swi != kHostReturnSwi) {
                 const std::uint32_t index = stop.swi & 0xFFFFu;
@@ -357,19 +372,22 @@ void Process::thread_loop(GuestThread& thread) {
             if (first_time(kSeenUnexpectedSvc | stop.swi)) log("unexpected svc #0x%x at pc 0x%08x", stop.swi, stop.pc);
             thread.regs()[0] = static_cast<std::uint32_t>(-ENOSYS);
             break;
+        case StopKind::Interrupted:
+            break;
         case StopKind::MemoryFault:
-            crash_report(stop, thread);
-            request_exit(128 + SIGSEGV);
-            if (thread_count() > 1) exit_host_process();
-            return;
         case StopKind::Exception:
+            if (deliver_fault(thread, stop)) break;
             crash_report(stop, thread);
-            request_exit(128 + SIGILL);
+            request_exit(128 + (stop.kind == StopKind::MemoryFault ? SIGSEGV : SIGILL));
             if (thread_count() > 1) exit_host_process();
             return;
         case StopKind::None:
             log("guest stopped without a reason at pc 0x%08x", stop.pc);
             request_exit(1);
+            if (thread_count() > 1) exit_host_process();
+            return;
+        }
+        if (thread.has_pending_signals(thread.sigmask) && !dispatch_pending_signals(thread)) {
             if (thread_count() > 1) exit_host_process();
             return;
         }
@@ -397,6 +415,7 @@ std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std
     register_thread(child.get());
     std::thread([this, owned = std::move(child), promise = &tid_promise, flags, child_tid_addr]() mutable {
         const auto tid = static_cast<pid_t>(::syscall(SYS_gettid));
+        owned->tid = tid;
         if (flags & kCloneChildSetTid) write_guest_u32(mem_, child_tid_addr, static_cast<std::uint32_t>(tid));
         promise->set_value(tid);
         thread_main(std::move(owned));

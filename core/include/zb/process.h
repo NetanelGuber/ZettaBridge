@@ -55,6 +55,20 @@ public:
     std::int32_t clone_thread(GuestThread& parent, std::uint32_t flags, std::uint32_t stack,
                               std::uint32_t parent_tid_addr, std::uint32_t tls, std::uint32_t child_tid_addr);
     std::size_t thread_count() const;
+    GuestThread* find_thread(std::int32_t tid);
+
+    // Signals (signals.cpp).
+    static void set_current_thread(GuestThread* thread);
+    static void install_host_signal_forwarding();
+    // Delivers pending, unblocked signals of the thread; false if one terminated the process.
+    bool dispatch_pending_signals(GuestThread& thread);
+    // Turns a memory fault or exception into a guest signal; false if the guest cannot handle it.
+    bool deliver_fault(GuestThread& thread, const Stop& stop);
+    // Builds the signal frame and redirects the thread to the handler. True if the signal was
+    // handled or ignored; false if its action terminates the process.
+    bool deliver_signal(GuestThread& thread, const g::siginfo32& info, bool forced);
+    // rt_sigreturn / sigreturn: restores the context saved by deliver_signal.
+    bool sigreturn(GuestThread& thread, bool rt);
 
     // Serializes guest address-space changes (mmap/munmap/mprotect/brk/madvise).
     std::mutex& mm_mutex() { return mm_mutex_; }
@@ -66,6 +80,8 @@ public:
     std::string translate_path(const char* guest_path) const;
     // Host path of the guest executable, as reported by /proc/self/exe.
     const std::string& exe_path() const { return exe_path_; }
+    // True if addr lies in the image of the guest dynamic linker.
+    bool in_guest_linker(std::uint32_t addr) const { return addr >= linker_start_ && addr < linker_end_; }
 
     // Drops translated code for the range in every thread.
     void invalidate(std::uint32_t addr, std::uint32_t len);
@@ -131,6 +147,8 @@ private:
     std::vector<std::pair<std::uint32_t, std::uint32_t>> textrel_ranges_;
     std::string sysroot_;
     std::string exe_path_;
+    std::uint32_t linker_start_ = 0;
+    std::uint32_t linker_end_ = 0;
     std::atomic<bool> exiting_{false};
     std::atomic<int> exit_status_{0};
 };

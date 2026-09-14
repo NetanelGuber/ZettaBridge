@@ -1,5 +1,6 @@
 #include "zb/guest_thread.h"
 
+#include <bit>
 #include <cstring>
 
 #include <dynarmic/interface/exclusive_monitor.h>
@@ -13,6 +14,7 @@ namespace zb {
 namespace {
 
 constexpr Dynarmic::HaltReason kStopHalt = Dynarmic::HaltReason::UserDefined1;
+constexpr Dynarmic::HaltReason kInterruptHalt = Dynarmic::HaltReason::UserDefined2;
 
 template <typename T>
 T load(const std::uint8_t* p) {
@@ -77,6 +79,11 @@ Stop GuestThread::run() {
     for (;;) {
         const Dynarmic::HaltReason reason = jit_->Run();
         jit_->ClearHalt(kStopHalt);
+        if (pending_.kind == StopKind::None && Dynarmic::Has(reason, kInterruptHalt)) {
+            jit_->ClearHalt(kInterruptHalt);
+            pending_.kind = StopKind::Interrupted;
+            break;
+        }
         // Another thread invalidated translated code while we were running; the JIT applies
         // the invalidation at the start of the next Run().
         if (pending_.kind == StopKind::None && Dynarmic::Has(reason, Dynarmic::HaltReason::CacheInvalidation)) continue;
@@ -89,6 +96,27 @@ Stop GuestThread::run() {
 
 void GuestThread::invalidate(std::uint32_t addr, std::uint32_t len) {
     jit_->InvalidateCacheRange(addr, len);
+}
+
+void GuestThread::post_signal(const g::siginfo32& info) {
+    const int sig = info.si_signo;
+    if (sig < 1 || sig > 64) return;
+    pending_info_[static_cast<std::size_t>(sig)] = info;
+    pending_signals_.fetch_or(1ULL << (sig - 1));
+    jit_->HaltExecution(kInterruptHalt);
+}
+
+bool GuestThread::take_signal(std::uint64_t blocked, g::siginfo32& out) {
+    std::uint64_t pending = pending_signals_.load();
+    for (;;) {
+        const std::uint64_t deliverable = pending & ~blocked;
+        if (deliverable == 0) return false;
+        const int bit = std::countr_zero(deliverable);
+        if (pending_signals_.compare_exchange_weak(pending, pending & ~(1ULL << bit))) {
+            out = pending_info_[static_cast<std::size_t>(bit + 1)];
+            return true;
+        }
+    }
 }
 
 void GuestThread::halt() {

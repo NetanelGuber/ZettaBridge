@@ -93,6 +93,57 @@ struct statfs64 {
 };
 #pragma pack(pop)
 
+// Signal delivery structures (arm kernel layout; offsets checked against bionic's ucontext_t,
+// mcontext_t and siginfo_t with the NDK).
+struct siginfo32 {
+    std::int32_t si_signo;
+    std::int32_t si_errno;
+    std::int32_t si_code;
+    // fields[0] is si_addr for faults, si_pid for kill/tgkill; fields[1] is si_uid.
+    std::uint32_t fields[29];
+};
+
+struct sigcontext32 {
+    std::uint32_t trap_no;
+    std::uint32_t error_code;
+    std::uint32_t oldmask;
+    std::uint32_t regs[16];  // arm_r0..arm_r10, arm_fp, arm_ip, arm_sp, arm_lr, arm_pc
+    std::uint32_t cpsr;
+    std::uint32_t fault_address;
+};
+
+struct ucontext32 {
+    std::uint32_t uc_flags;
+    std::uint32_t uc_link;
+    stack32 uc_stack;
+    sigcontext32 uc_mcontext;
+    std::uint64_t uc_sigmask;
+    std::uint8_t unused[120];
+    std::uint32_t uc_regspace[128];
+};
+
+struct rt_sigframe32 {
+    siginfo32 info;
+    ucontext32 uc;
+    std::uint32_t retcode[4];
+};
+
+struct sigframe32 {
+    ucontext32 uc;
+    std::uint32_t retcode[4];
+};
+
+static_assert(sizeof(siginfo32) == 128);
+static_assert(sizeof(sigcontext32) == 84);
+static_assert(offsetof(sigcontext32, regs) == 12);
+static_assert(offsetof(sigcontext32, cpsr) == 76);
+static_assert(offsetof(sigcontext32, fault_address) == 80);
+static_assert(offsetof(ucontext32, uc_mcontext) == 20);
+static_assert(offsetof(ucontext32, uc_sigmask) == 104);
+static_assert(offsetof(ucontext32, uc_regspace) == 232);
+static_assert(sizeof(ucontext32) == 744);
+static_assert(offsetof(rt_sigframe32, uc) == 128);
+
 static_assert(sizeof(statfs64) == 84);
 static_assert(offsetof(statfs64, f_blocks) == 8);
 static_assert(offsetof(statfs64, f_fsid) == 48);
