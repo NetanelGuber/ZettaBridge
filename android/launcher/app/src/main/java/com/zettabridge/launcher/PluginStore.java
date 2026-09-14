@@ -24,7 +24,7 @@ import java.util.zip.ZipFile;
 /** Imported plugins on disk. Import copies the APK, extracts arm64 libraries and caches metadata. */
 final class PluginStore {
     static final int ARCHIVE_FLAGS = PackageManager.GET_ACTIVITIES | PackageManager.GET_PROVIDERS
-            | PackageManager.GET_META_DATA;
+            | PackageManager.GET_SERVICES | PackageManager.GET_RECEIVERS | PackageManager.GET_META_DATA;
 
     private PluginStore() {}
 

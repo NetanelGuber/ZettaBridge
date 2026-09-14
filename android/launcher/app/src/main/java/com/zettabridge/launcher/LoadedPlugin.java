@@ -8,6 +8,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
+import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.util.Log;
@@ -19,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /** A plugin loaded into the :guest process: its class loader, resources and Application. */
 final class LoadedPlugin {
@@ -32,6 +34,12 @@ final class LoadedPlugin {
     final ClassLoader classLoader;
     /** Plugin activities by fully qualified class name. */
     final Map<String, ActivityInfo> activities = new HashMap<>();
+    /** Services, receivers and providers by class name, for package manager virtualization. */
+    final Map<String, ServiceInfo> services = new HashMap<>();
+    final Map<String, ActivityInfo> receivers = new HashMap<>();
+    final Map<String, ProviderInfo> providerInfos = new HashMap<>();
+    /** The parsed archive (version, meta-data). */
+    PackageInfo info;
     /** Content providers started in-process (kept alive for the process lifetime). */
     final List<ContentProvider> providers = new ArrayList<>();
     Application application;
@@ -49,7 +57,8 @@ final class LoadedPlugin {
         return record.icon();
     }
 
-    static LoadedPlugin load(Application host, PluginRecord record) throws Exception {
+    /** onParsed runs before the plugin Application is created (the runtime marks it current). */
+    static LoadedPlugin load(Application host, PluginRecord record, Consumer<LoadedPlugin> onParsed) throws Exception {
         PackageManager pm = host.getPackageManager();
         PackageInfo info = pm.getPackageArchiveInfo(record.apk().getPath(), PluginStore.ARCHIVE_FLAGS);
         if (info == null) throw new IllegalStateException("cannot parse " + record.apk());
@@ -66,12 +75,33 @@ final class LoadedPlugin {
                 android.content.Context.class.getClassLoader());
 
         LoadedPlugin p = new LoadedPlugin(record, ai, res, cl);
+        p.info = info;
         if (info.activities != null) {
             for (ActivityInfo a : info.activities) {
                 a.applicationInfo = ai;
                 p.activities.put(a.name, a);
             }
         }
+        if (info.services != null) {
+            for (ServiceInfo s : info.services) {
+                s.applicationInfo = ai;
+                p.services.put(s.name, s);
+            }
+        }
+        if (info.receivers != null) {
+            for (ActivityInfo r : info.receivers) {
+                r.applicationInfo = ai;
+                p.receivers.put(r.name, r);
+            }
+        }
+        if (info.providers != null) {
+            for (ProviderInfo pi : info.providers) {
+                pi.applicationInfo = ai;
+                p.providerInfos.put(pi.name, pi);
+            }
+        }
+
+        onParsed.accept(p);
 
         // Same order as ActivityThread.handleBindApplication: attach, content providers, onCreate.
         // p.application is set before attach, so getApplicationContext() already returns the

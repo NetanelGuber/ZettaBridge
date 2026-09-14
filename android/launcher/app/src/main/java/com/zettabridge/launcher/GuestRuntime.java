@@ -30,6 +30,7 @@ final class GuestRuntime {
     private final Map<String, Integer> liveActivities = new HashMap<>();
     private Application host;
     private boolean installed;
+    private volatile LoadedPlugin current;
 
     static GuestRuntime get() {
         return INSTANCE;
@@ -60,6 +61,7 @@ final class GuestRuntime {
             }
             installed = true;
             Log.i(TAG, "guest Instrumentation installed");
+            PackageManagerHook.install(app, this);
         } catch (ReflectiveOperationException | RuntimeException e) {
             Log.e(TAG, "cannot install the guest Instrumentation; plugins will not launch", e);
         }
@@ -67,12 +69,51 @@ final class GuestRuntime {
 
     synchronized LoadedPlugin load(String packageName) throws Exception {
         LoadedPlugin p = plugins.get(packageName);
-        if (p != null) return p;
+        if (p != null) {
+            current = p;
+            return p;
+        }
         PluginRecord record = PluginStore.find(host, packageName);
         if (record == null) throw new IllegalStateException(packageName + " is not imported");
-        p = LoadedPlugin.load(host, record);
+        // current is set inside LoadedPlugin.load before the plugin Application runs, so its
+        // package manager queries already see the plugin's meta-data.
+        p = LoadedPlugin.load(host, record, loaded -> current = loaded);
         plugins.put(packageName, p);
         return p;
+    }
+
+    /** The plugin launched most recently; all plugins share the :guest process. */
+    LoadedPlugin current() {
+        return current;
+    }
+
+    /** A plugin component by class name, for the IPackageManager method that asks for it. */
+    synchronized android.content.pm.ComponentInfo findComponent(String method, String className) {
+        LoadedPlugin cur = current;
+        if (cur != null) {
+            android.content.pm.ComponentInfo info = componentOf(cur, method, className);
+            if (info != null) return info;
+        }
+        for (LoadedPlugin p : plugins.values()) {
+            android.content.pm.ComponentInfo info = componentOf(p, method, className);
+            if (info != null) return info;
+        }
+        return null;
+    }
+
+    private static android.content.pm.ComponentInfo componentOf(LoadedPlugin p, String method, String className) {
+        switch (method) {
+            case "getServiceInfo":
+                return p.services.get(className);
+            case "getActivityInfo":
+                return p.activities.get(className);
+            case "getReceiverInfo":
+                return p.receivers.get(className);
+            case "getProviderInfo":
+                return p.providerInfos.get(className);
+            default:
+                return null;
+        }
     }
 
     synchronized boolean isRunning(String packageName) {
