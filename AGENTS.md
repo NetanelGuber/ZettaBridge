@@ -14,7 +14,14 @@ English and ASCII only.
   `docs/superpowers/specs/2026-09-14-jni-bridge-design.md`. Follow it; do not redesign
   without asking the user.
 - **Phase 4a (JNI host units) done.** All 10 host tests and all 9 guest tests pass.
-- **Local commits only.** Pushing to GitHub is done together with the user later.
+- **Phase 4b Tasks 1-3 done and independently reviewed.** The real arm32 `zbhost`
+  starts through the bionic linker and publishes its service ABI. Host tests are 13/13.
+- Work continues on branch `codex/phase4b-library-runtime` in worktree
+  `.worktrees/phase4b-library-runtime`. The parent branch is
+  `codex/phase4a-jni-host-units`.
+- The user allows pushing the dedicated Codex branch, but this checkout currently has
+  no Git remote. Do not push another branch; configure/confirm the remote with the user
+  first.
 
 ## Phase 4a completed (JNI host units)
 
@@ -34,16 +41,56 @@ were implemented in order, with the full host suite run before each local commit
 
 All Phase 4a review notes were folded into the implementation, tests, plan, and spec.
 
-## Next: plans 4b, 4c, 4d
+## Phase 4b in progress
 
-Draft plan 4b is at
-`docs/superpowers/plans/2026-09-14-phase4b-library-runtime.md`; review it before
-implementation. It is based on the real Phase 4a interfaces.
+The executable TDD plan is
+`docs/superpowers/plans/2026-09-14-phase4b-library-runtime.md`. Continue at **Task 4**;
+no Task 4 production or test file is currently modified.
 
-Write each plan after 4a lands, using the real interfaces. The scope and the review
+| Task | State | Commit |
+|---|---|---|
+| 1. Nested host-to-guest call frame | done, reviewed | `d0708d8` |
+| 2. Reusable Process stop dispatch | done, reviewed | `fcaef77` |
+| 3. Fixed `zbhost` service protocol | done, reviewed | `49608ec` |
+| 4. Service-thread library runtime | next | |
+| 5. Carrier leases and guest-tid routing | not started | |
+| 6. Regression, Android link, and docs | not started | |
+
+Task 1 has one deferred minor review note: make the intermediate host-call register
+mutation observable in `guest_call_test` and exercise handler-false after execution.
+It is not blocking and can be folded into Task 6.
+
+The Superpowers SDD scratch ledger and generated Task 1-4 briefs are under
+`.superpowers/sdd/2026-09-14-phase4b-library-runtime/` in the Phase 4b worktree. The
+directory is intentionally git-ignored. Task 4 was dispatched once but stopped before
+any file change so Claude can resume from a clean task boundary.
+
+The isolated worktree uses an ignored `sysroot` symlink. Its Dynarmic submodule has
+the same five-file uncommitted baseline patch as the main checkout. That patch is
+required: a clean recorded Dynarmic revision fails `fault_pc_test` and encounters an
+unsupported `ldab` in the Android linker. Never stage the submodule pointer or modify
+that patch as part of Phase 4b.
+
+Last verified at `49608ec`:
+
+```text
+tools/build_guest.sh                         PASS
+ctest --test-dir build/host                  13/13 PASS
+tools/run_guest_tests.sh                     all available cases PASS
+or_dlopen_dynamic                           SKIP (Orange Roulette APK absent in worktree)
+```
+
+## After Phase 4b: plans 4c and 4d
+
+Write each plan after 4b lands, using the real interfaces. The scope and the review
 notes (per-method `RegisterNatives`, the `!` prefix, host-computed shorties, slot
 release only for never-bound slots) are at the end of the 4a plan under "Following
 plans". Use the same format as the 4a plan: TDD tasks with complete code.
+
+- **4c:** generated guest `JNIEnv`, host JNI backend, and mock-JNI host test.
+- **4d:** ART proxy loading, per-method registration, launcher integration, T7, and
+  the Orange Roulette phone smoke test. This is the first end-to-end 32-bit launcher
+  milestone.
 
 ## Practical notes
 
