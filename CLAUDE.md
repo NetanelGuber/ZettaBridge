@@ -14,8 +14,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   guest suite in Termux (`tools/make_termux_bundle.sh`).
 - T6 passed on 2026-09-14: all 9 guest tests pass inside an app process next to ART
   (`android/t6/project/`), and guest `__android_log_print` shows in logcat.
-- Next: the part 1 (JNI bridge) spec, then Phase 4; part 4 (GLES/audio/assets) spec
-  before Phase 5.
+- Part 1 (JNI bridge) spec approved:
+  `docs/superpowers/specs/2026-09-14-jni-bridge-design.md`.
+- Next: the Phase 4 plan and implementation, then the part 4 (GLES/audio/assets)
+  spec before Phase 5.
 - Work is on branch `phase1-zbrun` (local only).
 
 Local git repo (no remote yet; pushing to GitHub is done together with the user).
@@ -229,7 +231,7 @@ functions. Accept: the game is playable start to finish.
   `lib<name>.ndll`/`.so` and resolves primitives as `name__N`.
 - **Guest Java calls `System.loadLibrary` on arm32 libs** (`std`, `regexp`, `zlib`,
   `openal`, `lime`, then `ApplicationMain` via `org.haxe.HXCPP`). Host ART cannot load
-  them; interception is part 1 and not designed yet.
+  them; interception is designed in the part 1 spec (proxy library via `findLibrary`).
 - **JNI thunks follow 32-bit AAPCS softfp.** Floats go in core registers; 64-bit
   args take an even register pair or an 8-byte-aligned stack slot
   (`Lime.onTouch(IFFIFF)I`, `Lime.releaseReference(J)V`).
