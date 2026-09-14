@@ -4,12 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # ZettaBridge
 
-**Current state: Phase 1 done (T1, T2); Phase 2 in progress (T3a and T5 pass).**
+**Current state: Phases 1 and 2 done (T1-T5 pass on this machine).**
 - `zbrun` runs static and dynamic arm32 Android executables through Dynarmic and the
   real Android 17 arm32 linker and bionic.
+- Supported so far: threads, guest signal handlers, kuser helpers, and C++ exceptions
+  across libraries.
 - All six Orange Roulette libraries `dlopen` with their JNI entry points resolvable.
-- Still to do in Phase 2: threads (clone), guest signal delivery, and the rest of the
-  T4 suite. Plan: `docs/superpowers/plans/2026-09-14-phase2-guest-linker.md`.
+- Next: Phase 3 (`libzbridge.so` in the `:guest` process on device), plus the part 1
+  and part 4 specs.
+- Work is on branch `phase1-zbrun` (local only).
 
 Local git repo (no remote yet; pushing to GitHub is done together with the user).
 Commit locally after each finished task.
@@ -217,6 +220,10 @@ functions. Accept: the game is playable start to finish.
   (`Lime.onTouch(IFFIFF)I`, `Lime.releaseReference(J)V`).
 - **`fork`/`vfork`/`execve`/`ptrace` are refused** inside the ART process (libstd from
   hxcpp imports `fork`/`execvp`/`system`).
+- **The guest linker installs Android debuggerd crash handlers** (fork + exec
+  `crash_dump`). zbrun refuses to install handlers whose address lies inside the linker
+  image, so guest crashes end with the signal and zbrun's crash report instead of
+  `exit(1)`.
 - **Signals.** Guest handlers and masks are emulated and never installed on the host.
   On device, libsigchain runs ART's handlers first, then ours. Dynarmic has its own
   SIGSEGV handler for fastmem and chains the rest.

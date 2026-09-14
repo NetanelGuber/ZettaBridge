@@ -285,6 +285,12 @@ is never modified.
   `sa_restorer`. `rt_sigreturn` restores the registers.
 - **No guest handler.** Produce a crash report (next section) and end with the signal
   status.
+- **Crash handlers from the guest linker.** Found in Phase 2: the Android linker installs
+  debuggerd handlers that fork and exec `crash_dump`. `rt_sigaction` keeps the default
+  action for any handler whose address lies in the linker image; application handlers
+  are unaffected.
+- **Frames.** Implemented in Phase 2. VFP state is saved in `uc_regspace` in zbrun's own
+  layout (magic, 64 extension-register words, fpscr).
 - **Asynchronous signals** (`alarm`, `raise`, `tgkill`, SIGPIPE). Mark the signal
   pending on the target guest thread and call `HaltExecution` on its JIT. Delivery
   happens as above.

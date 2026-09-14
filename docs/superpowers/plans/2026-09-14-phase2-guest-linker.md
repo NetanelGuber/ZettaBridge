@@ -27,7 +27,13 @@ and anything discovered is recorded in the spec.
   - crash reports naming file and offset;
   - `ZB_STRACE`, `zbrun --env`;
   - import-time library fixups, because the Android 17 linker dropped pre-M compatibility.
-- **Tasks E-G:** remaining.
+- **Task E, threads:** PASS (`threads_dynamic`).
+- **Task F, signals:** PASS (`signals_dynamic`). Also found necessary: skipping the
+  guest linker's debuggerd crash handlers.
+- **Task G:** PASS (`kuser_dynamic`, `cxx_dynamic`). The TEXTREL case is covered by
+  the Orange Roulette libraries in T5.
+
+**Phase 2 acceptance met on 2026-09-14.**
 
 **Verified inputs (2026-09-14):**
 - **Sysroot contents.** The GSI system.img is ext4. `/system/lib/{libc,libm,libdl}.so`
