@@ -329,5 +329,10 @@ aapt dump badging orange-roulette-1-0-0.apk; baksmali d /tmp/or/classes.dex -o /
 - No background `&` processes.
 - Gradle wrapper: `8.11.1`, using the existing jar in the project. Never overwrite
   wrapper files. AndroidIDE on-device builds, NDK r29.
+- **AndroidIDE injects a Kotlin logger into debug builds.** The provider
+  `io.github.mohammedbaqernull.logger.logwire.LogWireInitializer` goes into the merged
+  manifest. Pure-Java apps crash at startup with `NoClassDefFoundError
+  kotlin.jvm.internal.Intrinsics`. Every app manifest here removes it with
+  `tools:node="remove"`.
 - Prefer tasks that can be finished in a single session, and say plainly when
   something cannot be.
