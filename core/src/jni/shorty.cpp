@@ -1,5 +1,7 @@
 #include "zb/jni_shorty.h"
 
+#include <cstddef>
+
 namespace zb {
 
 namespace {
@@ -23,14 +25,30 @@ char parse_type(std::string_view s, std::size_t& pos, bool void_ok) {
         ++pos;
         return 'V';
     case 'L': {
-        const std::size_t end = s.find(';', pos);
-        if (end == std::string_view::npos || end == pos + 1) return 0;
+        // The class name runs up to the first ';'; any of "()[." found first means the ';' the
+        // caller (or an earlier malformed scan) thought terminated this name actually belongs to
+        // an outer construct, so reject rather than swallow it. A binary name may not start or
+        // end with '/', nor contain "//".
+        const std::size_t end = s.find_first_of(";()[.", pos + 1);
+        if (end == std::string_view::npos || s[end] != ';') return 0;
+        const std::string_view name = s.substr(pos + 1, end - (pos + 1));
+        if (name.empty() || name.front() == '/' || name.back() == '/' ||
+            name.find("//") != std::string_view::npos) {
+            return 0;
+        }
         pos = end + 1;
         return 'L';
     }
-    case '[':
-        while (pos < s.size() && s[pos] == '[') ++pos;
+    case '[': {
+        // The JVM limits array types to 255 dimensions.
+        std::size_t dims = 0;
+        while (pos < s.size() && s[pos] == '[') {
+            ++pos;
+            ++dims;
+        }
+        if (dims > 255) return 0;
         return parse_type(s, pos, false) != 0 ? 'L' : 0;
+    }
     default:
         return 0;
     }

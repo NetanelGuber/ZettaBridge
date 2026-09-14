@@ -377,6 +377,15 @@ int main() {
     CHECK(zb::shorty_from_signature("()V") == std::string("V"));
     CHECK(zb::shorty_from_signature("([[I[Z)Lorg/haxe/lime/HaxeObject;") == std::string("LLL"));
     CHECK(zb::shorty_from_signature("(ZBCS)C") == std::string("CZBCS"));
+    CHECK(zb::shorty_from_signature("()[I") == std::string("L"));
+    CHECK(zb::shorty_from_signature("()J") == std::string("J"));
+    CHECK(zb::shorty_from_signature("(D)D") == std::string("DD"));
+    CHECK(zb::shorty_from_signature("(Ljava/lang/String;[[Ljava/lang/Object;)Ljava/lang/String;") ==
+          std::string("LLL"));
+    {
+        const std::string sig255 = "(" + std::string(255, '[') + "I)V";
+        CHECK(zb::shorty_from_signature(sig255) == std::string("VL"));
+    }
 
     CHECK(!zb::shorty_from_signature("(V)V"));
     CHECK(!zb::shorty_from_signature("(I"));
@@ -386,6 +395,21 @@ int main() {
     CHECK(!zb::shorty_from_signature("(I)VX"));
     CHECK(!zb::shorty_from_signature("I)V"));
     CHECK(!zb::shorty_from_signature("([)V"));
+    CHECK(!zb::shorty_from_signature("(Lfoo)V;)V"));
+    CHECK(!zb::shorty_from_signature("(Ljava/lang/String)IJ;)V"));
+    CHECK(!zb::shorty_from_signature("()Lfoo)bar;"));
+    CHECK(!zb::shorty_from_signature("(La[b;)V"));
+    CHECK(!zb::shorty_from_signature("(La.b;)V"));
+    CHECK(!zb::shorty_from_signature("(L/a;)V"));
+    CHECK(!zb::shorty_from_signature("(La/;)V"));
+    CHECK(!zb::shorty_from_signature("(La//b;)V"));
+    CHECK(!zb::shorty_from_signature("()[V"));
+    CHECK(!zb::shorty_from_signature("(I)L;"));
+    CHECK(!zb::shorty_from_signature(""));
+    {
+        const std::string sig256 = "(" + std::string(256, '[') + "I)V";
+        CHECK(!zb::shorty_from_signature(sig256));
+    }
 
     std::printf("jni_shorty_test ok\n");
     return 0;
@@ -432,6 +456,8 @@ std::optional<std::string> shorty_from_signature(std::string_view signature);
 ```cpp
 #include "zb/jni_shorty.h"
 
+#include <cstddef>
+
 namespace zb {
 
 namespace {
@@ -455,14 +481,30 @@ char parse_type(std::string_view s, std::size_t& pos, bool void_ok) {
         ++pos;
         return 'V';
     case 'L': {
-        const std::size_t end = s.find(';', pos);
-        if (end == std::string_view::npos || end == pos + 1) return 0;
+        // The class name runs up to the first ';'; any of "()[." found first means the ';' the
+        // caller (or an earlier malformed scan) thought terminated this name actually belongs to
+        // an outer construct, so reject rather than swallow it. A binary name may not start or
+        // end with '/', nor contain "//".
+        const std::size_t end = s.find_first_of(";()[.", pos + 1);
+        if (end == std::string_view::npos || s[end] != ';') return 0;
+        const std::string_view name = s.substr(pos + 1, end - (pos + 1));
+        if (name.empty() || name.front() == '/' || name.back() == '/' ||
+            name.find("//") != std::string_view::npos) {
+            return 0;
+        }
         pos = end + 1;
         return 'L';
     }
-    case '[':
-        while (pos < s.size() && s[pos] == '[') ++pos;
+    case '[': {
+        // The JVM limits array types to 255 dimensions.
+        std::size_t dims = 0;
+        while (pos < s.size() && s[pos] == '[') {
+            ++pos;
+            ++dims;
+        }
+        if (dims > 255) return 0;
         return parse_type(s, pos, false) != 0 ? 'L' : 0;
+    }
     default:
         return 0;
     }
@@ -1593,7 +1635,13 @@ Each builds on the code above and is written with the real interfaces in hand.
   - `guest/zbjni/zbjni.c` -> `libzbjni.so`.
   - `core/src/jni/host_jni.cpp` with a `JniBackend` interface, and a mock backend for `zbrun`.
   - Acceptance: guest test `jni_mock_dynamic` covers every `Call*` form and the buffer release modes on this machine.
+  - Host RegisterNatives strips one leading '!' (the pre-O fast JNI marker that ART still accepts)
+    before computing the shorty. The GetMethodID/GetStaticMethodID host calls return the shorty,
+    computed on the host from the signature ART accepted, so the guest has no second descriptor
+    parser.
 - **4d: Android integration.**
   - `libzbproxy.so`, `ZBridge.onProxyLoaded`, `core/src/jni/loader.cpp` (dlopen, `Java_*` binding, guest `JNI_OnLoad`).
   - Launcher class-loader changes (`com.zettabridge.core` delegation, `findLibrary` proxies).
   - Device test T7 and the Orange Roulette smoke test (spec "Phase 4 acceptance").
+  - If the real RegisterNatives fails, the thunk slot allocated for it must be reusable (add a
+    release path to NativeSlots), so failed registrations do not leak slots.
