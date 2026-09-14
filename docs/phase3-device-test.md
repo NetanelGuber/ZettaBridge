@@ -21,7 +21,12 @@ without Android's `/system`, so an Android binary cannot run on it.
   - First attempt: every dynamic test exited with 1. Termux's `LD_PRELOAD` (a 64-bit
     library) reached the 32-bit guest linker. Fixed by never passing host
     `LD_PRELOAD`/`LD_LIBRARY_PATH` to guests.
-- **Still open:**
+- **2026-09-14, T6 app `android/t6/project/` in the `:guest` process: all 9 PASS. Phase 3
+  accepted.**
+  - The first run failed `syscalls_dynamic`: SIGALRM landed on an ART thread and was
+    dropped. Fixed by forwarding to the process signal target.
+  - `su -c 'logcat -d -s zbguest'` shows "hello from arm32 guest pid N".
+- **Previously open (now done):**
   - the in-app run inside the ART process (below);
   - the logcat check: `su -c 'logcat -d -s zbguest'` (quoted, or su eats the flags) must show
     "hello from arm32 guest" after `log_dynamic`.

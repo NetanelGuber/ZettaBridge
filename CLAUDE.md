@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # ZettaBridge
 
-**Current state: Phases 1 and 2 done (T1-T5 pass on this machine).**
+**Current state: Phases 1-3 done (T1-T5 on this machine, T6 on the phone).**
 - `zbrun` runs static and dynamic arm32 Android executables through Dynarmic and the
   real Android 17 arm32 linker and bionic.
 - Supported so far: threads, guest signal handlers, kuser helpers, and C++ exceptions
@@ -12,11 +12,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - All six Orange Roulette libraries `dlopen` with their JNI entry points resolvable.
 - On the phone (OnePlus 13, 2026-09-14): the Android build of `zbrun` passes the whole
   guest suite in Termux (`tools/make_termux_bundle.sh`).
-- In the T6 app 8/9 passed; the `syscalls_dynamic` failure was the lost SIGALRM, now fixed.
-  The rerun is pending. Ready project: `android/t6/project/`.
-- Next: the in-app T6 run next to ART (`tools/make_t6_bundle.sh`,
-  `docs/phase3-device-test.md`), then the part 1 (JNI) and part 4 (GLES/audio/assets)
-  specs.
+- T6 passed on 2026-09-14: all 9 guest tests pass inside an app process next to ART
+  (`android/t6/project/`), and guest `__android_log_print` shows in logcat.
+- Next: the part 1 (JNI bridge) spec, then Phase 4; part 4 (GLES/audio/assets) spec
+  before Phase 5.
 - Work is on branch `phase1-zbrun` (local only).
 
 Local git repo (no remote yet; pushing to GitHub is done together with the user).
