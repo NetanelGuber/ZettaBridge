@@ -137,3 +137,16 @@ A Claude Opus agent was working through the 4b review fixes (decisions D1-D14 ar
   4. Amend the specs: carrier state inheritance, futex park woken by signals, exit-in-call policy, process-lifetime runtime, loader on a carrier.
   5. Run the regression suite and Android link again, then update this table.
 - **Note:** ninja once warned "premature end of file"; check disk space (the disk is about 99% full).
+
+## Phase 4b status after Claude session (2026-09-15)
+
+- **Task 4:** `d3b7119`. Its P1 fix (retire the process signal target safely) is `5e21137`.
+- **Task 5:** `1c3d145` (clear thread-local before freeing cloned threads) and `75015d9`
+  (carriers). The review fix (tkill/tgkill post under the registry lock) is the next commit.
+- **Verification:** 15/15 host tests, 10 of 10 repeated `library_runtime_test` runs pass, the
+  guest suite passes, and the Android build links.
+- **Next: Task 6** (regression, Android link, docs). Then merge the branches into
+  `phase1-zbrun`.
+- **Deferred follow-up (pre-existing, minor).** `Process::unregister_thread` releases the
+  processor id before the real thread's `GuestThread`/JIT is destroyed. Task 5 fixed this
+  ordering for borrowers only.

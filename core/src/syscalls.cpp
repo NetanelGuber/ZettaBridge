@@ -350,19 +350,6 @@ std::int32_t sys_send_signal(Ctx& c, bool process_directed, std::int32_t tgid, s
                              const g::siginfo32* queued_info, std::int32_t code) {
     if (sig > 64) return -EINVAL;
     const auto pid = static_cast<std::int32_t>(::getpid());
-    GuestThread* target = nullptr;
-    if (process_directed) {
-        if (tgid != pid && tgid != 0) {
-            if (c.proc.first_time(kSeenSignal | sig)) log("signal %u to another process refused", sig);
-            return -EPERM;
-        }
-        target = &c.thread;
-    } else {
-        if (tgid != -1 && tgid != pid) return -ESRCH;
-        target = c.proc.find_thread(tid);
-        if (target == nullptr) return -ESRCH;
-    }
-    if (sig == 0) return 0;
 
     g::siginfo32 info{};
     if (queued_info != nullptr) {
@@ -373,8 +360,20 @@ std::int32_t sys_send_signal(Ctx& c, bool process_directed, std::int32_t tgid, s
         info.fields[1] = static_cast<std::uint32_t>(::getuid());
     }
     info.si_signo = static_cast<std::int32_t>(sig);
-    target->post_signal(info);
-    return 0;
+
+    if (process_directed) {
+        if (tgid != pid && tgid != 0) {
+            if (c.proc.first_time(kSeenSignal | sig)) log("signal %u to another process refused", sig);
+            return -EPERM;
+        }
+        if (sig != 0) c.thread.post_signal(info);
+        return 0;
+    }
+    if (tgid != -1 && tgid != pid) return -ESRCH;
+    // Signal 0 only probes for existence and never dereferences the thread.
+    if (sig == 0) return c.proc.find_thread(tid) != nullptr ? 0 : -ESRCH;
+    // Lookup and post under one lock: the target may be exiting or a carrier lease releasing.
+    return c.proc.post_signal_to(tid, info) ? 0 : -ESRCH;
 }
 
 std::int32_t sys_clock_get(Ctx& c, bool res, bool time64) {

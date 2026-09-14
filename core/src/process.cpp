@@ -266,6 +266,25 @@ GuestThread* Process::find_thread(std::int32_t tid) {
     return nullptr;
 }
 
+bool Process::post_signal_to(std::int32_t tid, const g::siginfo32& info) {
+    // post_signal takes no Process lock (atomics and a futex wake), so holding threads_mutex_
+    // here cannot deadlock.
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    for (GuestThread* t : borrowers_) {
+        if (t->tid == tid) {
+            t->post_signal(info);
+            return true;
+        }
+    }
+    for (GuestThread* t : threads_) {
+        if (t->tid == tid) {
+            t->post_signal(info);
+            return true;
+        }
+    }
+    return false;
+}
+
 std::unique_ptr<GuestThread> Process::create_borrower(GuestThread& carrier) {
     const int processor_id = allocate_processor_id();
     if (processor_id < 0) return nullptr;

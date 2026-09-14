@@ -74,7 +74,14 @@ public:
     // Real guest threads; borrowers are not counted.
     std::size_t thread_count() const;
     // Borrowers first, so tkill/tgkill aimed at a borrowed carrier's tid reach the borrower.
+    // The pointer is only safe to dereference while the thread cannot exit; to signal a thread
+    // use post_signal_to.
     GuestThread* find_thread(std::int32_t tid);
+    // Posts info to the guest thread with this tid (borrowers first) atomically with the lookup.
+    // It holds threads_mutex_, which unregister_thread() and destroy_borrower() take to unlist a
+    // thread before freeing it, so the target cannot be freed between lookup and post. False if
+    // no thread has this tid.
+    bool post_signal_to(std::int32_t tid, const g::siginfo32& info);
 
     // A JIT for the calling host thread that runs as `carrier`, a guest thread parked inside a
     // host call: its TLS, guest tid, a stack below its sp, its signal mask, alternate signal
