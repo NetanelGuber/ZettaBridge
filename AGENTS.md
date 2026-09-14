@@ -61,6 +61,13 @@ plans". Use the same format as the 4a plan: TDD tasks with complete code.
   injects (see CLAUDE.md).
 - **Commit messages:** plain English, imperative subject line.
 
-## Open launcher bug (reported 2026-09-14)
+## Launcher bug: plugin resources not found (fixed 2026-09-15, device retest pending)
 
-In arm64 plugins (repostzap, avtobuy), some assets (`assets/...`) and some string resources are not found at run time. The user will send the exact names and the APKs. Suspects: `PluginContext` resources/assets, and `getIdentifier(name, type, getPackageName())` returning 0 because the package name is the launcher's.
+- **repostzap.** `Resources$NotFoundException` for a string that exists in its APK. Its
+  Compose code localizes through `createConfigurationContext`, which returned a context
+  with the launcher's resources.
+- **avtobuy (Flutter).** No asset loads (`assets/cities.bin`, icon font). The Flutter engine
+  takes its AssetManager from `createPackageContext(getPackageName())`.
+- **Fix.** `PluginContext` wraps every derived context (configuration, display, window,
+  attribution, `createContext`, device-protected storage) and package contexts for its own
+  package in a `PluginContext` with plugin resources.

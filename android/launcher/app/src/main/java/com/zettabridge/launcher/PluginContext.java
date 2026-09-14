@@ -1,12 +1,17 @@
 package com.zettabridge.launcher;
 
 import android.content.Context;
+import android.content.ContextParams;
 import android.content.ContextWrapper;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.DatabaseErrorHandler;
 import android.database.sqlite.SQLiteDatabase;
+import android.os.Bundle;
+import android.view.Display;
 import android.view.LayoutInflater;
 
 import java.io.File;
@@ -18,25 +23,46 @@ import java.io.FileOutputStream;
  * Base context of plugin activities and the plugin Application. Code, resources and storage
  * belong to the plugin; identity (package name, uid, system services) stays the launcher's,
  * because system services check the caller's package against its uid.
+ *
+ * Contexts derived from this one (configuration, display, window, attribution, package
+ * contexts) are wrapped again. Otherwise the framework hands back a ContextImpl with the
+ * launcher's resources: Compose screens that localize through createConfigurationContext then
+ * fail with Resources$NotFoundException, and Flutter, which takes its AssetManager from
+ * createPackageContext(getPackageName()), cannot load any asset.
  */
 final class PluginContext extends ContextWrapper {
     private final LoadedPlugin plugin;
+    private final Resources resources;
     private Resources.Theme theme;
     private LayoutInflater inflater;
 
     PluginContext(Context base, LoadedPlugin plugin) {
+        this(base, plugin, plugin.resources);
+    }
+
+    private PluginContext(Context base, LoadedPlugin plugin, Resources resources) {
         super(base);
         this.plugin = plugin;
+        this.resources = resources;
+    }
+
+    /** Wraps a context derived by the framework, with plugin resources in its configuration. */
+    private PluginContext derived(Context frameworkContext) {
+        Resources host = frameworkContext.getResources();
+        @SuppressWarnings("deprecation")
+        Resources pluginResources = new Resources(plugin.resources.getAssets(), host.getDisplayMetrics(),
+                host.getConfiguration());
+        return new PluginContext(frameworkContext, plugin, pluginResources);
     }
 
     @Override
     public Resources getResources() {
-        return plugin.resources;
+        return resources;
     }
 
     @Override
     public AssetManager getAssets() {
-        return plugin.resources.getAssets();
+        return resources.getAssets();
     }
 
     @Override
@@ -64,12 +90,58 @@ final class PluginContext extends ContextWrapper {
         return plugin.application != null ? plugin.application : super.getApplicationContext();
     }
 
+    // Derived contexts.
+
+    @Override
+    public Context createConfigurationContext(Configuration overrideConfiguration) {
+        return derived(super.createConfigurationContext(overrideConfiguration));
+    }
+
+    @Override
+    public Context createDisplayContext(Display display) {
+        return derived(super.createDisplayContext(display));
+    }
+
+    @Override
+    public Context createWindowContext(int type, Bundle options) {
+        return derived(super.createWindowContext(type, options));
+    }
+
+    @Override
+    public Context createWindowContext(Display display, int type, Bundle options) {
+        return derived(super.createWindowContext(display, type, options));
+    }
+
+    @Override
+    public Context createAttributionContext(String attributionTag) {
+        return derived(super.createAttributionContext(attributionTag));
+    }
+
+    @Override
+    public Context createContext(ContextParams contextParams) {
+        return derived(super.createContext(contextParams));
+    }
+
+    @Override
+    public Context createDeviceProtectedStorageContext() {
+        return derived(super.createDeviceProtectedStorageContext());
+    }
+
+    /** "Our own package" is the plugin, whether it is named by the plugin or the launcher package. */
+    @Override
+    public Context createPackageContext(String packageName, int flags) throws PackageManager.NameNotFoundException {
+        if (packageName.equals(plugin.packageName) || packageName.equals(getBaseContext().getPackageName())) {
+            return derived(super.createPackageContext(getBaseContext().getPackageName(), flags));
+        }
+        return super.createPackageContext(packageName, flags);
+    }
+
     // Theme and inflater are only used when this context is not wrapped by an Activity
     // (the plugin Application); activities have their own ContextThemeWrapper state.
     @Override
     public Resources.Theme getTheme() {
         if (theme == null) {
-            theme = plugin.resources.newTheme();
+            theme = resources.newTheme();
             int id = plugin.appInfo.theme != 0 ? plugin.appInfo.theme : android.R.style.Theme_DeviceDefault_Light_DarkActionBar;
             theme.applyStyle(id, true);
         }
