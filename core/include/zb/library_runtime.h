@@ -32,6 +32,8 @@ struct LibraryRuntimeOptions {
 // start() the destructor logs and aborts; tests end with std::_Exit.
 class LibraryRuntime {
 public:
+    class Carrier;
+
     LibraryRuntime();
     ~LibraryRuntime();
     LibraryRuntime(const LibraryRuntime&) = delete;
@@ -50,6 +52,11 @@ public:
     // handlers). nullopt if the calling host thread runs no guest code.
     std::optional<GuestResult> call_on_current(std::uint32_t function, const GuestCall& args);
 
+    // Leases a new carrier (a guest pthread parked in PARK) to the calling host thread.
+    // Spawning is serialized through the service thread. Fails on a host thread that already
+    // runs guest code (the service thread, a borrower, a guest pthread): use call_on_current.
+    std::unique_ptr<Carrier> borrow(std::string& error);
+
     GuestMemory& memory();
     // Valid after a successful start().
     const zb_service_api& service_api() const;
@@ -59,6 +66,33 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+};
+
+// A lease of one carrier, bound to the host thread that borrowed it. Each lease costs two
+// processor ids and two JITs (a 2 MiB carrier JIT and a 32 MiB borrower JIT), and the borrower
+// translates guest code cold. Destroying the lease (on the same host thread) releases the
+// carrier, which returns from PARK and exits through bionic.
+class LibraryRuntime::Carrier {
+public:
+    ~Carrier();
+    Carrier(const Carrier&) = delete;
+    Carrier& operator=(const Carrier&) = delete;
+
+    std::optional<GuestResult> call(std::uint32_t function, const GuestCall& args);
+    // Guest dlopen/dlsym on this carrier, with dlerror read on the same guest thread.
+    std::uint32_t load_library(const std::string& path, std::uint32_t guest_flags, std::string& error);
+    std::uint32_t find_symbol(std::uint32_t handle, const std::string& name, std::string& error);
+    std::int32_t guest_tid() const;
+    std::uint32_t guest_tls() const;
+
+private:
+    friend class LibraryRuntime;
+    struct State;
+    explicit Carrier(std::unique_ptr<State> state);
+    // Guest malloc'ed string buffer of this carrier, allocated on first use.
+    bool ensure_scratch(std::string& error);
+
+    std::unique_ptr<State> state_;
 };
 
 }  // namespace zb

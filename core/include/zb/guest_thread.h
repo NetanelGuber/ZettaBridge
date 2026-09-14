@@ -102,6 +102,8 @@ public:
     int exit_status = 0;
     // Number of host-to-guest calls active on this thread (call() frames).
     int call_depth = 0;
+    // Code cache size for threads this thread clones; 0 selects kDefaultCodeCacheSize.
+    std::size_t child_code_cache_size = 0;
     // Host tid of the host thread running this guest thread.
     std::int32_t tid = 0;
 

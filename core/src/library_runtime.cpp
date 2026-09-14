@@ -8,6 +8,7 @@
 #include <future>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 
 #include "zb/log.h"
@@ -16,6 +17,8 @@ namespace zb {
 
 namespace {
 
+constexpr std::chrono::milliseconds kCarrierParkTimeout{10000};
+
 struct Response {
     bool ok = false;
     std::optional<GuestResult> result;
@@ -23,7 +26,7 @@ struct Response {
 };
 
 struct Command {
-    enum class Kind { Load, Symbol, Call };
+    enum class Kind { Load, Symbol, Call, SpawnCarrier };
     Kind kind = Kind::Call;
     std::uint32_t value = 0;
     std::uint32_t flags = 0;
@@ -39,6 +42,16 @@ std::string exit_message(int status) {
     return "zbhost exited with status " + std::to_string(status);
 }
 
+// A carrier guest pthread inside its PARK host call. Guarded by Impl::mutex. Only a carrier
+// that is inside PARK is listed as available, so a lease never starts while the carrier runs
+// guest code; a leased carrier does not leave PARK until it is released.
+struct ParkedCarrier {
+    enum class State { Available, Leased, Released };
+    GuestThread* thread = nullptr;
+    State state = State::Available;
+    bool listed = false;
+};
+
 }  // namespace
 
 struct LibraryRuntime::Impl {
@@ -47,7 +60,10 @@ struct LibraryRuntime::Impl {
     std::thread runner;
     mutable std::mutex mutex;
     std::condition_variable cv;
+    std::condition_variable carrier_cv;
     std::deque<std::shared_ptr<Command>> commands;
+    std::deque<std::shared_ptr<ParkedCarrier>> available;
+    std::unordered_map<GuestThread*, std::shared_ptr<ParkedCarrier>> carriers;
     zb_service_api api{};
     GuestThread* service = nullptr;
     std::thread::id service_id;
@@ -160,6 +176,19 @@ struct LibraryRuntime::Impl {
             response.ok = response.result.has_value();
             if (!response.ok) response.error = "guest service call failed";
             break;
+        case Command::Kind::SpawnCarrier:
+            // The carrier JIT only runs bionic thread start-up, parking and exit.
+            thread.child_code_cache_size = kCarrierCodeCacheSize;
+            response.result = invoke(api.spawn_carrier_fn, GuestCall{});
+            thread.child_code_cache_size = 0;
+            if (!response.result) {
+                response.error = "guest pthread_create call failed";
+            } else if (response.result->r0 != 0) {
+                response.error = "guest pthread_create returned " + std::to_string(response.result->r0);
+            } else {
+                response.ok = true;
+            }
+            break;
         }
         return response;
     }
@@ -215,9 +244,66 @@ struct LibraryRuntime::Impl {
         return true;
     }
 
+    // PARK: publish this carrier, deliver its signals while it is unleased, and return 0 once a
+    // borrower has released it.
+    bool park_carrier(GuestThread& thread) {
+        std::shared_ptr<ParkedCarrier> record;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            std::shared_ptr<ParkedCarrier>& slot = carriers[&thread];
+            if (!slot) {
+                slot = std::make_shared<ParkedCarrier>();
+                slot->thread = &thread;
+            }
+            record = slot;
+        }
+        bool detached = false;
+        for (;;) {
+            const std::uint32_t token = thread.park_token();
+            bool published = false;
+            bool leased = false;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (record->state == ParkedCarrier::State::Released) {
+                    carriers.erase(&thread);
+                    break;
+                }
+                if (record->state == ParkedCarrier::State::Available) {
+                    if (thread.has_pending_signals(thread.sigmask)) {
+                        if (record->listed) {
+                            std::erase(available, record);
+                            record->listed = false;
+                        }
+                        thread.regs()[0] = ZB_SERVICE_AGAIN;
+                        return true;
+                    }
+                    if (!record->listed) {
+                        available.push_back(record);
+                        record->listed = true;
+                        published = true;
+                    }
+                } else {
+                    leased = true;
+                }
+            }
+            if (published) carrier_cv.notify_all();
+            if (leased && !detached) {
+                // Host signals landing on this host thread go to the process signal target
+                // while the carrier's identity runs on the borrower.
+                Process::set_current_thread(nullptr);
+                detached = true;
+            }
+            thread.park(token);
+        }
+        if (detached) Process::set_current_thread(&thread);
+        thread.regs()[0] = 0;
+        return true;
+    }
+
     bool handle_host_call(std::uint32_t index, GuestThread& thread) {
         if (index >= ZB_RUNTIME_HOST_CALL_FIRST && index <= ZB_RUNTIME_HOST_CALL_LAST) {
             if (index == ZB_SERVICE_READY_INDEX) return handle_ready(thread);
+            if (index == ZB_CARRIER_PARK_INDEX) return park_carrier(thread);
             return false;
         }
         return chained && chained(index, thread);
@@ -238,6 +324,14 @@ struct LibraryRuntime::Impl {
         target->wake();
         return future.get();
     }
+};
+
+struct LibraryRuntime::Carrier::State {
+    Impl* impl = nullptr;
+    std::shared_ptr<ParkedCarrier> parked;
+    std::unique_ptr<GuestThread> borrower;
+    std::thread::id owner;
+    std::uint32_t scratch = 0;
 };
 
 LibraryRuntime::LibraryRuntime() : impl_(std::make_unique<Impl>()) {}
@@ -288,6 +382,7 @@ bool LibraryRuntime::start(const LibraryRuntimeOptions& options, std::string& er
             pending.swap(impl->commands);
         }
         impl->cv.notify_all();
+        impl->carrier_cv.notify_all();
         for (const auto& command : pending) command->done.set_value({false, std::nullopt, exit_message(status)});
     });
 
@@ -342,6 +437,51 @@ std::optional<GuestResult> LibraryRuntime::call_on_current(std::uint32_t functio
     return impl_->process.call_guest(*thread, function, args);
 }
 
+std::unique_ptr<LibraryRuntime::Carrier> LibraryRuntime::borrow(std::string& error) {
+    if (Process::current_thread() != nullptr) {
+        error = "the calling host thread already runs guest code; use call_on_current";
+        return nullptr;
+    }
+    auto command = std::make_shared<Command>();
+    command->kind = Command::Kind::SpawnCarrier;
+    Response response = impl_->submit(std::move(command));
+    if (!response.ok) {
+        error = std::move(response.error);
+        return nullptr;
+    }
+
+    std::shared_ptr<ParkedCarrier> record;
+    {
+        std::unique_lock<std::mutex> lock(impl_->mutex);
+        impl_->carrier_cv.wait_for(lock, kCarrierParkTimeout,
+                                   [&] { return !impl_->available.empty() || impl_->finished; });
+        if (impl_->available.empty()) {
+            error = impl_->finished ? "zbhost exited" : "guest carrier did not park within 10000 ms";
+            return nullptr;
+        }
+        record = impl_->available.front();
+        impl_->available.pop_front();
+        record->listed = false;
+        record->state = ParkedCarrier::State::Leased;
+        record->thread->wake();
+    }
+
+    std::unique_ptr<GuestThread> borrower = impl_->process.create_borrower(*record->thread);
+    if (!borrower) {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        record->state = ParkedCarrier::State::Released;
+        record->thread->wake();
+        error = "no Dynarmic processor id is available for a borrower";
+        return nullptr;
+    }
+    auto state = std::make_unique<Carrier::State>();
+    state->impl = impl_.get();
+    state->parked = std::move(record);
+    state->borrower = std::move(borrower);
+    state->owner = std::this_thread::get_id();
+    return std::unique_ptr<Carrier>(new Carrier(std::move(state)));
+}
+
 GuestMemory& LibraryRuntime::memory() {
     return impl_->process.memory();
 }
@@ -352,6 +492,79 @@ const zb_service_api& LibraryRuntime::service_api() const {
 
 std::size_t LibraryRuntime::guest_thread_count() const {
     return impl_->process.thread_count();
+}
+
+LibraryRuntime::Carrier::Carrier(std::unique_ptr<State> state) : state_(std::move(state)) {}
+
+LibraryRuntime::Carrier::~Carrier() {
+    if (state_->owner != std::this_thread::get_id()) {
+        log("carrier lease released on a different host thread");
+        std::abort();
+    }
+    Impl* impl = state_->impl;
+    if (state_->scratch != 0) {
+        GuestCall args;
+        args.regs = {state_->scratch, 0, 0, 0};
+        (void)call(impl->api.free_fn, args);
+    }
+    GuestThread& carrier = *state_->parked->thread;
+    impl->process.destroy_borrower(std::move(state_->borrower), carrier);
+    // Wake under the lock: once the carrier sees Released it may exit and free its GuestThread.
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    state_->parked->state = ParkedCarrier::State::Released;
+    carrier.wake();
+}
+
+std::optional<GuestResult> LibraryRuntime::Carrier::call(std::uint32_t function, const GuestCall& args) {
+    if (state_->owner != std::this_thread::get_id()) {
+        log("carrier lease used on a different host thread");
+        std::abort();
+    }
+    GuestThread* borrower = state_->borrower.get();
+    GuestThread* previous = Process::current_thread();
+    if (previous != nullptr && previous != borrower) {
+        log("carrier lease used while the host thread runs other guest code");
+        return std::nullopt;
+    }
+    Process::set_current_thread(borrower);
+    auto result = state_->impl->process.call_guest(*borrower, function, args);
+    Process::set_current_thread(previous);
+    return result;
+}
+
+bool LibraryRuntime::Carrier::ensure_scratch(std::string& error) {
+    if (state_->scratch != 0) return true;
+    GuestCall args;
+    args.regs = {ZB_SERVICE_SCRATCH_SIZE, 0, 0, 0};
+    const auto result = call(state_->impl->api.malloc_fn, args);
+    if (!result || result->r0 == 0) {
+        error = "guest malloc for the carrier scratch buffer failed";
+        return false;
+    }
+    state_->scratch = result->r0;
+    return true;
+}
+
+std::uint32_t LibraryRuntime::Carrier::load_library(const std::string& path, std::uint32_t guest_flags,
+                                                    std::string& error) {
+    if (!ensure_scratch(error)) return 0;
+    const Invoke invoke = [this](std::uint32_t function, const GuestCall& args) { return call(function, args); };
+    return state_->impl->load(invoke, state_->scratch, ZB_SERVICE_SCRATCH_SIZE, path, guest_flags, error);
+}
+
+std::uint32_t LibraryRuntime::Carrier::find_symbol(std::uint32_t handle, const std::string& name,
+                                                   std::string& error) {
+    if (!ensure_scratch(error)) return 0;
+    const Invoke invoke = [this](std::uint32_t function, const GuestCall& args) { return call(function, args); };
+    return state_->impl->symbol(invoke, state_->scratch, ZB_SERVICE_SCRATCH_SIZE, handle, name, error);
+}
+
+std::int32_t LibraryRuntime::Carrier::guest_tid() const {
+    return state_->borrower->tid;
+}
+
+std::uint32_t LibraryRuntime::Carrier::guest_tls() const {
+    return state_->borrower->tls();
 }
 
 }  // namespace zb

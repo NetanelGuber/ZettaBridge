@@ -175,6 +175,7 @@ void Process::request_exit(int status) {
 void Process::invalidate(std::uint32_t addr, std::uint32_t len) {
     std::lock_guard<std::mutex> lock(threads_mutex_);
     for (GuestThread* t : threads_) t->invalidate(addr, len);
+    for (GuestThread* t : borrowers_) t->invalidate(addr, len);
 }
 
 bool Process::first_time(std::uint64_t key) {
@@ -256,10 +257,55 @@ int Process::allocate_processor_id() {
 
 GuestThread* Process::find_thread(std::int32_t tid) {
     std::lock_guard<std::mutex> lock(threads_mutex_);
+    for (GuestThread* t : borrowers_) {
+        if (t->tid == tid) return t;
+    }
     for (GuestThread* t : threads_) {
         if (t->tid == tid) return t;
     }
     return nullptr;
+}
+
+std::unique_ptr<GuestThread> Process::create_borrower(GuestThread& carrier) {
+    const int processor_id = allocate_processor_id();
+    if (processor_id < 0) return nullptr;
+    auto borrower =
+        std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(processor_id), precise_faults_);
+    borrower->regs().fill(0);
+    borrower->regs()[13] = carrier.regs()[13] & ~7u;
+    borrower->ext_regs().fill(0);
+    borrower->set_cpsr(kCpsrUserMode);
+    borrower->set_fpscr(carrier.fpscr());
+    borrower->set_tls(carrier.tls());
+    borrower->tid = carrier.tid;
+    borrower->sigmask = carrier.sigmask;
+    borrower->altstack = carrier.altstack;
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    borrowers_.push_back(borrower.get());
+    return borrower;
+}
+
+// Borrower counterpart of unregister_thread(), in this order: tid routing is removed first, then
+// the exclusive monitor slot is cleared and the JIT freed, and only then is the processor id
+// released, so a concurrent create_borrower/clone_thread cannot reuse the id while this JIT still
+// exists. A borrower is never published as the process signal target, and only the borrowing host
+// thread names it as current (cleared by the caller before this), so no forwarding reader can
+// still hold it.
+void Process::destroy_borrower(std::unique_ptr<GuestThread> borrower, GuestThread& carrier) {
+    if (!borrower) return;
+    carrier.sigmask = borrower->sigmask;
+    carrier.altstack = borrower->altstack;
+    {
+        std::lock_guard<std::mutex> lock(threads_mutex_);
+        std::erase(borrowers_, borrower.get());
+    }
+    g::siginfo32 info;
+    while (borrower->take_signal(0, info)) carrier.post_signal(info);
+    const std::size_t processor_id = borrower->processor_id();
+    monitor_->ClearProcessor(processor_id);
+    borrower.reset();
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    processor_ids_.reset(processor_id);
 }
 
 void Process::register_thread(GuestThread* thread) {
@@ -447,7 +493,10 @@ std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std
     const int processor_id = allocate_processor_id();
     if (processor_id < 0) return -EAGAIN;
 
-    auto child = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(processor_id), precise_faults_);
+    const std::size_t code_cache_size =
+        parent.child_code_cache_size != 0 ? parent.child_code_cache_size : kDefaultCodeCacheSize;
+    auto child = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(processor_id),
+                                               precise_faults_, code_cache_size);
     child->regs() = parent.regs();
     child->regs()[0] = 0;
     if (stack != 0) child->regs()[13] = stack;

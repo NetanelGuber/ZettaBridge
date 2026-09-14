@@ -71,8 +71,21 @@ public:
     // Starts a guest thread for clone(CLONE_VM | CLONE_THREAD ...). Returns the new tid or -errno.
     std::int32_t clone_thread(GuestThread& parent, std::uint32_t flags, std::uint32_t stack,
                               std::uint32_t parent_tid_addr, std::uint32_t tls, std::uint32_t child_tid_addr);
+    // Real guest threads; borrowers are not counted.
     std::size_t thread_count() const;
+    // Borrowers first, so tkill/tgkill aimed at a borrowed carrier's tid reach the borrower.
     GuestThread* find_thread(std::int32_t tid);
+
+    // A JIT for the calling host thread that runs as `carrier`, a guest thread parked inside a
+    // host call: its TLS, guest tid, a stack below its sp, its signal mask, alternate signal
+    // stack and FPSCR. The carrier must stay parked until destroy_borrower. Costs one processor
+    // id and a 32 MiB JIT; translated code starts cold. nullptr if no processor id is free.
+    // A borrower is never the process signal target.
+    std::unique_ptr<GuestThread> create_borrower(GuestThread& carrier);
+    // Copies the signal mask and alternate stack back to the still-parked carrier, moves signals
+    // still pending on the borrower to it, and frees the borrower. Call on the borrowing thread,
+    // after it stopped naming the borrower as its current guest thread.
+    void destroy_borrower(std::unique_ptr<GuestThread> borrower, GuestThread& carrier);
 
     // Signals (signals.cpp).
     static void set_current_thread(GuestThread* thread);
@@ -177,6 +190,7 @@ private:
     mutable std::mutex threads_mutex_;
     std::condition_variable threads_cv_;
     std::vector<GuestThread*> threads_;
+    std::vector<GuestThread*> borrowers_;
     std::bitset<kMaxThreads> processor_ids_;
 
     std::mutex mm_mutex_;
