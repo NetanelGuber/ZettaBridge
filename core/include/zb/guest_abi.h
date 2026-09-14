@@ -47,7 +47,8 @@ struct ksigaction32 {
     std::uint32_t mask[2];
 };
 
-// struct stat64 on arm EABI. Member names avoid st_atime/st_mtime/st_ctime (libc macros).
+// struct stat64 on arm EABI. Time members drop the st_ prefix: glibc and bionic define
+// st_atime/st_atime_nsec (and mtime/ctime) as macros.
 struct stat64 {
     std::uint64_t st_dev;
     std::uint8_t pad0[4];
@@ -63,12 +64,12 @@ struct stat64 {
     std::uint32_t st_blksize;
     std::uint32_t pad5;
     std::uint64_t st_blocks;
-    std::uint32_t st_atime_sec;
-    std::uint32_t st_atime_nsec;
-    std::uint32_t st_mtime_sec;
-    std::uint32_t st_mtime_nsec;
-    std::uint32_t st_ctime_sec;
-    std::uint32_t st_ctime_nsec;
+    std::uint32_t atime_sec;
+    std::uint32_t atime_nsec;
+    std::uint32_t mtime_sec;
+    std::uint32_t mtime_nsec;
+    std::uint32_t ctime_sec;
+    std::uint32_t ctime_nsec;
     std::uint64_t st_ino;
 };
 
@@ -161,7 +162,7 @@ static_assert(offsetof(stat64, st_rdev) == 32);
 static_assert(offsetof(stat64, st_size) == 48);
 static_assert(offsetof(stat64, st_blksize) == 56);
 static_assert(offsetof(stat64, st_blocks) == 64);
-static_assert(offsetof(stat64, st_atime_sec) == 72);
+static_assert(offsetof(stat64, atime_sec) == 72);
 static_assert(offsetof(stat64, st_ino) == 96);
 
 }  // namespace zb::g

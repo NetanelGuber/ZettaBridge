@@ -4,6 +4,11 @@ project(zettabridge LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Dynarmic's bundled fmt 10.1.0 rejects its own compile-time format-string checks under
+# clang 21 (NDK r29): "call to consteval function ... is not a constant expression".
+# An empty FMT_CONSTEVAL turns those checks into plain constexpr; formatting is unchanged.
+add_compile_definitions(FMT_CONSTEVAL=)
+
 set(DYNARMIC_FRONTENDS "A32" CACHE STRING "" FORCE)
 set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)

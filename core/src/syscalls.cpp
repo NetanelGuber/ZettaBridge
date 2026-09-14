@@ -120,12 +120,12 @@ void fill_stat64(g::stat64& out, const struct stat& st) {
     out.st_size = st.st_size;
     out.st_blksize = static_cast<std::uint32_t>(st.st_blksize);
     out.st_blocks = static_cast<std::uint64_t>(st.st_blocks);
-    out.st_atime_sec = static_cast<std::uint32_t>(st.st_atim.tv_sec);
-    out.st_atime_nsec = static_cast<std::uint32_t>(st.st_atim.tv_nsec);
-    out.st_mtime_sec = static_cast<std::uint32_t>(st.st_mtim.tv_sec);
-    out.st_mtime_nsec = static_cast<std::uint32_t>(st.st_mtim.tv_nsec);
-    out.st_ctime_sec = static_cast<std::uint32_t>(st.st_ctim.tv_sec);
-    out.st_ctime_nsec = static_cast<std::uint32_t>(st.st_ctim.tv_nsec);
+    out.atime_sec = static_cast<std::uint32_t>(st.st_atim.tv_sec);
+    out.atime_nsec = static_cast<std::uint32_t>(st.st_atim.tv_nsec);
+    out.mtime_sec = static_cast<std::uint32_t>(st.st_mtim.tv_sec);
+    out.mtime_nsec = static_cast<std::uint32_t>(st.st_mtim.tv_nsec);
+    out.ctime_sec = static_cast<std::uint32_t>(st.st_ctim.tv_sec);
+    out.ctime_nsec = static_cast<std::uint32_t>(st.st_ctim.tv_nsec);
     out.st_ino = st.st_ino;
 }
 
