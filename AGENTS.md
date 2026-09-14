@@ -36,7 +36,9 @@ All Phase 4a review notes were folded into the implementation, tests, plan, and 
 
 ## Next: plans 4b, 4c, 4d
 
-Start by writing plan 4b from the real Phase 4a interfaces.
+Draft plan 4b is at
+`docs/superpowers/plans/2026-09-14-phase4b-library-runtime.md`; review it before
+implementation. It is based on the real Phase 4a interfaces.
 
 Write each plan after 4a lands, using the real interfaces. The scope and the review
 notes (per-method `RegisterNatives`, the `!` prefix, host-computed shorties, slot
