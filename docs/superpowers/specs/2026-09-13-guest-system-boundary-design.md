@@ -206,6 +206,9 @@ vehicle.
 - **Refused, with a log line.**
   - `fork`, `vfork`, `execve`, `clone` without `CLONE_VM|CLONE_THREAD`: `EPERM`.
   - `ptrace`: `EPERM`.
+- **`personality` is emulated per process.** bionic arm32 calls
+  `personality(PER_LINUX32)` during init and aborts if it fails, and a 64-bit-only
+  kernel refuses it. Found in Phase 1.
 - **`exit_group`.** Ends the `:guest` process, or `zbrun`, with the guest status.
 - **Unknown syscalls.** Return `ENOSYS` and log the syscall name once.
 

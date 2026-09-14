@@ -420,6 +420,9 @@ validated page by page up to the NUL. Host results `-1` become `-errno`.
 | uname | host uname then machine = "armv8l" |
 | ugetrlimit | host getrlimit, clamp to rlimit32 (RLIM_INFINITY -> 0xFFFFFFFF) |
 | prlimit64 | pass-through (fixed-width) |
+| personality | emulated per process: query (0xFFFFFFFF) returns current, set returns previous. Found during execution: bionic arm32 aborts if PER_LINUX32 cannot be set, and this kernel refuses it |
+| sched_getscheduler, socket, connect | pass-through; found during execution (bionic init, liblog's logd socket) |
+| rt_tgsigqueueinfo | same as tgkill; found during execution (bionic abort uses it) |
 
 - [ ] Real `guest/tests/hello_static.c`:
 ```c
