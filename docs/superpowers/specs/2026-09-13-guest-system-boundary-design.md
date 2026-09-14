@@ -205,6 +205,10 @@ is never modified.
 | guest -> host | `svc #(0x5A0000 \| index)`, index < 0xFFFF | generated host-call handler |
 | host -> guest return | `svc #0x5AFFFF` at a fixed "return" address in the kuser page area | ends the current guest call |
 
+- **Index ranges.** Generated stub indices stay below `0xFE00`. `0xFE00-0xFEFF` belongs to
+  the library runtime (`READY` = `0xFE00`, carrier `PARK` = `0xFE01`,
+  `core/include/zb/library_protocol.h`); `0xFFFF` is the return.
+
 - **Stub shape.** Stubs are ARM mode (`svc`, `bx lr`), so Thumb callers interwork. `sp`
   is untouched, which lets handlers read stack arguments at guest `sp` (AAPCS softfp:
   floats in core registers, 64-bit values on an even register pair or 8-byte-aligned
@@ -212,6 +216,14 @@ is never modified.
 - **Host-to-guest call.** Save the JIT registers, put arguments in `r0-r3` and on the
   guest stack, set `lr` to the return address and `pc` to the target (Thumb bit
   honored), `Run()` until the return svc, read `r0`/`r1`, restore registers.
+  - The target starts with ITSTATE and the E bit cleared; only T follows the target.
+  - Every stop inside the call goes through the same dispatcher and signal delivery as
+    the thread's own loop (`Process::dispatch_stop` + `after_stop`).
+  - The return svc ends the call only when `sp` equals the call frame's `sp`. A
+    mismatch (a `longjmp` or unwind crossed the frame) and a return svc while no call
+    is active are illegal instructions.
+  - CPU registers, CPSR and FPSCR are restored; TLS, signal mask and other emulated
+    kernel state changed by the callee are not.
 - **Rule: no host work inside Dynarmic callbacks.** `CallSVC` records the request and
   calls `HaltExecution`. The thread's run loop performs the syscall or host call after
   `Run()` returns, then resumes. Host work that re-enters the guest (JNI -> Java ->
@@ -260,23 +272,59 @@ is never modified.
   - The guest tid is the host tid.
 - **Host threads entering the guest** (Java UI thread, `GLThread`). Each one borrows a
   **carrier**.
-  - On first entry, `zbhost` runs guest `pthread_create(carrier_entry)`. The carrier
-    immediately makes a blocking host call that reports its TLS pointer and current
-    `sp`, then parks.
-  - The entering host thread gets its own JIT. It runs guest code with TPIDRURO equal
-    to the carrier's TLS and a stack below the carrier's parked `sp`.
+  - On first entry, the service thread runs guest `pthread_create(carrier_main)`,
+    which serializes carrier spawning. The carrier immediately makes the blocking
+    `PARK` host call and waits inside it.
+  - The entering host thread gets its own JIT (the borrower). It runs guest code with
+    TPIDRURO equal to the carrier's TLS, a stack below the carrier's parked `sp`, and
+    the carrier's guest tid.
   - For bionic this is a legitimate thread that happens to execute on a different
     host thread. GL calls therefore run on `GLThread`, where the EGL context is current.
-  - When the host thread detaches, the carrier is unparked and returns, and bionic
-    cleans up normally.
+  - When the host thread releases the lease, `PARK` returns, `carrier_main` returns, and
+    bionic cleans up normally.
+  - A host thread that already runs guest code (the service thread, a borrower, a guest
+    pthread inside a host call) never borrows: it makes a nested call on its own JIT.
+- **Carrier state inheritance.** The borrower starts with the carrier's signal mask,
+  alternate signal stack and FPSCR. Releasing the lease copies the signal mask and
+  alternate stack back and moves signals still pending on the borrower to the carrier,
+  before the carrier resumes. The carrier stays inside `PARK` for the whole lease, so
+  the copies are race-free.
+- **Signal-interruptible parking.** A thread waiting inside a host call (the service
+  thread in `READY`, an unleased carrier in `PARK`) sleeps on a per-thread futex word.
+  - `post_signal` changes the word and wakes it with `FUTEX_WAKE`, which is
+    async-signal-safe. New service commands and lease changes wake the same word.
+  - With pending unblocked signals, `READY`/`PARK` return `ZB_SERVICE_AGAIN` in `r0`.
+    `zbhost` loops back into the host call, and the normal thread loop delivers the
+    signal in between. A process-directed SIGALRM therefore reaches a parked service
+    thread.
+  - A leased carrier does not leave `PARK` for signals (its stack and TLS are in use).
+    Its host thread forwards host signals to the process signal target instead.
+- **Exit inside a host-to-guest call.** A thread exit (`exit`, `pthread_exit`) while a
+  call is active on that thread ends the host process: bionic has already released the
+  thread's TLS and stack, so nothing may keep running on it. A fatal fault or signal in
+  a call follows the thread-loop path: with other guest threads alive the host process
+  ends; on the only guest thread the call fails and `Process::run` returns the status.
 - **Tid mapping.** A borrower's cached `gettid()` is the carrier's tid, so mutex
   ownership stays consistent. `tgkill`/`tkill` aimed at a carrier tid are redirected
   to the borrowing host thread while it is borrowing.
+  - **PI futexes are not supported on borrowers.** The kernel records the calling host
+    tid as the owner, which is not the guest tid bionic stored in the mutex. (The
+    syscall layer currently refuses PI futex commands for every thread.)
+  - **`tkill`/`tgkill` look up their target and post under the thread registry lock**
+    (`threads_mutex_`, `Process::post_signal_to`), so a lease change or thread exit
+    cannot race the lookup and post to a thread that has just been retired.
 - **Resources.**
-  - `code_cache_size` is 32 MiB per JIT.
+  - `code_cache_size` is 32 MiB per JIT. Carrier JITs, which only run thread start-up,
+    parking and exit, use 2 MiB.
+  - Each borrow costs two processor ids and two JITs (carrier and borrower). Every Java
+    thread translates guest code cold; on this machine the first borrow takes about
+    30 ms and the first call of a trivial function under 1 ms.
   - The `ExclusiveMonitor` is sized for 256 processor ids, allocated from a pool and
-    freed on thread exit.
-  - Invalidations are broadcast to all JITs.
+    freed on thread exit and lease release.
+  - Invalidations are broadcast to all JITs, borrowers included.
+- **Lifetime.** The library-mode runtime lives as long as the host process. Guest
+  threads cannot be torn down, so there is no shutdown path; destroying a started
+  runtime is a fatal error.
 
 ## Signals
 
@@ -303,6 +351,12 @@ is never modified.
 - **Asynchronous signals** (`alarm`, `raise`, `tgkill`, SIGPIPE). Mark the signal
   pending on the target guest thread and call `HaltExecution` on its JIT. Delivery
   happens as above.
+- **Process signal target lifetime.** The process-directed forwarding target (the main
+  guest thread; see Threads) is retired safely when its `Process` finishes: the
+  pointer is CAS'd to null and the retiring code waits on an always-lock-free reader
+  counter that every forwarding handler increments before loading the target, so a
+  handler already holding the pointer finishes before the `GuestThread` it points to
+  is freed.
 
 ## Errors and diagnostics
 

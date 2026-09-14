@@ -11,6 +11,7 @@ add_library(zbcore STATIC
     src/jni/native_thunks.cpp
     src/jni/shorty.cpp
     src/jni/thunks.S
+    src/library_runtime.cpp
     src/log.cpp
     src/proc_files.cpp
     src/process.cpp

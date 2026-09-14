@@ -1,7 +1,9 @@
 // Guest signal delivery: frames, sigreturn, faults turned into signals, and forwarding of
 // asynchronous host signals to the guest thread they arrive on.
+#include <sched.h>
 #include <signal.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -46,6 +48,12 @@ thread_local GuestThread* t_current_thread = nullptr;
 // app process the kernel may pick any ART thread for them (a guest thread may have the signal
 // blocked on the host), so dropping them there loses SIGALRM from setitimer and the like.
 std::atomic<GuestThread*> g_process_signal_target{nullptr};
+// Forwarding handlers currently between acquiring g_process_signal_target and finishing their use
+// of it. clear_process_signal_target() waits for this to reach zero before returning, so the
+// caller may free the retired thread. Handlers use it, so it must never take a lock.
+std::atomic<std::uint32_t> g_target_readers{0};
+static_assert(std::atomic<GuestThread*>::is_always_lock_free);
+static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
 
 std::uint64_t sig_bit(int sig) {
     return 1ULL << (sig - 1);
@@ -56,15 +64,23 @@ bool default_ignored(int sig) {
 }
 
 void forward_host_signal(int sig, siginfo_t* info, void*) {
-    GuestThread* thread = t_current_thread;
-    if (thread == nullptr) thread = g_process_signal_target.load(std::memory_order_acquire);
-    if (thread == nullptr) return;
     g::siginfo32 guest{};
     guest.si_signo = sig;
     guest.si_code = info->si_code;
     guest.fields[0] = static_cast<std::uint32_t>(info->si_pid);
     guest.fields[1] = static_cast<std::uint32_t>(info->si_uid);
-    thread->post_signal(guest);
+    // This thread's own guest thread cannot be freed while a handler on this thread runs: its owner
+    // clears t_current_thread in normal context on this same thread, after every handler returns.
+    if (GuestThread* thread = t_current_thread) {
+        thread->post_signal(guest);
+        return;
+    }
+    // Register as a reader BEFORE loading the target. clear_process_signal_target() unpublishes the
+    // pointer first and then waits for readers, so any handler that could have seen the old value
+    // is already counted when it looks at the counter.
+    g_target_readers.fetch_add(1, std::memory_order_seq_cst);
+    if (GuestThread* thread = g_process_signal_target.load(std::memory_order_seq_cst)) thread->post_signal(guest);
+    g_target_readers.fetch_sub(1, std::memory_order_seq_cst);
 }
 
 }  // namespace
@@ -73,13 +89,41 @@ void Process::set_current_thread(GuestThread* thread) {
     t_current_thread = thread;
 }
 
-void Process::set_process_signal_target(GuestThread* thread) {
-    g_process_signal_target.store(thread, std::memory_order_release);
+GuestThread* Process::current_thread() {
+    return t_current_thread;
 }
 
+void Process::set_process_signal_target(GuestThread* thread) {
+    // A published target must be retired through clear_process_signal_target() before another one
+    // replaces it; overwriting it here would skip the reader wait for the old thread.
+    g_process_signal_target.store(thread, std::memory_order_seq_cst);
+}
+
+// Invariant: when this returns, no forwarding handler holds `thread` or can still acquire it, so
+// the caller may destroy it. Handlers increment g_target_readers before loading the target; after
+// the compare-exchange, every handler that loaded `thread` is counted until it has finished
+// post_signal(), and later handlers load nullptr.
+//
+// The wait runs in normal context and never inside forward_host_signal. A forwarding handler that
+// interrupts the waiting thread runs to completion (including its decrement) before the wait
+// resumes, so the waiter never waits for itself and the forwarded signals need not be blocked. On
+// the Process runner thread t_current_thread is still set here, so its own handlers do not even
+// touch the counter.
 void Process::clear_process_signal_target(GuestThread* thread) {
     GuestThread* expected = thread;
-    g_process_signal_target.compare_exchange_strong(expected, nullptr);
+    if (!g_process_signal_target.compare_exchange_strong(expected, nullptr, std::memory_order_seq_cst)) return;
+    // Readers only span one post_signal() call (a few atomic ops and a futex wake): spin briefly,
+    // then yield, then sleep with a capped backoff so a descheduled reader does not burn a core.
+    for (unsigned attempt = 0; g_target_readers.load(std::memory_order_seq_cst) != 0; ++attempt) {
+        if (attempt < 64) continue;
+        if (attempt < 1024) {
+            sched_yield();
+            continue;
+        }
+        const unsigned shift = attempt - 1024 < 10 ? attempt - 1024 : 10;
+        const timespec pause{0, static_cast<long>(1000u << shift)};  // 1 us .. ~1 ms
+        nanosleep(&pause, nullptr);
+    }
 }
 
 void Process::install_host_signal_forwarding() {

@@ -20,6 +20,46 @@ add_executable(elf_loader_test elf_loader_test.cpp)
 target_link_libraries(elf_loader_test PRIVATE zbcore)
 add_test(NAME elf_loader_test COMMAND elf_loader_test ${CMAKE_SOURCE_DIR}/build/guest/hello_static)
 
+# Needs build/guest/host_call_static from tools/build_guest.sh.
+add_executable(guest_call_test guest_call_test.cpp)
+target_link_libraries(guest_call_test PRIVATE zbcore)
+add_test(NAME guest_call_test COMMAND guest_call_test ${CMAKE_SOURCE_DIR}/build/guest/host_call_static)
+
+add_executable(host_call_dispatch_test host_call_dispatch_test.cpp)
+target_link_libraries(host_call_dispatch_test PRIVATE zbcore)
+add_test(NAME host_call_dispatch_test COMMAND host_call_dispatch_test
+    ${CMAKE_SOURCE_DIR}/build/guest/host_call_static)
+
+add_executable(zbhost_protocol_test zbhost_protocol_test.cpp)
+target_link_libraries(zbhost_protocol_test PRIVATE zbcore)
+add_test(NAME zbhost_protocol_test COMMAND zbhost_protocol_test
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/zbhost
+    ${CMAKE_SOURCE_DIR}/build/guest/lib)
+
+# Needs tools/build_guest.sh and the extracted sysroot.
+add_executable(library_runtime_test library_runtime_test.cpp)
+target_link_libraries(library_runtime_test PRIVATE zbcore)
+# Hold a real signal-forwarding reader at post_signal without a production test hook.
+# The wrap relies on no LTO for this target: the call must stay a cross-object symbol reference.
+target_link_options(library_runtime_test PRIVATE
+    -Wl,--wrap=_ZN2zb11GuestThread11post_signalERKNS_1g9siginfo32E)
+add_test(NAME library_runtime_test COMMAND library_runtime_test
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/zbhost
+    ${CMAKE_SOURCE_DIR}/build/guest/lib/libzbcallprobe.so)
+
+# Needs tools/build_guest.sh and the extracted sysroot.
+add_executable(thread_exit_test thread_exit_test.cpp)
+target_link_libraries(thread_exit_test PRIVATE zbcore)
+# Observe thread retirement at clear_process_signal_target. The wrap relies on no LTO for this
+# target: the call from process.cpp must stay a cross-object symbol reference.
+target_link_options(thread_exit_test PRIVATE
+    -Wl,--wrap=_ZN2zb7Process27clear_process_signal_targetEPNS_11GuestThreadE)
+add_test(NAME thread_exit_test COMMAND thread_exit_test
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/threads_dynamic)
+
 # Needs tools/build_guest.sh and the extracted sysroot.
 add_executable(async_signal_test async_signal_test.cpp)
 target_link_libraries(async_signal_test PRIVATE zbcore)

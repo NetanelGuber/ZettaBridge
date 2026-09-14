@@ -5,6 +5,7 @@
 #include <bitset>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -25,6 +26,8 @@ namespace zb {
 // One guest process: its address space, emulated kernel state and threads.
 class Process {
 public:
+    using HostCallHandler = std::function<bool(std::uint32_t index, GuestThread& thread)>;
+
     static constexpr std::uint32_t kStackTop = 0xFF000000;
     static constexpr std::uint32_t kStackSize = 8 * 1024 * 1024;
     static constexpr std::uint32_t kMmapLimit = 0xFE000000;
@@ -46,6 +49,18 @@ public:
     // process exits. Returns the guest exit status, or 128 + signal for a fatal guest fault.
     int run(const std::string& path, const std::vector<std::string>& argv, const std::vector<std::string>& envp);
 
+    // Handles svc #(0x5A0000 | index) before the generated host-call table; returns true if it
+    // handled the index. Set before run().
+    void set_host_call_handler(HostCallHandler handler) { host_call_handler_ = std::move(handler); }
+    // Runs a guest function on `thread`, which is stopped outside Dynarmic (typically inside a
+    // host call), through the same stop dispatch as the thread's own loop. Returns nullopt when
+    // the call cannot be laid out or the guest cannot continue:
+    // - a fatal fault or signal, or exit_group, with other guest threads alive ends the host
+    //   process; on the only guest thread it fails the call with exiting() set, and run()
+    //   later returns the status;
+    // - a thread exit (exit, pthread_exit) inside the call always ends the host process.
+    std::optional<GuestResult> call_guest(GuestThread& thread, std::uint32_t target, const GuestCall& args);
+
     GuestMemory& memory() { return mem_; }
     // Process-wide exit (exit_group, fatal signal). Threads other than the caller are not
     // stopped here; callers with other live threads end the host process instead.
@@ -56,13 +71,38 @@ public:
     // Starts a guest thread for clone(CLONE_VM | CLONE_THREAD ...). Returns the new tid or -errno.
     std::int32_t clone_thread(GuestThread& parent, std::uint32_t flags, std::uint32_t stack,
                               std::uint32_t parent_tid_addr, std::uint32_t tls, std::uint32_t child_tid_addr);
+    // Real guest threads; borrowers are not counted.
     std::size_t thread_count() const;
+    // Borrowers first, so tkill/tgkill aimed at a borrowed carrier's tid reach the borrower.
+    // The pointer is only safe to dereference while the thread cannot exit; to signal a thread
+    // use post_signal_to.
     GuestThread* find_thread(std::int32_t tid);
+    // Posts info to the guest thread with this tid (borrowers first) atomically with the lookup.
+    // It holds threads_mutex_, which unregister_thread() and destroy_borrower() take to unlist a
+    // thread before freeing it, so the target cannot be freed between lookup and post. False if
+    // no thread has this tid.
+    bool post_signal_to(std::int32_t tid, const g::siginfo32& info);
+
+    // A JIT for the calling host thread that runs as `carrier`, a guest thread parked inside a
+    // host call: its TLS, guest tid, a stack below its sp, its signal mask, alternate signal
+    // stack and FPSCR. The carrier must stay parked until destroy_borrower. Costs one processor
+    // id and a 32 MiB JIT; translated code starts cold. nullptr if no processor id is free.
+    // A borrower is never the process signal target.
+    std::unique_ptr<GuestThread> create_borrower(GuestThread& carrier);
+    // Copies the signal mask and alternate stack back to the still-parked carrier, moves signals
+    // still pending on the borrower to it, and frees the borrower. Call on the borrowing thread,
+    // after it stopped naming the borrower as its current guest thread.
+    void destroy_borrower(std::unique_ptr<GuestThread> borrower, GuestThread& carrier);
 
     // Signals (signals.cpp).
     static void set_current_thread(GuestThread* thread);
-    // Guest thread that takes host signals arriving on threads without guest code.
+    // Guest thread running on the calling host thread, or nullptr.
+    static GuestThread* current_thread();
+    // Guest thread that takes host signals arriving on threads without guest code. A published
+    // target must be cleared before another one is set.
     static void set_process_signal_target(GuestThread* thread);
+    // Unpublishes `thread` if it is the target and waits until no signal handler still uses it;
+    // afterwards the thread may be destroyed. Must not be called from a signal handler.
     static void clear_process_signal_target(GuestThread* thread);
     static void install_host_signal_forwarding();
     // Delivers pending, unblocked signals of the thread; false if one terminated the process.
@@ -129,12 +169,21 @@ private:
 
     int allocate_processor_id();
     void register_thread(GuestThread* thread);
+    // Handles one stop; true if the thread may resume.
+    bool dispatch_stop(GuestThread& thread, const Stop& stop);
+    // Delivers pending unblocked signals after a stop; false if one ended the guest.
+    bool after_stop(GuestThread& thread);
+    // A fault or exception becomes a guest signal, or a crash report and process exit.
+    bool fault_or_crash(GuestThread& thread, const Stop& stop);
     // Runs a guest thread until it exits. Process-wide exits with other live threads end the
     // host process from here.
     void thread_loop(GuestThread& thread);
     void thread_main(std::unique_ptr<GuestThread> thread);
-    // Thread exit bookkeeping: CLONE_CHILD_CLEARTID, exclusive monitor, registry.
+    // Thread exit bookkeeping: CLONE_CHILD_CLEARTID, then unregister_thread().
     void finish_thread(GuestThread& thread);
+    // Retires the signal target publication, exclusive monitor slot, registry entry and
+    // processor id of a thread that runs no more guest code.
+    void unregister_thread(GuestThread& thread);
     void wait_for_threads();
     [[noreturn]] void exit_host_process();
     void crash_report(const Stop& stop, GuestThread& thread) const;
@@ -148,6 +197,7 @@ private:
     mutable std::mutex threads_mutex_;
     std::condition_variable threads_cv_;
     std::vector<GuestThread*> threads_;
+    std::vector<GuestThread*> borrowers_;
     std::bitset<kMaxThreads> processor_ids_;
 
     std::mutex mm_mutex_;
@@ -164,6 +214,7 @@ private:
     std::uint32_t linker_end_ = 0;
     std::atomic<bool> exiting_{false};
     std::atomic<int> exit_status_{0};
+    HostCallHandler host_call_handler_;
 };
 
 }  // namespace zb

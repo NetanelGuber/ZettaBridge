@@ -1,6 +1,11 @@
 #include "zb/guest_thread.h"
 
+#include <linux/futex.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <bit>
+#include <climits>
 #include <cstring>
 
 #include <dynarmic/interface/exclusive_monitor.h>
@@ -19,6 +24,10 @@ constexpr Dynarmic::HaltReason kInterruptHalt = Dynarmic::HaltReason::UserDefine
 // returns with PC set to the accessing instruction, so faults are precise.
 constexpr Dynarmic::HaltReason kMemoryAbortHalt = Dynarmic::HaltReason::MemoryAbort;
 
+constexpr std::uint32_t kCpsrThumb = 0x20;
+constexpr std::uint32_t kCpsrEndian = 0x200;
+constexpr std::uint32_t kCpsrItMask = 0x0600FC00;
+
 template <typename T>
 T load(const std::uint8_t* p) {
     T v;
@@ -34,7 +43,7 @@ void store(std::uint8_t* p, T v) {
 }  // namespace
 
 GuestThread::GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id,
-                         bool precise_faults)
+                         bool precise_faults, std::size_t code_cache_size)
     : mem_(mem), processor_id_(processor_id) {
     cp15_ = std::make_shared<Cp15>(&tpidruro_, &tpidrurw_);
 
@@ -48,7 +57,7 @@ GuestThread::GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, 
     cfg.define_unpredictable_behaviour = true;
     cfg.enable_cycle_counting = false;
     cfg.check_halt_on_memory_access = precise_faults;
-    cfg.code_cache_size = 32 * 1024 * 1024;
+    cfg.code_cache_size = code_cache_size;
     jit_ = std::make_unique<Dynarmic::A32::Jit>(cfg);
 }
 
@@ -98,6 +107,58 @@ Stop GuestThread::run() {
     return s;
 }
 
+std::optional<GuestResult> GuestThread::call(std::uint32_t target, const GuestCall& args,
+                                             const GuestStopHandler& handle_stop) {
+    const auto saved_regs = regs();
+    const auto saved_ext = ext_regs();
+    const std::uint32_t saved_cpsr = cpsr();
+    const std::uint32_t saved_fpscr = fpscr();
+
+    const auto restore = [&] {
+        regs() = saved_regs;
+        ext_regs() = saved_ext;
+        set_cpsr(saved_cpsr);
+        set_fpscr(saved_fpscr);
+    };
+
+    const std::uint64_t bytes = static_cast<std::uint64_t>(args.stack.size()) * 4;
+    if (bytes > saved_regs[13]) return std::nullopt;
+    const std::uint32_t call_sp = static_cast<std::uint32_t>((saved_regs[13] - bytes) & ~7u);
+    std::uint8_t* stack = mem_.host_ptr(call_sp, bytes, kPageWrite);
+    if (bytes != 0 && stack == nullptr) return std::nullopt;
+    if (bytes != 0) std::memcpy(stack, args.stack.data(), static_cast<std::size_t>(bytes));
+
+    regs()[0] = args.regs[0];
+    regs()[1] = args.regs[1];
+    regs()[2] = args.regs[2];
+    regs()[3] = args.regs[3];
+    regs()[13] = call_sp;
+    regs()[14] = kHostReturnAddress;
+    regs()[15] = target & ~1u;
+    // A fresh call starts outside any IT block with little-endian data; only T follows the target.
+    set_cpsr((saved_cpsr & ~(kCpsrThumb | kCpsrItMask | kCpsrEndian)) | ((target & 1u) ? kCpsrThumb : 0));
+
+    ++call_depth;
+    std::optional<GuestResult> result;
+    for (;;) {
+        const Stop stop = run();
+        if (stop.kind == StopKind::Svc && stop.swi == kHostReturnSwi) {
+            if (regs()[13] == call_sp) {
+                result = GuestResult{regs()[0], regs()[1]};
+                break;
+            }
+            // Not this frame's return: the handler treats the svc as an illegal instruction.
+            log("host-to-guest return with sp 0x%08x, frame sp 0x%08x: a longjmp or unwind crossed the "
+                "host-to-guest call frame",
+                regs()[13], call_sp);
+        }
+        if (!handle_stop(stop)) break;
+    }
+    --call_depth;
+    restore();
+    return result;
+}
+
 void GuestThread::invalidate(std::uint32_t addr, std::uint32_t len) {
     jit_->InvalidateCacheRange(addr, len);
 }
@@ -108,6 +169,16 @@ void GuestThread::post_signal(const g::siginfo32& info) {
     pending_info_[static_cast<std::size_t>(sig)] = info;
     pending_signals_.fetch_or(1ULL << (sig - 1));
     jit_->HaltExecution(kInterruptHalt);
+    wake();
+}
+
+void GuestThread::park(std::uint32_t token) {
+    ::syscall(SYS_futex, &park_word_, FUTEX_WAIT_PRIVATE, token, nullptr, nullptr, 0);
+}
+
+void GuestThread::wake() {
+    park_word_.fetch_add(1);
+    ::syscall(SYS_futex, &park_word_, FUTEX_WAKE_PRIVATE, INT_MAX, nullptr, nullptr, 0);
 }
 
 bool GuestThread::take_signal(std::uint64_t blocked, g::siginfo32& out) {

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -12,6 +13,7 @@
 
 #include "zb/guest_abi.h"
 #include "zb/guest_memory.h"
+#include "zb/native_call.h"
 
 namespace Dynarmic {
 class ExclusiveMonitor;
@@ -23,6 +25,15 @@ class Cp15;
 
 // svc immediate used to return from a host->guest call.
 inline constexpr std::uint32_t kHostReturnSwi = 0x5AFFFF;
+inline constexpr std::uint32_t kHostReturnAddress = 0xFFFF0F00;
+// Translated-code cache of one JIT. Carrier JITs only run thread start-up and parking.
+inline constexpr std::size_t kDefaultCodeCacheSize = 32 * 1024 * 1024;
+inline constexpr std::size_t kCarrierCodeCacheSize = 2 * 1024 * 1024;
+
+struct GuestResult {
+    std::uint32_t r0 = 0;
+    std::uint32_t r1 = 0;
+};
 
 enum class StopKind { None, Svc, MemoryFault, Exception, Interrupted };
 
@@ -36,6 +47,8 @@ struct Stop {
     std::uint32_t pc = 0;
 };
 
+using GuestStopHandler = std::function<bool(const Stop&)>;
+
 // One guest CPU context on one host thread. Dynarmic callbacks never do host work: they
 // record a Stop and halt the JIT; the caller of run() handles it and calls run() again.
 class GuestThread final : public Dynarmic::A32::UserCallbacks {
@@ -44,7 +57,7 @@ public:
     // committed (needed by guests whose SIGSEGV handlers resume, e.g. Mono). It disables
     // Dynarmic's GetSetElimination, which costs roughly 2x on integer-heavy code.
     GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id,
-                bool precise_faults = false);
+                bool precise_faults = false, std::size_t code_cache_size = kDefaultCodeCacheSize);
     ~GuestThread() override;
 
     std::array<std::uint32_t, 16>& regs();
@@ -59,21 +72,38 @@ public:
 
     // Runs until a callback stops the JIT, or until post_signal() interrupts it (Interrupted).
     Stop run();
+    // Runs one nested guest function. The stopped CPU state is restored on every return path.
+    // The handler runs outside Dynarmic and returns true to resume or false to fail the call.
+    std::optional<GuestResult> call(std::uint32_t target, const GuestCall& args,
+                                    const GuestStopHandler& handle_stop);
     // Drop translated code for [addr, addr + len). Safe to call from other host threads.
     void invalidate(std::uint32_t addr, std::uint32_t len);
 
-    // Queues a signal for this thread and interrupts its JIT. Async-signal-safe.
+    // Queues a signal for this thread, interrupts its JIT and wakes park(). Async-signal-safe.
     void post_signal(const g::siginfo32& info);
     // Takes the lowest-numbered pending signal not in `blocked`; false if there is none.
     bool take_signal(std::uint64_t blocked, g::siginfo32& out);
     bool has_pending_signals(std::uint64_t blocked) const { return (pending_signals_.load() & ~blocked) != 0; }
     std::uint64_t pending_signals() const { return pending_signals_.load(); }
 
+    // Parking for a thread that waits inside a host call (library runtime service and carriers).
+    // wake() and post_signal() change the token; park(token) sleeps only while the token is
+    // unchanged, so a waiter that reads the token before checking its condition loses no wakeup.
+    // park() may return spuriously (host signal, EINTR).
+    std::uint32_t park_token() const { return park_word_.load(); }
+    void park(std::uint32_t token);
+    // Async-signal-safe.
+    void wake();
+
     // Emulated per-thread kernel state.
     std::uint64_t sigmask = 0;
     g::stack32 altstack{0, 2 /* SS_DISABLE */, 0};
     std::uint32_t clear_child_tid = 0;
     int exit_status = 0;
+    // Number of host-to-guest calls active on this thread (call() frames).
+    int call_depth = 0;
+    // Code cache size for threads this thread clones; 0 selects kDefaultCodeCacheSize.
+    std::size_t child_code_cache_size = 0;
     // Host tid of the host thread running this guest thread.
     std::int32_t tid = 0;
 
@@ -109,6 +139,8 @@ private:
     Stop pending_;
     std::atomic<std::uint64_t> pending_signals_{0};
     std::array<g::siginfo32, 65> pending_info_{};
+    // futex word; std::atomic<std::uint32_t> has the layout of std::uint32_t.
+    std::atomic<std::uint32_t> park_word_{0};
 };
 
 }  // namespace zb

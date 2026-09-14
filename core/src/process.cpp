@@ -71,6 +71,13 @@ constexpr HostCallName kHostCallNames[] = {
 #include "gen/hostcalls.inc"
 };
 
+std::pair<const char*, const char*> host_call_name(std::uint32_t index) {
+    for (const auto& host_call : kHostCallNames) {
+        if (host_call.index == index) return {host_call.library, host_call.name};
+    }
+    return {"?", "?"};
+}
+
 struct PathMapping {
     std::string_view guest_prefix;
     std::string_view sysroot_prefix;
@@ -118,6 +125,9 @@ void write_guest_u32(GuestMemory& mem, std::uint32_t addr, std::uint32_t value) 
 // these for atomics and TLS. Version 3 advertises get_tls, cmpxchg and memory_barrier;
 // cmpxchg64 (version 5) is not provided.
 constexpr std::uint32_t kKuserPage = 0xFFFF0000;
+constexpr std::uint32_t kKuserHostReturn[] = {
+    0xef5affff,  // svc #0x5affff
+};
 constexpr std::uint32_t kKuserMemoryBarrier[] = {
     0xe12fff1e,  // bx lr
 };
@@ -144,6 +154,7 @@ bool map_kuser_page(GuestMemory& mem) {
     put(0xfa0, kKuserMemoryBarrier, std::size(kKuserMemoryBarrier));
     put(0xfc0, kKuserCmpxchg, std::size(kKuserCmpxchg));
     put(0xfe0, kKuserGetTls, std::size(kKuserGetTls));
+    put(0xf00, kKuserHostReturn, std::size(kKuserHostReturn));
     put(0xffc, &kKuserHelperVersion, 1);
     return mem.protect(kKuserPage, kPageSize, PROT_READ | PROT_EXEC);
 }
@@ -164,6 +175,7 @@ void Process::request_exit(int status) {
 void Process::invalidate(std::uint32_t addr, std::uint32_t len) {
     std::lock_guard<std::mutex> lock(threads_mutex_);
     for (GuestThread* t : threads_) t->invalidate(addr, len);
+    for (GuestThread* t : borrowers_) t->invalidate(addr, len);
 }
 
 bool Process::first_time(std::uint64_t key) {
@@ -245,10 +257,74 @@ int Process::allocate_processor_id() {
 
 GuestThread* Process::find_thread(std::int32_t tid) {
     std::lock_guard<std::mutex> lock(threads_mutex_);
+    for (GuestThread* t : borrowers_) {
+        if (t->tid == tid) return t;
+    }
     for (GuestThread* t : threads_) {
         if (t->tid == tid) return t;
     }
     return nullptr;
+}
+
+bool Process::post_signal_to(std::int32_t tid, const g::siginfo32& info) {
+    // post_signal takes no Process lock (atomics and a futex wake), so holding threads_mutex_
+    // here cannot deadlock.
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    for (GuestThread* t : borrowers_) {
+        if (t->tid == tid) {
+            t->post_signal(info);
+            return true;
+        }
+    }
+    for (GuestThread* t : threads_) {
+        if (t->tid == tid) {
+            t->post_signal(info);
+            return true;
+        }
+    }
+    return false;
+}
+
+std::unique_ptr<GuestThread> Process::create_borrower(GuestThread& carrier) {
+    const int processor_id = allocate_processor_id();
+    if (processor_id < 0) return nullptr;
+    auto borrower =
+        std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(processor_id), precise_faults_);
+    borrower->regs().fill(0);
+    borrower->regs()[13] = carrier.regs()[13] & ~7u;
+    borrower->ext_regs().fill(0);
+    borrower->set_cpsr(kCpsrUserMode);
+    borrower->set_fpscr(carrier.fpscr());
+    borrower->set_tls(carrier.tls());
+    borrower->tid = carrier.tid;
+    borrower->sigmask = carrier.sigmask;
+    borrower->altstack = carrier.altstack;
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    borrowers_.push_back(borrower.get());
+    return borrower;
+}
+
+// Borrower counterpart of unregister_thread(), in this order: tid routing is removed first, then
+// the exclusive monitor slot is cleared and the JIT freed, and only then is the processor id
+// released, so a concurrent create_borrower/clone_thread cannot reuse the id while this JIT still
+// exists. A borrower is never published as the process signal target, and only the borrowing host
+// thread names it as current (cleared by the caller before this), so no forwarding reader can
+// still hold it.
+void Process::destroy_borrower(std::unique_ptr<GuestThread> borrower, GuestThread& carrier) {
+    if (!borrower) return;
+    carrier.sigmask = borrower->sigmask;
+    carrier.altstack = borrower->altstack;
+    {
+        std::lock_guard<std::mutex> lock(threads_mutex_);
+        std::erase(borrowers_, borrower.get());
+    }
+    g::siginfo32 info;
+    while (borrower->take_signal(0, info)) carrier.post_signal(info);
+    const std::size_t processor_id = borrower->processor_id();
+    monitor_->ClearProcessor(processor_id);
+    borrower.reset();
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    processor_ids_.reset(processor_id);
 }
 
 void Process::register_thread(GuestThread* thread) {
@@ -335,68 +411,100 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
     install_host_signal_forwarding();
 
     thread_loop(*main_);
-    if (exiting_) return exit_status_;
+    // Every return below retires what run() published, so destroying the Process afterwards cannot
+    // leave a signal handler with a freed main_. The target is retired while t_current_thread still
+    // names main_, then this host thread stops naming it.
+    if (exiting_) {
+        // exit_group/fatal exit: other live threads would already have ended the host process, so
+        // main_ is the only registered thread. Its CLONE_CHILD_CLEARTID is not honoured on a
+        // process-wide exit.
+        unregister_thread(*main_);
+        set_current_thread(nullptr);
+        return exit_status_;
+    }
 
     // The main thread called exit() while other threads may still run: wait for them.
     const int main_status = main_->exit_status;
     finish_thread(*main_);
+    set_current_thread(nullptr);
     wait_for_threads();
     return exiting_ ? exit_status_.load() : main_status;
 }
 
+bool Process::dispatch_stop(GuestThread& thread, const Stop& stop) {
+    switch (stop.kind) {
+    case StopKind::Svc:
+        if (stop.swi == 0) {
+            if (handle_syscall(*this, thread)) return true;
+            if (!exiting_ && thread.call_depth > 0) {
+                // bionic has already released this thread's TLS and stack; nothing may run on it.
+                log("guest thread exited inside a host-to-guest call");
+                request_exit(1);
+                exit_host_process();
+            }
+            if (exiting_ && thread_count() > 1) exit_host_process();
+            return false;
+        }
+        if (stop.swi == kHostReturnSwi) {
+            // GuestThread::call consumes its own return; any other one is an illegal instruction.
+            if (thread.call_depth == 0) log("host return svc outside a host-to-guest call at pc 0x%08x", stop.pc - 4);
+            Stop illegal;
+            illegal.kind = StopKind::Exception;
+            illegal.exception = Dynarmic::A32::Exception::UndefinedInstruction;
+            illegal.pc = stop.pc - 4;
+            return fault_or_crash(thread, illegal);
+        }
+        if ((stop.swi & 0xFF0000u) == kHostCallBase) {
+            const std::uint32_t index = stop.swi & 0xFFFFu;
+            if (host_call_handler_ && host_call_handler_(index, thread)) return !exiting_;
+            if (first_time(kSeenHostCall | index)) {
+                const auto [library, name] = host_call_name(index);
+                log("host call %s:%s is not implemented yet", library, name);
+            }
+            thread.regs()[0] = 0;
+            return true;
+        }
+        if (first_time(kSeenUnexpectedSvc | stop.swi)) {
+            log("unexpected svc #0x%x at pc 0x%08x", stop.swi, stop.pc);
+        }
+        thread.regs()[0] = static_cast<std::uint32_t>(-ENOSYS);
+        return true;
+    case StopKind::Interrupted:
+        return true;
+    case StopKind::MemoryFault:
+    case StopKind::Exception:
+        return fault_or_crash(thread, stop);
+    case StopKind::None:
+        log("guest stopped without a reason at pc 0x%08x", stop.pc);
+        request_exit(1);
+        if (thread_count() > 1) exit_host_process();
+        return false;
+    }
+    return false;
+}
+
+bool Process::fault_or_crash(GuestThread& thread, const Stop& stop) {
+    if (deliver_fault(thread, stop)) return true;
+    crash_report(stop, thread);
+    request_exit(128 + (stop.kind == StopKind::MemoryFault ? SIGSEGV : SIGILL));
+    if (thread_count() > 1) exit_host_process();
+    return false;
+}
+
+bool Process::after_stop(GuestThread& thread) {
+    if (!thread.has_pending_signals(thread.sigmask) || dispatch_pending_signals(thread)) return true;
+    if (thread_count() > 1) exit_host_process();
+    return false;
+}
+
 void Process::thread_loop(GuestThread& thread) {
     set_current_thread(&thread);
-    for (;;) {
-        const Stop stop = thread.run();
-        switch (stop.kind) {
-        case StopKind::Svc:
-            if (stop.swi == 0) {
-                if (!handle_syscall(*this, thread)) {
-                    if (exiting_ && thread_count() > 1) exit_host_process();
-                    return;
-                }
-                break;
-            }
-            if ((stop.swi & 0xFF0000u) == kHostCallBase && stop.swi != kHostReturnSwi) {
-                const std::uint32_t index = stop.swi & 0xFFFFu;
-                if (first_time(kSeenHostCall | index)) {
-                    const char* library = "?";
-                    const char* name = "?";
-                    for (const auto& h : kHostCallNames) {
-                        if (h.index == index) {
-                            library = h.library;
-                            name = h.name;
-                            break;
-                        }
-                    }
-                    log("host call %s:%s is not implemented yet", library, name);
-                }
-                thread.regs()[0] = 0;
-                break;
-            }
-            if (first_time(kSeenUnexpectedSvc | stop.swi)) log("unexpected svc #0x%x at pc 0x%08x", stop.swi, stop.pc);
-            thread.regs()[0] = static_cast<std::uint32_t>(-ENOSYS);
-            break;
-        case StopKind::Interrupted:
-            break;
-        case StopKind::MemoryFault:
-        case StopKind::Exception:
-            if (deliver_fault(thread, stop)) break;
-            crash_report(stop, thread);
-            request_exit(128 + (stop.kind == StopKind::MemoryFault ? SIGSEGV : SIGILL));
-            if (thread_count() > 1) exit_host_process();
-            return;
-        case StopKind::None:
-            log("guest stopped without a reason at pc 0x%08x", stop.pc);
-            request_exit(1);
-            if (thread_count() > 1) exit_host_process();
-            return;
-        }
-        if (thread.has_pending_signals(thread.sigmask) && !dispatch_pending_signals(thread)) {
-            if (thread_count() > 1) exit_host_process();
-            return;
-        }
+    while (dispatch_stop(thread, thread.run()) && after_stop(thread)) {
     }
+}
+
+std::optional<GuestResult> Process::call_guest(GuestThread& thread, std::uint32_t target, const GuestCall& args) {
+    return thread.call(target, args, [&](const Stop& stop) { return dispatch_stop(thread, stop) && after_stop(thread); });
 }
 
 std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std::uint32_t stack,
@@ -404,7 +512,10 @@ std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std
     const int processor_id = allocate_processor_id();
     if (processor_id < 0) return -EAGAIN;
 
-    auto child = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(processor_id), precise_faults_);
+    const std::size_t code_cache_size =
+        parent.child_code_cache_size != 0 ? parent.child_code_cache_size : kDefaultCodeCacheSize;
+    auto child = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(processor_id),
+                                               precise_faults_, code_cache_size);
     child->regs() = parent.regs();
     child->regs()[0] = 0;
     if (stack != 0) child->regs()[13] = stack;
@@ -433,6 +544,10 @@ std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std
 
 void Process::thread_main(std::unique_ptr<GuestThread> thread) {
     thread_loop(*thread);
+    // Stop naming the thread before finish_thread() and the unique_ptr free it: a host signal
+    // landing here afterwards must not take the forwarding fast path to a freed GuestThread.
+    // Handlers on this host thread run synchronously with this code, so there is no race.
+    set_current_thread(nullptr);
     finish_thread(*thread);
 }
 
@@ -444,6 +559,11 @@ void Process::finish_thread(GuestThread& thread) {
             ::syscall(SYS_futex, p, FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
         }
     }
+    unregister_thread(thread);
+}
+
+void Process::unregister_thread(GuestThread& thread) {
+    // Waits for in-flight forwarding handlers, so the caller may free the thread afterwards.
     clear_process_signal_target(&thread);
     monitor_->ClearProcessor(thread.processor_id());
     std::lock_guard<std::mutex> lock(threads_mutex_);
@@ -472,7 +592,12 @@ void Process::crash_report(const Stop& stop, GuestThread& thread) const {
     for (int i = 0; i < 16; i += 4) {
         log("  r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x", i, r[i], i + 1, r[i + 1], i + 2, r[i + 2], i + 3, r[i + 3]);
     }
-    log("  cpsr %08x  tls %08x  tid %ld", thread.cpsr(), thread.tls(), static_cast<long>(::syscall(SYS_gettid)));
+    const long host_tid = ::syscall(SYS_gettid);
+    if (thread.tid != 0 && thread.tid != host_tid) {
+        log("  cpsr %08x  tls %08x  tid %ld  guest tid %d", thread.cpsr(), thread.tls(), host_tid, thread.tid);
+    } else {
+        log("  cpsr %08x  tls %08x  tid %ld", thread.cpsr(), thread.tls(), host_tid);
+    }
     log("  pc in %s", describe_address(stop.pc).c_str());
     log("  lr in %s", describe_address(r[14]).c_str());
 }
