@@ -118,6 +118,9 @@ void write_guest_u32(GuestMemory& mem, std::uint32_t addr, std::uint32_t value) 
 // these for atomics and TLS. Version 3 advertises get_tls, cmpxchg and memory_barrier;
 // cmpxchg64 (version 5) is not provided.
 constexpr std::uint32_t kKuserPage = 0xFFFF0000;
+constexpr std::uint32_t kKuserHostReturn[] = {
+    0xef5affff,  // svc #0x5affff
+};
 constexpr std::uint32_t kKuserMemoryBarrier[] = {
     0xe12fff1e,  // bx lr
 };
@@ -144,6 +147,7 @@ bool map_kuser_page(GuestMemory& mem) {
     put(0xfa0, kKuserMemoryBarrier, std::size(kKuserMemoryBarrier));
     put(0xfc0, kKuserCmpxchg, std::size(kKuserCmpxchg));
     put(0xfe0, kKuserGetTls, std::size(kKuserGetTls));
+    put(0xf00, kKuserHostReturn, std::size(kKuserHostReturn));
     put(0xffc, &kKuserHelperVersion, 1);
     return mem.protect(kKuserPage, kPageSize, PROT_READ | PROT_EXEC);
 }

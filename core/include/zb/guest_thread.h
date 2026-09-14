@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -12,6 +13,7 @@
 
 #include "zb/guest_abi.h"
 #include "zb/guest_memory.h"
+#include "zb/native_call.h"
 
 namespace Dynarmic {
 class ExclusiveMonitor;
@@ -23,6 +25,12 @@ class Cp15;
 
 // svc immediate used to return from a host->guest call.
 inline constexpr std::uint32_t kHostReturnSwi = 0x5AFFFF;
+inline constexpr std::uint32_t kHostReturnAddress = 0xFFFF0F00;
+
+struct GuestResult {
+    std::uint32_t r0 = 0;
+    std::uint32_t r1 = 0;
+};
 
 enum class StopKind { None, Svc, MemoryFault, Exception, Interrupted };
 
@@ -35,6 +43,8 @@ struct Stop {
     // PC after the stop. For Svc it is the instruction after the svc.
     std::uint32_t pc = 0;
 };
+
+using GuestStopHandler = std::function<bool(const Stop&)>;
 
 // One guest CPU context on one host thread. Dynarmic callbacks never do host work: they
 // record a Stop and halt the JIT; the caller of run() handles it and calls run() again.
@@ -59,6 +69,10 @@ public:
 
     // Runs until a callback stops the JIT, or until post_signal() interrupts it (Interrupted).
     Stop run();
+    // Runs one nested guest function. The stopped CPU state is restored on every return path.
+    // The handler runs outside Dynarmic and returns true to resume or false to fail the call.
+    std::optional<GuestResult> call(std::uint32_t target, const GuestCall& args,
+                                    const GuestStopHandler& handle_stop);
     // Drop translated code for [addr, addr + len). Safe to call from other host threads.
     void invalidate(std::uint32_t addr, std::uint32_t len);
 

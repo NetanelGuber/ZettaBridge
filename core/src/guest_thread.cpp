@@ -98,6 +98,49 @@ Stop GuestThread::run() {
     return s;
 }
 
+std::optional<GuestResult> GuestThread::call(std::uint32_t target, const GuestCall& args,
+                                             const GuestStopHandler& handle_stop) {
+    const auto saved_regs = regs();
+    const auto saved_ext = ext_regs();
+    const std::uint32_t saved_cpsr = cpsr();
+    const std::uint32_t saved_fpscr = fpscr();
+
+    const auto restore = [&] {
+        regs() = saved_regs;
+        ext_regs() = saved_ext;
+        set_cpsr(saved_cpsr);
+        set_fpscr(saved_fpscr);
+    };
+
+    const std::uint64_t bytes = static_cast<std::uint64_t>(args.stack.size()) * 4;
+    if (bytes > saved_regs[13]) return std::nullopt;
+    const std::uint32_t call_sp = static_cast<std::uint32_t>((saved_regs[13] - bytes) & ~7u);
+    std::uint8_t* stack = mem_.host_ptr(call_sp, bytes, kPageWrite);
+    if (bytes != 0 && stack == nullptr) return std::nullopt;
+    if (bytes != 0) std::memcpy(stack, args.stack.data(), static_cast<std::size_t>(bytes));
+
+    regs()[0] = args.regs[0];
+    regs()[1] = args.regs[1];
+    regs()[2] = args.regs[2];
+    regs()[3] = args.regs[3];
+    regs()[13] = call_sp;
+    regs()[14] = kHostReturnAddress;
+    regs()[15] = target & ~1u;
+    set_cpsr((saved_cpsr & ~0x20u) | ((target & 1u) ? 0x20u : 0));
+
+    std::optional<GuestResult> result;
+    for (;;) {
+        const Stop stop = run();
+        if (stop.kind == StopKind::Svc && stop.swi == kHostReturnSwi) {
+            result = GuestResult{regs()[0], regs()[1]};
+            break;
+        }
+        if (!handle_stop(stop)) break;
+    }
+    restore();
+    return result;
+}
+
 void GuestThread::invalidate(std::uint32_t addr, std::uint32_t len) {
     jit_->InvalidateCacheRange(addr, len);
 }
