@@ -238,6 +238,11 @@ functions. Accept: the game is playable start to finish.
   instruction with registers committed, at roughly 2x cost on integer code, because it
   turns off Dynarmic's GetSetElimination. Guests whose SIGSEGV handlers resume (Mono/Unity
   null checks) need precise mode. `fault_pc_test` covers it.
+- **Some `/proc` files are synthesized for the guest** (`proc_files.cpp`):
+  `/proc/self/maps` and `/proc/self/stat` with 32-bit guest addresses, and
+  `/proc/cpuinfo` showing an AArch32 CPU. bionic's `pthread_getattr_np()` on the main
+  thread aborts with "stack not found" if it sees the host's 64-bit maps. Other `/proc`
+  paths pass through.
 - **Signals.** Guest handlers and masks are emulated and never installed on the host.
   On device, libsigchain runs ART's handlers first, then ours. Dynarmic has its own
   SIGSEGV handler for fastmem and chains the rest.

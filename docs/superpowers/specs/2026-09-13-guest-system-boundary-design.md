@@ -234,6 +234,15 @@ is never modified.
 - **Refused, with a log line.**
   - `fork`, `vfork`, `execve`, `clone` without `CLONE_VM|CLONE_THREAD`: `EPERM`.
   - `ptrace`: `EPERM`.
+- **Implemented by the end of Phase 2** (see `syscalls.cpp`, test `syscalls_dynamic`):
+  - files/dirs, poll/select/epoll/eventfd/timerfd;
+  - sockets, including `sendmsg`/`recvmsg` with control-message conversion
+    (12-byte guest cmsg headers vs 16-byte host);
+  - interval timers, `times`/`getrusage`/`wait4`;
+  - `sysinfo` with `mem_unit` scaled so 12-16 GB devices fit 32-bit fields.
+
+  `/proc/self/maps`, `/proc/self/stat` and `/proc/cpuinfo` are synthesized from guest
+  state.
 - **`personality` is emulated per process.** bionic arm32 calls
   `personality(PER_LINUX32)` during init and aborts if it fails, and a 64-bit-only
   kernel refuses it. Found in Phase 1.
