@@ -12,6 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - All six Orange Roulette libraries `dlopen` with their JNI entry points resolvable.
 - On the phone (OnePlus 13, 2026-09-14): the Android build of `zbrun` passes the whole
   guest suite in Termux (`tools/make_termux_bundle.sh`).
+- In the T6 app 8/9 passed; the `syscalls_dynamic` failure was the lost SIGALRM, now fixed.
+  The rerun is pending. Ready project: `android/t6/project/`.
 - Next: the in-app T6 run next to ART (`tools/make_t6_bundle.sh`,
   `docs/phase3-device-test.md`), then the part 1 (JNI) and part 4 (GLES/audio/assets)
   specs.
@@ -249,6 +251,10 @@ functions. Accept: the game is playable start to finish.
   `/proc/cpuinfo` showing an AArch32 CPU. bionic's `pthread_getattr_np()` on the main
   thread aborts with "stack not found" if it sees the host's 64-bit maps. Other `/proc`
   paths pass through.
+- **Process-directed host signals can land on any thread.** Inside an app process that
+  includes ART threads (SIGALRM from `setitimer`, SIGCHLD, ...). A handler running on a
+  thread without guest code forwards to the process signal target, the main guest thread.
+  Before this, T6 in the app lost SIGALRM. `async_signal_test` covers it.
 - **Signals.** Guest handlers and masks are emulated and never installed on the host.
   On device, libsigchain runs ART's handlers first, then ours. Dynarmic has its own
   SIGSEGV handler for fastmem and chains the rest.

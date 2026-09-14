@@ -126,9 +126,27 @@ public class GuestTestActivity extends Activity {
                 StandardCharsets.UTF_8);
         String actual = new String(Files.readAllBytes(stdoutFile.toPath()), StandardCharsets.UTF_8);
         boolean ok = exit == test.expectedExit && actual.equals(expected);
-        append((ok ? "PASS " : "FAIL ") + test.name + (ok ? "" : " (exit " + exit + ", expected " + test.expectedExit
-                + "; see " + stdoutFile + " and " + stderrFile + ")"));
-        return ok;
+        if (ok) {
+            append("PASS " + test.name);
+            return true;
+        }
+        StringBuilder why = new StringBuilder("FAIL " + test.name + ": exit " + exit + ", expected " + test.expectedExit);
+        // The app data dir is not reachable from a shell, so show what differs right on screen.
+        String[] expectedLines = expected.split("\n", -1);
+        String[] actualLines = actual.split("\n", -1);
+        for (int i = 0; i < Math.max(expectedLines.length, actualLines.length); i++) {
+            String want = i < expectedLines.length ? expectedLines[i] : "<none>";
+            String got = i < actualLines.length ? actualLines[i] : "<none>";
+            if (!want.equals(got)) why.append("\n  stdout line ").append(i + 1).append(": got '").append(got)
+                    .append("', expected '").append(want).append("'");
+        }
+        String stderr = new String(Files.readAllBytes(stderrFile.toPath()), StandardCharsets.UTF_8);
+        if (!stderr.isEmpty()) {
+            why.append("\n  stderr: ").append(stderr.length() > 1500 ? stderr.substring(0, 1500) + "..." : stderr);
+        }
+        append(why.toString());
+        Log.e(TAG, why.toString());
+        return false;
     }
 
     /** Guest stdout/stderr are the process fds 1 and 2; point them at files for the call. */

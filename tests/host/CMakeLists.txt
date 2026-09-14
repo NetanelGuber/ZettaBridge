@@ -14,3 +14,8 @@ endforeach()
 add_executable(elf_loader_test elf_loader_test.cpp)
 target_link_libraries(elf_loader_test PRIVATE zbcore)
 add_test(NAME elf_loader_test COMMAND elf_loader_test ${CMAKE_SOURCE_DIR}/build/guest/hello_static)
+
+# Needs tools/build_guest.sh and the extracted sysroot.
+add_executable(async_signal_test async_signal_test.cpp)
+target_link_libraries(async_signal_test PRIVATE zbcore)
+add_test(NAME async_signal_test COMMAND async_signal_test ${CMAKE_SOURCE_DIR}/sysroot ${CMAKE_SOURCE_DIR}/build/guest)

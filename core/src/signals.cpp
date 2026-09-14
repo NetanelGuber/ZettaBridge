@@ -4,6 +4,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cstring>
 
 #include "zb/log.h"
@@ -41,6 +42,10 @@ constexpr int kForwardedHostSignals[] = {SIGALRM, SIGPIPE, SIGUSR1, SIGUSR2, SIG
                                          SIGWINCH, SIGURG, SIGVTALRM, SIGPROF, SIGIO};
 
 thread_local GuestThread* t_current_thread = nullptr;
+// Receives process-directed host signals that land on a thread running no guest code. Inside an
+// app process the kernel may pick any ART thread for them (a guest thread may have the signal
+// blocked on the host), so dropping them there loses SIGALRM from setitimer and the like.
+std::atomic<GuestThread*> g_process_signal_target{nullptr};
 
 std::uint64_t sig_bit(int sig) {
     return 1ULL << (sig - 1);
@@ -52,6 +57,7 @@ bool default_ignored(int sig) {
 
 void forward_host_signal(int sig, siginfo_t* info, void*) {
     GuestThread* thread = t_current_thread;
+    if (thread == nullptr) thread = g_process_signal_target.load(std::memory_order_acquire);
     if (thread == nullptr) return;
     g::siginfo32 guest{};
     guest.si_signo = sig;
@@ -65,6 +71,15 @@ void forward_host_signal(int sig, siginfo_t* info, void*) {
 
 void Process::set_current_thread(GuestThread* thread) {
     t_current_thread = thread;
+}
+
+void Process::set_process_signal_target(GuestThread* thread) {
+    g_process_signal_target.store(thread, std::memory_order_release);
+}
+
+void Process::clear_process_signal_target(GuestThread* thread) {
+    GuestThread* expected = thread;
+    g_process_signal_target.compare_exchange_strong(expected, nullptr);
 }
 
 void Process::install_host_signal_forwarding() {

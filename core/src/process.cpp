@@ -331,6 +331,7 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
     main_->set_cpsr(kCpsrUserMode | ((start_pc & 1) ? kCpsrThumb : 0));
     main_->tid = static_cast<std::int32_t>(::syscall(SYS_gettid));
     register_thread(main_.get());
+    set_process_signal_target(main_.get());
     install_host_signal_forwarding();
 
     thread_loop(*main_);
@@ -443,6 +444,7 @@ void Process::finish_thread(GuestThread& thread) {
             ::syscall(SYS_futex, p, FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
         }
     }
+    clear_process_signal_target(&thread);
     monitor_->ClearProcessor(thread.processor_id());
     std::lock_guard<std::mutex> lock(threads_mutex_);
     std::erase(threads_, &thread);
