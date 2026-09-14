@@ -72,6 +72,31 @@ struct stat64 {
     std::uint64_t st_ino;
 };
 
+// struct statfs64 on arm EABI: packed, aligned(4) in the kernel headers, so 84 bytes.
+// bionic's own definition is unpacked (88 bytes) and passes 88 as the size argument; the
+// arm64 kernel accepts 88 for 32-bit callers and writes these 84 bytes (same offsets).
+inline constexpr std::uint32_t kStatfs64UserSize = 88;
+#pragma pack(push, 4)
+struct statfs64 {
+    std::uint32_t f_type;
+    std::uint32_t f_bsize;
+    std::uint64_t f_blocks;
+    std::uint64_t f_bfree;
+    std::uint64_t f_bavail;
+    std::uint64_t f_files;
+    std::uint64_t f_ffree;
+    std::int32_t f_fsid[2];
+    std::uint32_t f_namelen;
+    std::uint32_t f_frsize;
+    std::uint32_t f_flags;
+    std::uint32_t f_spare[4];
+};
+#pragma pack(pop)
+
+static_assert(sizeof(statfs64) == 84);
+static_assert(offsetof(statfs64, f_blocks) == 8);
+static_assert(offsetof(statfs64, f_fsid) == 48);
+static_assert(offsetof(statfs64, f_flags) == 64);
 static_assert(sizeof(timespec32) == 8);
 static_assert(sizeof(timeval32) == 8);
 static_assert(sizeof(timespec64) == 16);

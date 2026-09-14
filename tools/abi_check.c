@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/uio.h>
+#include <sys/vfs.h>
 #include <time.h>
 
 _Static_assert(sizeof(void*) == 4, "must be built for 32-bit arm");
@@ -23,3 +24,9 @@ _Static_assert(offsetof(struct stat64, st_blksize) == 56, "stat64.st_blksize");
 _Static_assert(offsetof(struct stat64, st_blocks) == 64, "stat64.st_blocks");
 _Static_assert(offsetof(struct stat64, st_atim) == 72, "stat64.st_atim");
 _Static_assert(offsetof(struct stat64, st_ino) == 96, "stat64.st_ino");
+/* bionic's struct is unpacked (88 bytes); the kernel writes the packed 84-byte layout,
+ * whose fields sit at the same offsets. */
+_Static_assert(sizeof(struct statfs64) == 88, "statfs64 size");
+_Static_assert(offsetof(struct statfs64, f_blocks) == 8, "statfs64.f_blocks");
+_Static_assert(offsetof(struct statfs64, f_fsid) == 48, "statfs64.f_fsid");
+_Static_assert(offsetof(struct statfs64, f_flags) == 64, "statfs64.f_flags");

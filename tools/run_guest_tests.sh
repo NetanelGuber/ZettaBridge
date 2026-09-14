@@ -4,15 +4,19 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ZBRUN=${ZBRUN:-$ROOT/build/host/cli/zbrun/zbrun}
+SYSROOT=${ZB_SYSROOT:-$ROOT/sysroot}
 GUEST="$ROOT/build/guest"
 EXPECTED="$ROOT/guest/tests/expected"
+APK="$ROOT/orange-roulette-1-0-0.apk"
+OR_LIBS="$ROOT/build/or"
 failures=0
 
+# run_case <name> <expected exit> [args...]; CASE_ENV holds extra guest environment.
 run_case() {
     name=$1
     expected_exit=$2
     shift 2
-    out=$("$ZBRUN" "$GUEST/$name" "$@" 2>"$GUEST/$name.stderr")
+    out=$(env $CASE_ENV "$ZBRUN" --sysroot "$SYSROOT" "$GUEST/$name" "$@" 2>"$GUEST/$name.stderr")
     code=$?
     if [ "$code" != "$expected_exit" ]; then
         echo "FAIL $name: exit $code, expected $expected_exit (stderr in build/guest/$name.stderr)"
@@ -27,7 +31,19 @@ run_case() {
     echo "PASS $name"
 }
 
+CASE_ENV=""
 run_case hello_static 7 world
+run_case hello_dynamic 3 "$GUEST/zb_io.tmp"
+
+if [ -f "$APK" ]; then
+    mkdir -p "$OR_LIBS"
+    unzip -ojq "$APK" 'lib/armeabi/*' -d "$OR_LIBS"
+    CASE_ENV="LD_LIBRARY_PATH=$GUEST/lib"
+    run_case or_dlopen_dynamic 0 "$OR_LIBS"
+    CASE_ENV=""
+else
+    echo "SKIP or_dlopen_dynamic: $APK not found"
+fi
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures guest test(s) failed"

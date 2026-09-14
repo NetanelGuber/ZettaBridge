@@ -12,14 +12,19 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
+#include <sys/vfs.h>
 #include <termios.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <csignal>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <string>
 #include <vector>
 
 #include "gen/syscall_nrs_arm.h"
@@ -60,6 +65,12 @@ struct Ctx {
     std::uint32_t a[6];
     bool stop = false;
 };
+
+// ZB_STRACE=1 logs every guest syscall with its first four arguments and result.
+bool trace_enabled() {
+    static const bool enabled = std::getenv("ZB_STRACE") != nullptr;
+    return enabled;
+}
 
 std::int32_t result_of(long host_ret) {
     return host_ret == -1 ? -errno : static_cast<std::int32_t>(host_ret);
@@ -219,6 +230,16 @@ std::int32_t sys_mmap2(Ctx& c) {
     const bool ok = (flags & MAP_ANONYMOUS) ? c.mem.map_anon(at, size, prot)
                                             : c.mem.map_file(at, size, prot, flags, fd, offset);
     if (!ok) return errno ? -errno : -ENOMEM;
+    if (flags & MAP_ANONYMOUS) {
+        c.proc.forget_mappings(at, size);
+    } else {
+        char link[64];
+        char target[PATH_MAX];
+        std::snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+        const ssize_t n = ::readlink(link, target, sizeof target - 1);
+        c.proc.record_file_mapping(at, static_cast<std::uint32_t>(size), offset,
+                                   n > 0 ? std::string(target, static_cast<std::size_t>(n)) : std::string("fd"));
+    }
     c.proc.invalidate(at, static_cast<std::uint32_t>(size));
     return static_cast<std::int32_t>(at);
 }
@@ -229,6 +250,7 @@ std::int32_t sys_munmap(Ctx& c) {
     const std::uint64_t size = page_round_up(c.a[1]);
     if (static_cast<std::uint64_t>(addr) + size > kGuestSpaceSize) return -EINVAL;
     if (!c.mem.unmap(addr, size)) return -EINVAL;
+    c.proc.forget_mappings(addr, size);
     c.proc.invalidate(addr, static_cast<std::uint32_t>(size));
     return 0;
 }
@@ -368,11 +390,28 @@ std::int32_t sys_stat_common(Ctx& c, int rc, const struct stat& st, std::uint32_
     return write_guest(c.mem, out_addr, out) ? 0 : -EFAULT;
 }
 
+std::int32_t sys_statfs_common(Ctx& c, int rc, const struct statfs& st, std::uint32_t out_addr) {
+    if (rc != 0) return -errno;
+    g::statfs64 out{};
+    out.f_type = static_cast<std::uint32_t>(st.f_type);
+    out.f_bsize = static_cast<std::uint32_t>(st.f_bsize);
+    out.f_blocks = st.f_blocks;
+    out.f_bfree = st.f_bfree;
+    out.f_bavail = st.f_bavail;
+    out.f_files = st.f_files;
+    out.f_ffree = st.f_ffree;
+    std::memcpy(out.f_fsid, &st.f_fsid, sizeof out.f_fsid);
+    out.f_namelen = static_cast<std::uint32_t>(st.f_namelen);
+    out.f_frsize = static_cast<std::uint32_t>(st.f_frsize);
+    out.f_flags = static_cast<std::uint32_t>(st.f_flags);
+    return write_guest(c.mem, out_addr, out) ? 0 : -EFAULT;
+}
+
 std::int32_t sys_fstatat64(Ctx& c) {
     const char* path = guest_cstr(c.mem, c.a[1]);
     if (!path) return -EFAULT;
     struct stat st;
-    const int rc = ::fstatat(static_cast<int>(c.a[0]), path, &st, static_cast<int>(c.a[3]));
+    const int rc = ::fstatat(static_cast<int>(c.a[0]), c.proc.translate_path(path).c_str(), &st, static_cast<int>(c.a[3]));
     return sys_stat_common(c, rc, st, c.a[2]);
 }
 
@@ -380,7 +419,8 @@ std::int32_t sys_statx(Ctx& c) {
     const char* path = guest_cstr(c.mem, c.a[1]);
     std::uint8_t* buf = c.mem.host_ptr(c.a[4], 256, kPageWrite);
     if (!path || !buf) return -EFAULT;
-    return result_of(::syscall(SYS_statx, static_cast<int>(c.a[0]), path, static_cast<int>(c.a[2]), c.a[3], buf));
+    const std::string host_path = c.proc.translate_path(path);
+    return result_of(::syscall(SYS_statx, static_cast<int>(c.a[0]), host_path.c_str(), static_cast<int>(c.a[2]), c.a[3], buf));
 }
 
 std::int32_t sys_ioctl(Ctx& c) {
@@ -422,6 +462,12 @@ std::int32_t sys_prctl(Ctx& c) {
     switch (option) {
     case kPrSetVma:
         return 0;
+    case PR_GET_DUMPABLE:
+    case PR_SET_DUMPABLE:
+    case PR_SET_NO_NEW_PRIVS:
+    case PR_GET_NO_NEW_PRIVS:
+        return result_of(::prctl(option, static_cast<unsigned long>(c.a[1]), static_cast<unsigned long>(c.a[2]),
+                                 static_cast<unsigned long>(c.a[3]), static_cast<unsigned long>(c.a[4])));
     case PR_SET_NAME:
     case PR_GET_NAME: {
         std::uint8_t* name = c.mem.host_ptr(c.a[1], 16, option == PR_SET_NAME ? kPageRead : kPageWrite);
@@ -507,7 +553,8 @@ std::int32_t sys_pipe2(Ctx& c) {
 std::int32_t sys_path_call(Ctx& c, std::uint32_t path_arg, long (*call)(Ctx&, const char*)) {
     const char* path = guest_cstr(c.mem, c.a[path_arg]);
     if (!path) return -EFAULT;
-    return result_of(call(c, path));
+    const std::string host_path = c.proc.translate_path(path);
+    return result_of(call(c, host_path.c_str()));
 }
 
 }  // namespace
@@ -528,6 +575,7 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
     switch (nr) {
     case NR_exit:
     case NR_exit_group:
+        if (trace_enabled()) log("%s(%d)", syscall_name(nr), static_cast<int>(c.a[0]));
         proc.request_exit(static_cast<int>(c.a[0] & 0xff));
         return false;
 
@@ -571,16 +619,24 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
             return ::mkdirat(static_cast<int>(x.a[0]), p, static_cast<mode_t>(x.a[2]));
         });
         break;
-    case NR_readlinkat:
-        res = sys_path_call(c, 1, [](Ctx& x, const char* p) -> long {
-            std::uint8_t* buf = x.mem.host_ptr(x.a[2], x.a[3], kPageWrite);
-            if (x.a[3] != 0 && !buf) {
-                errno = EFAULT;
-                return -1;
-            }
-            return ::readlinkat(static_cast<int>(x.a[0]), p, reinterpret_cast<char*>(buf), x.a[3]);
-        });
+    case NR_readlinkat: {
+        const char* path = guest_cstr(c.mem, c.a[1]);
+        std::uint8_t* buf = c.mem.host_ptr(c.a[2], c.a[3], kPageWrite);
+        if (!path || (c.a[3] != 0 && !buf)) {
+            res = -EFAULT;
+            break;
+        }
+        if (std::strcmp(path, "/proc/self/exe") == 0) {
+            const std::string& exe = proc.exe_path();
+            const std::size_t n = std::min<std::size_t>(exe.size(), c.a[3]);
+            std::memcpy(buf, exe.data(), n);
+            res = static_cast<std::int32_t>(n);
+            break;
+        }
+        const std::string host_path = proc.translate_path(path);
+        res = result_of(::readlinkat(static_cast<int>(c.a[0]), host_path.c_str(), reinterpret_cast<char*>(buf), c.a[3]));
         break;
+    }
     case NR_getcwd: {
         std::uint8_t* buf = c.mem.host_ptr(c.a[0], c.a[1], kPageWrite);
         res = (c.a[1] != 0 && !buf) ? -EFAULT : result_of(::syscall(SYS_getcwd, buf, c.a[1]));
@@ -594,6 +650,31 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
     }
     case NR_fstatat64: res = sys_fstatat64(c); break;
     case NR_statx: res = sys_statx(c); break;
+    case NR_fstatfs64: {
+        if (c.a[1] != sizeof(g::statfs64) && c.a[1] != g::kStatfs64UserSize) {
+            res = -EINVAL;
+            break;
+        }
+        struct statfs st;
+        const int rc = ::fstatfs(static_cast<int>(c.a[0]), &st);
+        res = sys_statfs_common(c, rc, st, c.a[2]);
+        break;
+    }
+    case NR_statfs64: {
+        const char* path = guest_cstr(c.mem, c.a[0]);
+        if (!path) {
+            res = -EFAULT;
+            break;
+        }
+        if (c.a[1] != sizeof(g::statfs64) && c.a[1] != g::kStatfs64UserSize) {
+            res = -EINVAL;
+            break;
+        }
+        struct statfs st;
+        const int rc = ::statfs(proc.translate_path(path).c_str(), &st);
+        res = sys_statfs_common(c, rc, st, c.a[2]);
+        break;
+    }
 
     case NR_brk: res = sys_brk(c); break;
     case NR_mmap2: res = sys_mmap2(c); break;
@@ -690,6 +771,9 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
         break;
     }
 
+    if (trace_enabled()) {
+        log("%s(0x%x, 0x%x, 0x%x, 0x%x) = %d", syscall_name(nr), c.a[0], c.a[1], c.a[2], c.a[3], res);
+    }
     if (c.stop) return false;
     regs[0] = static_cast<std::uint32_t>(res);
     return true;

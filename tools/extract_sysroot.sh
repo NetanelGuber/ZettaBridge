@@ -32,7 +32,7 @@ dump /system/bin/bootstrap/linker "$OUT/system/bin/linker"
 for f in libc.so libm.so libdl.so libdl_android.so; do
     dump "/system/lib/bootstrap/$f" "$OUT/system/lib/$f"
 done
-for f in ld-android.so liblog.so libz.so libc++.so; do
+for f in ld-android.so liblog.so libz.so libc++.so libstdc++.so; do
     dump "/system/lib/$f" "$OUT/system/lib/$f"
 done
 
