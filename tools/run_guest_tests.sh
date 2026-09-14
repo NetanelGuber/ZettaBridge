@@ -35,6 +35,10 @@ CASE_ENV=""
 run_case hello_static 7 world
 run_case hello_dynamic 3 "$GUEST/zb_io.tmp"
 run_case threads_dynamic 0
+run_case kuser_dynamic 0
+CASE_ENV="LD_LIBRARY_PATH=$GUEST/lib"
+run_case cxx_dynamic 0
+CASE_ENV=""
 
 if [ -f "$APK" ]; then
     mkdir -p "$OR_LIBS"

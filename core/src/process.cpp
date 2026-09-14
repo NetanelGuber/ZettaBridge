@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <future>
+#include <iterator>
 #include <string_view>
 #include <thread>
 
@@ -110,6 +111,41 @@ const char* exception_name(Dynarmic::A32::Exception e) {
 
 void write_guest_u32(GuestMemory& mem, std::uint32_t addr, std::uint32_t value) {
     if (std::uint8_t* p = mem.host_ptr(addr, 4, kPageWrite)) std::memcpy(p, &value, 4);
+}
+
+// Linux ARM kernel user helpers (arch/arm/kernel/entry-armv.S, SMP variants), ARM mode and
+// position independent. Encodings from the NDK assembler. Real ARMv5 (armeabi) code calls
+// these for atomics and TLS. Version 3 advertises get_tls, cmpxchg and memory_barrier;
+// cmpxchg64 (version 5) is not provided.
+constexpr std::uint32_t kKuserPage = 0xFFFF0000;
+constexpr std::uint32_t kKuserMemoryBarrier[] = {
+    0xe12fff1e,  // bx lr
+};
+constexpr std::uint32_t kKuserCmpxchg[] = {
+    0xe1923f9f,  // 1: ldrex r3, [r2]
+    0xe0533000,  //    subs r3, r3, r0
+    0x01823f91,  //    strexeq r3, r1, [r2]
+    0x03330001,  //    teqeq r3, #1
+    0x0afffffa,  //    beq 1b
+    0xe2730000,  //    rsbs r0, r3, #0
+    0xe12fff1e,  //    bx lr
+};
+constexpr std::uint32_t kKuserGetTls[] = {
+    0xee1d0f70,  // mrc p15, 0, r0, c13, c0, 3
+    0xe12fff1e,  // bx lr
+};
+constexpr std::uint32_t kKuserHelperVersion = 3;
+
+bool map_kuser_page(GuestMemory& mem) {
+    if (!mem.map_anon(kKuserPage, kPageSize, PROT_READ | PROT_WRITE)) return false;
+    const auto put = [&](std::uint32_t offset, const std::uint32_t* words, std::size_t count) {
+        std::memcpy(mem.base() + kKuserPage + offset, words, count * sizeof(std::uint32_t));
+    };
+    put(0xfa0, kKuserMemoryBarrier, std::size(kKuserMemoryBarrier));
+    put(0xfc0, kKuserCmpxchg, std::size(kKuserCmpxchg));
+    put(0xfe0, kKuserGetTls, std::size(kKuserGetTls));
+    put(0xffc, &kKuserHelperVersion, 1);
+    return mem.protect(kKuserPage, kPageSize, PROT_READ | PROT_EXEC);
 }
 
 }  // namespace
@@ -242,6 +278,10 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
 
     if (!mem_.map_anon(kStackTop - kStackSize, kStackSize, PROT_READ | PROT_WRITE)) {
         log("cannot map the guest stack");
+        return 1;
+    }
+    if (!map_kuser_page(mem_)) {
+        log("cannot map the kuser helper page");
         return 1;
     }
     brk_start = brk_current = exe.load_end;
