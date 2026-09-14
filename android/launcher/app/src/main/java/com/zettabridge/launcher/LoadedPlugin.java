@@ -1,11 +1,13 @@
 package com.zettabridge.launcher;
 
 import android.app.Application;
-import android.app.Instrumentation;
+import android.content.ContentProvider;
+import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.util.Log;
@@ -13,7 +15,9 @@ import android.util.Log;
 import dalvik.system.DexClassLoader;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /** A plugin loaded into the :guest process: its class loader, resources and Application. */
@@ -28,6 +32,8 @@ final class LoadedPlugin {
     final ClassLoader classLoader;
     /** Plugin activities by fully qualified class name. */
     final Map<String, ActivityInfo> activities = new HashMap<>();
+    /** Content providers started in-process (kept alive for the process lifetime). */
+    final List<ContentProvider> providers = new ArrayList<>();
     Application application;
 
     private LoadedPlugin(PluginRecord record, ApplicationInfo appInfo, Resources resources, ClassLoader classLoader) {
@@ -67,11 +73,37 @@ final class LoadedPlugin {
             }
         }
 
+        // Same order as ActivityThread.handleBindApplication: attach, content providers, onCreate.
+        // p.application is set before attach, so getApplicationContext() already returns the
+        // plugin Application inside attachBaseContext (apps commonly cache it there).
         String appClass = ai.className != null ? ai.className : Application.class.getName();
         PluginContext appContext = new PluginContext(host.getBaseContext(), p);
-        p.application = (Application) Instrumentation.newApplication(cl.loadClass(appClass), appContext);
+        p.application = (Application) cl.loadClass(appClass).getDeclaredConstructor().newInstance();
+        Reflect.method(Application.class, "attach", Context.class).invoke(p.application, appContext);
         Log.i(TAG, "plugin " + p.packageName + ": application " + appClass + " attached");
+        installProviders(p, info, ai);
         p.application.onCreate();
         return p;
+    }
+
+    /**
+     * Instantiates the plugin's content providers in-process so auto-init providers (AndroidX
+     * Startup, Firebase, WorkManager) run before Application.onCreate. They are not registered
+     * with the system: resolving their authorities through ContentResolver does not work yet.
+     */
+    private static void installProviders(LoadedPlugin p, PackageInfo info, ApplicationInfo ai) {
+        if (info.providers == null) return;
+        for (ProviderInfo pi : info.providers) {
+            try {
+                pi.applicationInfo = ai;
+                ContentProvider provider = (ContentProvider) p.classLoader.loadClass(pi.name)
+                        .getDeclaredConstructor().newInstance();
+                provider.attachInfo(p.application, pi);
+                p.providers.add(provider);
+                Log.i(TAG, "plugin " + p.packageName + ": provider " + pi.name + " started");
+            } catch (Throwable t) {
+                Log.w(TAG, "plugin " + p.packageName + ": provider " + pi.name + " failed", t);
+            }
+        }
     }
 }
