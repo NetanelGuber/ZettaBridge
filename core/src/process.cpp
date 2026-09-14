@@ -320,6 +320,7 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
         log("arguments and environment do not fit on the guest stack");
         return 1;
     }
+    initial_sp_ = sp;
 
     main_ = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(allocate_processor_id()),
                                           precise_faults_);

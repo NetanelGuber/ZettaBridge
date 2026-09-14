@@ -13,6 +13,15 @@
 #include <sys/uio.h>
 #include <sys/utsname.h>
 #include <sys/vfs.h>
+#include <poll.h>
+#include <sys/epoll.h>
+#include <sys/file.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/sysinfo.h>
+#include <sys/timerfd.h>
+#include <sys/times.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -582,6 +591,387 @@ std::int32_t sys_path_call(Ctx& c, std::uint32_t path_arg, long (*call)(Ctx&, co
     return result_of(call(c, host_path.c_str()));
 }
 
+
+std::int32_t sys_two_paths(Ctx& c, std::uint32_t first, std::uint32_t second,
+                           long (*call)(Ctx&, const char*, const char*)) {
+    const char* a = guest_cstr(c.mem, c.a[first]);
+    const char* b = guest_cstr(c.mem, c.a[second]);
+    if (!a || !b) return -EFAULT;
+    const std::string host_a = c.proc.translate_path(a);
+    const std::string host_b = c.proc.translate_path(b);
+    return result_of(call(c, host_a.c_str(), host_b.c_str()));
+}
+
+std::int32_t sys_poll(Ctx& c, bool ppoll, bool time64) {
+    const std::uint32_t nfds = c.a[1];
+    if (nfds > 65536) return -EINVAL;
+    std::uint8_t* fds = c.mem.host_ptr(c.a[0], static_cast<std::uint64_t>(nfds) * sizeof(pollfd), kPageRead | kPageWrite);
+    if (nfds != 0 && fds == nullptr) return -EFAULT;
+    if (!ppoll) return result_of(::poll(reinterpret_cast<pollfd*>(fds), nfds, static_cast<int>(c.a[2])));
+    timespec ts;
+    timespec* tsp = nullptr;
+    if (c.a[2] != 0) {
+        if (!read_timespec(c.mem, c.a[2], time64, ts)) return -EFAULT;
+        tsp = &ts;
+    }
+    // The guest signal mask is emulated; a host mask would affect the wrong signals.
+    return result_of(::ppoll(reinterpret_cast<pollfd*>(fds), nfds, tsp, nullptr));
+}
+
+fd_set* guest_fd_set(GuestMemory& m, std::uint32_t addr, bool& fault) {
+    if (addr == 0) return nullptr;
+    std::uint8_t* p = m.host_ptr(addr, sizeof(fd_set), kPageRead | kPageWrite);
+    if (p == nullptr) fault = true;
+    return reinterpret_cast<fd_set*>(p);
+}
+
+// fd_set has the same 128-byte bit layout for 32-bit and 64-bit longs on little-endian.
+std::int32_t sys_select(Ctx& c, bool pselect, bool time64) {
+    const int nfds = static_cast<int>(c.a[0]);
+    if (nfds < 0 || nfds > FD_SETSIZE) return -EINVAL;
+    bool fault = false;
+    fd_set* r = guest_fd_set(c.mem, c.a[1], fault);
+    fd_set* w = guest_fd_set(c.mem, c.a[2], fault);
+    fd_set* e = guest_fd_set(c.mem, c.a[3], fault);
+    if (fault) return -EFAULT;
+    if (!pselect) {
+        timeval tv;
+        timeval* tvp = nullptr;
+        if (c.a[4] != 0) {
+            g::timeval32 t;
+            if (!read_guest(c.mem, c.a[4], t)) return -EFAULT;
+            tv.tv_sec = t.tv_sec;
+            tv.tv_usec = t.tv_usec;
+            tvp = &tv;
+        }
+        const int res = ::select(nfds, r, w, e, tvp);
+        if (res < 0) return -errno;
+        if (tvp != nullptr) {
+            write_guest(c.mem, c.a[4], g::timeval32{static_cast<std::int32_t>(tv.tv_sec), static_cast<std::int32_t>(tv.tv_usec)});
+        }
+        return res;
+    }
+    timespec ts;
+    timespec* tsp = nullptr;
+    if (c.a[4] != 0) {
+        if (!read_timespec(c.mem, c.a[4], time64, ts)) return -EFAULT;
+        tsp = &ts;
+    }
+    return result_of(::pselect(nfds, r, w, e, tsp, nullptr));
+}
+
+std::int32_t sys_sockaddr_in(Ctx& c, long host_nr) {
+    std::uint8_t* addr = c.mem.host_ptr(c.a[1], c.a[2], kPageRead);
+    if (c.a[2] != 0 && addr == nullptr) return -EFAULT;
+    return result_of(::syscall(host_nr, static_cast<int>(c.a[0]), addr, c.a[2]));
+}
+
+// accept / accept4 / getsockname / getpeername: (fd, sockaddr*, socklen_t* [, flags]).
+std::int32_t sys_sockaddr_out(Ctx& c, long host_nr, bool with_flags) {
+    std::uint8_t* addr = nullptr;
+    std::uint8_t* len = nullptr;
+    if (c.a[2] != 0) {
+        len = c.mem.host_ptr(c.a[2], 4, kPageRead | kPageWrite);
+        if (len == nullptr) return -EFAULT;
+        std::uint32_t capacity;
+        std::memcpy(&capacity, len, 4);
+        if (c.a[1] != 0) {
+            addr = c.mem.host_ptr(c.a[1], capacity, kPageWrite);
+            if (capacity != 0 && addr == nullptr) return -EFAULT;
+        }
+    }
+    if (with_flags) return result_of(::syscall(host_nr, static_cast<int>(c.a[0]), addr, len, static_cast<int>(c.a[3])));
+    return result_of(::syscall(host_nr, static_cast<int>(c.a[0]), addr, len));
+}
+
+std::int32_t sys_sendto(Ctx& c, std::uint32_t dest, std::uint32_t dest_len) {
+    std::uint8_t* buf = c.mem.host_ptr(c.a[1], c.a[2], kPageRead);
+    std::uint8_t* to = dest != 0 ? c.mem.host_ptr(dest, dest_len, kPageRead) : nullptr;
+    if ((c.a[2] != 0 && buf == nullptr) || (dest != 0 && to == nullptr)) return -EFAULT;
+    return result_of(::syscall(SYS_sendto, static_cast<int>(c.a[0]), buf, c.a[2], static_cast<int>(c.a[3]), to,
+                               dest != 0 ? dest_len : 0));
+}
+
+std::int32_t sys_recvfrom(Ctx& c, std::uint32_t src, std::uint32_t src_len_addr) {
+    std::uint8_t* buf = c.mem.host_ptr(c.a[1], c.a[2], kPageWrite);
+    if (c.a[2] != 0 && buf == nullptr) return -EFAULT;
+    std::uint8_t* from = nullptr;
+    std::uint8_t* from_len = nullptr;
+    if (src_len_addr != 0) {
+        from_len = c.mem.host_ptr(src_len_addr, 4, kPageRead | kPageWrite);
+        if (from_len == nullptr) return -EFAULT;
+        std::uint32_t capacity;
+        std::memcpy(&capacity, from_len, 4);
+        if (src != 0) {
+            from = c.mem.host_ptr(src, capacity, kPageWrite);
+            if (capacity != 0 && from == nullptr) return -EFAULT;
+        }
+    }
+    return result_of(::syscall(SYS_recvfrom, static_cast<int>(c.a[0]), buf, c.a[2], static_cast<int>(c.a[3]), from, from_len));
+}
+
+// SO_RCVTIMEO/SO_SNDTIMEO with the old option numbers take a native-width struct timeval.
+constexpr int kSoRcvTimeoOld = 20;
+constexpr int kSoSndTimeoOld = 21;
+
+bool is_old_timeval_option(int level, int name) {
+    return level == SOL_SOCKET && (name == kSoRcvTimeoOld || name == kSoSndTimeoOld);
+}
+
+std::int32_t sys_setsockopt(Ctx& c) {
+    const int level = static_cast<int>(c.a[1]);
+    const int name = static_cast<int>(c.a[2]);
+    if (is_old_timeval_option(level, name) && c.a[4] >= sizeof(g::timeval32)) {
+        g::timeval32 t;
+        if (!read_guest(c.mem, c.a[3], t)) return -EFAULT;
+        timeval tv{t.tv_sec, t.tv_usec};
+        return result_of(::setsockopt(static_cast<int>(c.a[0]), level, name, &tv, sizeof tv));
+    }
+    std::uint8_t* value = c.mem.host_ptr(c.a[3], c.a[4], kPageRead);
+    if (c.a[4] != 0 && value == nullptr) return -EFAULT;
+    return result_of(::syscall(SYS_setsockopt, static_cast<int>(c.a[0]), level, name, value, c.a[4]));
+}
+
+std::int32_t sys_getsockopt(Ctx& c) {
+    const int level = static_cast<int>(c.a[1]);
+    const int name = static_cast<int>(c.a[2]);
+    std::uint8_t* len = c.mem.host_ptr(c.a[4], 4, kPageRead | kPageWrite);
+    if (len == nullptr) return -EFAULT;
+    std::uint32_t capacity;
+    std::memcpy(&capacity, len, 4);
+    if (is_old_timeval_option(level, name)) {
+        timeval tv{};
+        socklen_t tv_len = sizeof tv;
+        if (::getsockopt(static_cast<int>(c.a[0]), level, name, &tv, &tv_len) != 0) return -errno;
+        if (capacity < sizeof(g::timeval32)) return -EINVAL;
+        if (!write_guest(c.mem, c.a[3], g::timeval32{static_cast<std::int32_t>(tv.tv_sec), static_cast<std::int32_t>(tv.tv_usec)})) {
+            return -EFAULT;
+        }
+        const std::uint32_t written = sizeof(g::timeval32);
+        std::memcpy(len, &written, 4);
+        return 0;
+    }
+    std::uint8_t* value = c.mem.host_ptr(c.a[3], capacity, kPageWrite);
+    if (capacity != 0 && value == nullptr) return -EFAULT;
+    return result_of(::syscall(SYS_getsockopt, static_cast<int>(c.a[0]), level, name, value, len));
+}
+
+struct HostMessage {
+    msghdr msg{};
+    std::vector<iovec> iov;
+    std::vector<std::uint8_t> control;
+};
+
+std::int32_t build_host_message(Ctx& c, const g::msghdr32& gm, bool receiving, HostMessage& out) {
+    if (gm.msg_iovlen > IOV_MAX) return -EMSGSIZE;
+    out.iov.resize(gm.msg_iovlen);
+    for (std::uint32_t i = 0; i < gm.msg_iovlen; ++i) {
+        g::iovec32 v;
+        if (!read_guest(c.mem, gm.msg_iov + i * sizeof(g::iovec32), v)) return -EFAULT;
+        std::uint8_t* base = c.mem.host_ptr(v.iov_base, v.iov_len, receiving ? kPageWrite : kPageRead);
+        if (v.iov_len != 0 && base == nullptr) return -EFAULT;
+        out.iov[i] = {base, v.iov_len};
+    }
+    out.msg.msg_iov = out.iov.data();
+    out.msg.msg_iovlen = gm.msg_iovlen;
+    if (gm.msg_name != 0) {
+        std::uint8_t* name = c.mem.host_ptr(gm.msg_name, gm.msg_namelen, receiving ? kPageWrite : kPageRead);
+        if (gm.msg_namelen != 0 && name == nullptr) return -EFAULT;
+        out.msg.msg_name = name;
+        out.msg.msg_namelen = gm.msg_namelen;
+    }
+    out.msg.msg_flags = gm.msg_flags;
+    return 0;
+}
+
+// Guest control messages (12-byte headers, 4-byte alignment) -> host (16-byte, 8-byte).
+bool control_to_host(GuestMemory& m, std::uint32_t addr, std::uint32_t len, std::vector<std::uint8_t>& out) {
+    const std::uint8_t* src = m.host_ptr(addr, len, kPageRead);
+    if (src == nullptr) return false;
+    std::uint32_t offset = 0;
+    while (offset + sizeof(g::cmsghdr32) <= len) {
+        g::cmsghdr32 header;
+        std::memcpy(&header, src + offset, sizeof header);
+        if (header.cmsg_len < sizeof header || offset + header.cmsg_len > len) break;
+        const std::uint32_t data_len = header.cmsg_len - sizeof header;
+        const std::size_t host_offset = out.size();
+        out.resize(host_offset + CMSG_SPACE(data_len));
+        auto* host = reinterpret_cast<cmsghdr*>(out.data() + host_offset);
+        host->cmsg_len = CMSG_LEN(data_len);
+        host->cmsg_level = header.cmsg_level;
+        host->cmsg_type = header.cmsg_type;
+        std::memcpy(CMSG_DATA(host), src + offset + sizeof header, data_len);
+        offset += (header.cmsg_len + 3) & ~3u;
+    }
+    return true;
+}
+
+std::uint32_t control_to_guest(msghdr& host, std::uint8_t* dst, std::uint32_t capacity, int& flags) {
+    std::uint32_t offset = 0;
+    for (cmsghdr* h = CMSG_FIRSTHDR(&host); h != nullptr; h = CMSG_NXTHDR(&host, h)) {
+        const std::size_t data_len = h->cmsg_len - CMSG_LEN(0);
+        const auto needed = static_cast<std::uint32_t>(sizeof(g::cmsghdr32) + data_len);
+        if (offset + needed > capacity) {
+            flags |= MSG_CTRUNC;
+            break;
+        }
+        const g::cmsghdr32 header{needed, h->cmsg_level, h->cmsg_type};
+        std::memcpy(dst + offset, &header, sizeof header);
+        std::memcpy(dst + offset + sizeof header, CMSG_DATA(h), data_len);
+        offset = std::min(capacity, offset + ((needed + 3) & ~3u));
+    }
+    return offset;
+}
+
+std::int32_t sys_sendmsg(Ctx& c) {
+    g::msghdr32 gm;
+    if (!read_guest(c.mem, c.a[1], gm)) return -EFAULT;
+    HostMessage hm;
+    if (const std::int32_t err = build_host_message(c, gm, false, hm); err != 0) return err;
+    if (gm.msg_controllen != 0) {
+        if (!control_to_host(c.mem, gm.msg_control, gm.msg_controllen, hm.control)) return -EFAULT;
+        hm.msg.msg_control = hm.control.data();
+        hm.msg.msg_controllen = hm.control.size();
+    }
+    return result_of(::sendmsg(static_cast<int>(c.a[0]), &hm.msg, static_cast<int>(c.a[2])));
+}
+
+std::int32_t sys_recvmsg(Ctx& c) {
+    g::msghdr32 gm;
+    if (!read_guest(c.mem, c.a[1], gm) || c.mem.host_ptr(c.a[1], sizeof gm, kPageWrite) == nullptr) return -EFAULT;
+    HostMessage hm;
+    if (const std::int32_t err = build_host_message(c, gm, true, hm); err != 0) return err;
+    std::uint8_t* guest_control = nullptr;
+    if (gm.msg_controllen != 0) {
+        guest_control = c.mem.host_ptr(gm.msg_control, gm.msg_controllen, kPageWrite);
+        if (guest_control == nullptr) return -EFAULT;
+        hm.control.resize(static_cast<std::size_t>(gm.msg_controllen) * 2 + 64);
+        hm.msg.msg_control = hm.control.data();
+        hm.msg.msg_controllen = hm.control.size();
+    }
+    const ssize_t n = ::recvmsg(static_cast<int>(c.a[0]), &hm.msg, static_cast<int>(c.a[2]));
+    if (n < 0) return -errno;
+    int flags = hm.msg.msg_flags;
+    gm.msg_controllen = guest_control != nullptr ? control_to_guest(hm.msg, guest_control, gm.msg_controllen, flags) : 0;
+    gm.msg_namelen = static_cast<std::uint32_t>(hm.msg.msg_namelen);
+    gm.msg_flags = flags;
+    write_guest(c.mem, c.a[1], gm);
+    return static_cast<std::int32_t>(n);
+}
+
+std::int32_t sys_epoll_wait(Ctx& c) {
+    const int max_events = static_cast<int>(c.a[2]);
+    if (max_events <= 0 || max_events > 65536) return -EINVAL;
+    std::uint8_t* events = c.mem.host_ptr(c.a[1], static_cast<std::uint64_t>(max_events) * sizeof(epoll_event), kPageWrite);
+    if (events == nullptr) return -EFAULT;
+    // epoll_pwait's guest signal mask is ignored: guest masks are emulated.
+    return result_of(::epoll_pwait(static_cast<int>(c.a[0]), reinterpret_cast<epoll_event*>(events), max_events,
+                                   static_cast<int>(c.a[3]), nullptr));
+}
+
+bool read_itimerval(GuestMemory& m, std::uint32_t addr, itimerval& out) {
+    g::itimerval32 t;
+    if (!read_guest(m, addr, t)) return false;
+    out.it_interval = {t.it_interval.tv_sec, t.it_interval.tv_usec};
+    out.it_value = {t.it_value.tv_sec, t.it_value.tv_usec};
+    return true;
+}
+
+bool write_itimerval(GuestMemory& m, std::uint32_t addr, const itimerval& v) {
+    const g::itimerval32 t{{static_cast<std::int32_t>(v.it_interval.tv_sec), static_cast<std::int32_t>(v.it_interval.tv_usec)},
+                           {static_cast<std::int32_t>(v.it_value.tv_sec), static_cast<std::int32_t>(v.it_value.tv_usec)}};
+    return write_guest(m, addr, t);
+}
+
+std::int32_t sys_setitimer(Ctx& c) {
+    itimerval new_value{};
+    itimerval old_value{};
+    if (c.a[1] != 0 && !read_itimerval(c.mem, c.a[1], new_value)) return -EFAULT;
+    if (::syscall(SYS_setitimer, static_cast<int>(c.a[0]), c.a[1] != 0 ? &new_value : nullptr, &old_value) != 0) return -errno;
+    if (c.a[2] != 0 && !write_itimerval(c.mem, c.a[2], old_value)) return -EFAULT;
+    return 0;
+}
+
+std::int32_t sys_getitimer(Ctx& c) {
+    itimerval value{};
+    if (::syscall(SYS_getitimer, static_cast<int>(c.a[0]), &value) != 0) return -errno;
+    return write_itimerval(c.mem, c.a[1], value) ? 0 : -EFAULT;
+}
+
+void fill_rusage32(g::rusage32& out, const rusage& ru) {
+    out.ru_utime = {static_cast<std::int32_t>(ru.ru_utime.tv_sec), static_cast<std::int32_t>(ru.ru_utime.tv_usec)};
+    out.ru_stime = {static_cast<std::int32_t>(ru.ru_stime.tv_sec), static_cast<std::int32_t>(ru.ru_stime.tv_usec)};
+    const long fields[14] = {ru.ru_maxrss, ru.ru_ixrss,  ru.ru_idrss,  ru.ru_isrss,  ru.ru_minflt,   ru.ru_majflt, ru.ru_nswap,
+                             ru.ru_inblock, ru.ru_oublock, ru.ru_msgsnd, ru.ru_msgrcv, ru.ru_nsignals, ru.ru_nvcsw, ru.ru_nivcsw};
+    for (int i = 0; i < 14; ++i) out.fields[i] = static_cast<std::int32_t>(fields[i]);
+}
+
+std::int32_t sys_sysinfo(Ctx& c) {
+    struct sysinfo si;
+    if (::sysinfo(&si) != 0) return -errno;
+    const std::uint64_t unit = si.mem_unit != 0 ? si.mem_unit : 1;
+    const std::uint64_t bytes[8] = {si.totalram * unit, si.freeram * unit,   si.sharedram * unit, si.bufferram * unit,
+                                    si.totalswap * unit, si.freeswap * unit, si.totalhigh * unit, si.freehigh * unit};
+    // Like the kernel's compat path: grow mem_unit until every value fits in 32 bits.
+    std::uint64_t guest_unit = 1;
+    for (std::uint64_t b : bytes) {
+        while (b / guest_unit > 0xFFFFFFFFull) guest_unit <<= 1;
+    }
+    g::sysinfo32 out{};
+    out.uptime = static_cast<std::int32_t>(si.uptime);
+    for (int i = 0; i < 3; ++i) out.loads[i] = static_cast<std::uint32_t>(si.loads[i]);
+    out.totalram = static_cast<std::uint32_t>(bytes[0] / guest_unit);
+    out.freeram = static_cast<std::uint32_t>(bytes[1] / guest_unit);
+    out.sharedram = static_cast<std::uint32_t>(bytes[2] / guest_unit);
+    out.bufferram = static_cast<std::uint32_t>(bytes[3] / guest_unit);
+    out.totalswap = static_cast<std::uint32_t>(bytes[4] / guest_unit);
+    out.freeswap = static_cast<std::uint32_t>(bytes[5] / guest_unit);
+    out.procs = si.procs;
+    out.totalhigh = static_cast<std::uint32_t>(bytes[6] / guest_unit);
+    out.freehigh = static_cast<std::uint32_t>(bytes[7] / guest_unit);
+    out.mem_unit = static_cast<std::uint32_t>(guest_unit);
+    return write_guest(c.mem, c.a[0], out) ? 0 : -EFAULT;
+}
+
+std::int32_t sys_utimensat(Ctx& c, bool time64) {
+    std::string host_path;
+    const char* path = nullptr;
+    if (c.a[1] != 0) {
+        const char* guest = guest_cstr(c.mem, c.a[1]);
+        if (guest == nullptr) return -EFAULT;
+        host_path = c.proc.translate_path(guest);
+        path = host_path.c_str();
+    }
+    timespec times[2];
+    timespec* tp = nullptr;
+    if (c.a[2] != 0) {
+        const std::uint32_t step = time64 ? sizeof(g::timespec64) : sizeof(g::timespec32);
+        if (!read_timespec(c.mem, c.a[2], time64, times[0]) || !read_timespec(c.mem, c.a[2] + step, time64, times[1])) {
+            return -EFAULT;
+        }
+        tp = times;
+    }
+    return result_of(::syscall(SYS_utimensat, static_cast<int>(c.a[0]), path, tp, static_cast<int>(c.a[3])));
+}
+
+bool read_itimerspec(GuestMemory& m, std::uint32_t addr, itimerspec& out) {
+    g::itimerspec32 t;
+    if (!read_guest(m, addr, t)) return false;
+    out.it_interval = {t.it_interval.tv_sec, t.it_interval.tv_nsec};
+    out.it_value = {t.it_value.tv_sec, t.it_value.tv_nsec};
+    return true;
+}
+
+bool write_itimerspec(GuestMemory& m, std::uint32_t addr, const itimerspec& v) {
+    const g::itimerspec32 t{{static_cast<std::int32_t>(v.it_interval.tv_sec), static_cast<std::int32_t>(v.it_interval.tv_nsec)},
+                            {static_cast<std::int32_t>(v.it_value.tv_sec), static_cast<std::int32_t>(v.it_value.tv_nsec)}};
+    return write_guest(m, addr, t);
+}
+
+std::uint64_t join64(std::uint32_t lo, std::uint32_t hi) {
+    return static_cast<std::uint64_t>(lo) | (static_cast<std::uint64_t>(hi) << 32);
+}
+
 }  // namespace
 
 const char* syscall_name(std::uint32_t nr) {
@@ -634,11 +1024,14 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
     case NR_fcntl64: res = sys_fcntl64(c); break;
     case NR_ioctl: res = sys_ioctl(c); break;
 
-    case NR_openat:
+    case NR_openat: {
+        const char* guest_path = guest_cstr(c.mem, c.a[1]);
+        if (guest_path != nullptr && proc.open_synthetic_file(guest_path, static_cast<int>(c.a[2]), res)) break;
         res = sys_path_call(c, 1, [](Ctx& x, const char* p) -> long {
             return ::syscall(SYS_openat, static_cast<int>(x.a[0]), p, static_cast<int>(x.a[2]), static_cast<mode_t>(x.a[3]));
         });
         break;
+    }
     case NR_faccessat:
         res = sys_path_call(c, 1, [](Ctx& x, const char* p) -> long {
             return ::syscall(SYS_faccessat, static_cast<int>(x.a[0]), p, static_cast<int>(x.a[2]));
@@ -843,6 +1236,249 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
         }
         res = sys_send_signal(c, false, static_cast<std::int32_t>(c.a[0]), static_cast<std::int32_t>(c.a[1]), c.a[2],
                               c.a[3] != 0 ? &queued : nullptr, SI_QUEUE);
+        break;
+    }
+
+    // ---- files and directories
+    case NR_getdents64: {
+        std::uint8_t* buf = c.mem.host_ptr(c.a[1], c.a[2], kPageWrite);
+        res = (c.a[2] != 0 && !buf) ? -EFAULT : result_of(::syscall(SYS_getdents64, static_cast<int>(c.a[0]), buf, c.a[2]));
+        break;
+    }
+    case NR_renameat:
+        res = sys_two_paths(c, 1, 3, [](Ctx& x, const char* a, const char* b) -> long {
+            return ::renameat(static_cast<int>(x.a[0]), a, static_cast<int>(x.a[2]), b);
+        });
+        break;
+    case NR_renameat2:
+        res = sys_two_paths(c, 1, 3, [](Ctx& x, const char* a, const char* b) -> long {
+            return ::syscall(SYS_renameat2, static_cast<int>(x.a[0]), a, static_cast<int>(x.a[2]), b, x.a[4]);
+        });
+        break;
+    case NR_linkat:
+        res = sys_two_paths(c, 1, 3, [](Ctx& x, const char* a, const char* b) -> long {
+            return ::linkat(static_cast<int>(x.a[0]), a, static_cast<int>(x.a[2]), b, static_cast<int>(x.a[4]));
+        });
+        break;
+    case NR_symlinkat: {
+        const char* target = guest_cstr(c.mem, c.a[0]);
+        const char* link = guest_cstr(c.mem, c.a[2]);
+        if (!target || !link) {
+            res = -EFAULT;
+            break;
+        }
+        res = result_of(::symlinkat(target, static_cast<int>(c.a[1]), proc.translate_path(link).c_str()));
+        break;
+    }
+    case NR_fchmodat:
+        res = sys_path_call(c, 1, [](Ctx& x, const char* p) -> long {
+            return ::syscall(SYS_fchmodat, static_cast<int>(x.a[0]), p, static_cast<mode_t>(x.a[2]));
+        });
+        break;
+    case NR_fchownat:
+        res = sys_path_call(c, 1, [](Ctx& x, const char* p) -> long {
+            return ::fchownat(static_cast<int>(x.a[0]), p, x.a[2], x.a[3], static_cast<int>(x.a[4]));
+        });
+        break;
+    case NR_chdir:
+        res = sys_path_call(c, 0, [](Ctx&, const char* p) -> long { return ::chdir(p); });
+        break;
+    case NR_truncate64:
+        res = sys_path_call(c, 0, [](Ctx& x, const char* p) -> long {
+            return ::truncate(p, static_cast<off_t>(join64(x.a[2], x.a[3])));
+        });
+        break;
+    case NR_ftruncate64:
+        res = result_of(::ftruncate(static_cast<int>(c.a[0]), static_cast<off_t>(join64(c.a[2], c.a[3]))));
+        break;
+    case NR_utimensat: res = sys_utimensat(c, false); break;
+    case NR_utimensat_time64: res = sys_utimensat(c, true); break;
+    case NR_fchmod: res = result_of(::fchmod(static_cast<int>(c.a[0]), static_cast<mode_t>(c.a[1]))); break;
+    case NR_fchown32: res = result_of(::fchown(static_cast<int>(c.a[0]), c.a[1], c.a[2])); break;
+    case NR_fsync: res = result_of(::fsync(static_cast<int>(c.a[0]))); break;
+    case NR_fdatasync: res = result_of(::fdatasync(static_cast<int>(c.a[0]))); break;
+    case NR_flock: res = result_of(::flock(static_cast<int>(c.a[0]), static_cast<int>(c.a[1]))); break;
+    case NR_umask: res = static_cast<std::int32_t>(::umask(static_cast<mode_t>(c.a[0]))); break;
+    case NR_fchdir: res = result_of(::fchdir(static_cast<int>(c.a[0]))); break;
+    case NR_dup2: res = result_of(::dup2(static_cast<int>(c.a[0]), static_cast<int>(c.a[1]))); break;
+    case NR_pipe: {
+        std::uint8_t* out = c.mem.host_ptr(c.a[0], 8, kPageWrite);
+        int fds[2];
+        if (!out) {
+            res = -EFAULT;
+        } else if (::pipe(fds) != 0) {
+            res = -errno;
+        } else {
+            std::memcpy(out, fds, sizeof fds);
+            res = 0;
+        }
+        break;
+    }
+    case NR_memfd_create: {
+        const char* name = guest_cstr(c.mem, c.a[0]);
+        res = !name ? -EFAULT : result_of(::syscall(SYS_memfd_create, name, c.a[1]));
+        break;
+    }
+    case NR_msync: {
+        const std::uint64_t size = page_round_up(c.a[1]);
+        std::lock_guard<std::mutex> lock(proc.mm_mutex());
+        if (c.a[0] & kPageMask) {
+            res = -EINVAL;
+        } else if (!c.mem.accessible(c.a[0], size, 0)) {
+            res = -ENOMEM;
+        } else {
+            res = result_of(::msync(c.mem.base() + c.a[0], size, static_cast<int>(c.a[2])));
+        }
+        break;
+    }
+    case NR_mlock:
+    case NR_munlock:
+        res = 0;
+        break;
+
+    // ---- waiting
+    case NR_poll: res = sys_poll(c, false, false); break;
+    case NR_ppoll: res = sys_poll(c, true, false); break;
+    case NR_ppoll_time64: res = sys_poll(c, true, true); break;
+    case NR__newselect: res = sys_select(c, false, false); break;
+    case NR_pselect6: res = sys_select(c, true, false); break;
+    case NR_pselect6_time64: res = sys_select(c, true, true); break;
+    case NR_eventfd2: res = result_of(::syscall(SYS_eventfd2, c.a[0], static_cast<int>(c.a[1]))); break;
+    case NR_epoll_create1: res = result_of(::epoll_create1(static_cast<int>(c.a[0]))); break;
+    case NR_epoll_ctl: {
+        std::uint8_t* event = c.a[3] != 0 ? c.mem.host_ptr(c.a[3], sizeof(epoll_event), kPageRead) : nullptr;
+        if (c.a[3] != 0 && !event) {
+            res = -EFAULT;
+        } else {
+            res = result_of(::epoll_ctl(static_cast<int>(c.a[0]), static_cast<int>(c.a[1]), static_cast<int>(c.a[2]),
+                                        reinterpret_cast<epoll_event*>(event)));
+        }
+        break;
+    }
+    case NR_epoll_wait:
+    case NR_epoll_pwait:
+        res = sys_epoll_wait(c);
+        break;
+    case NR_timerfd_create: res = result_of(::timerfd_create(static_cast<int>(c.a[0]), static_cast<int>(c.a[1]))); break;
+    case NR_timerfd_settime: {
+        itimerspec new_value{};
+        itimerspec old_value{};
+        if (!read_itimerspec(c.mem, c.a[2], new_value)) {
+            res = -EFAULT;
+            break;
+        }
+        if (::timerfd_settime(static_cast<int>(c.a[0]), static_cast<int>(c.a[1]), &new_value, &old_value) != 0) {
+            res = -errno;
+            break;
+        }
+        res = (c.a[3] != 0 && !write_itimerspec(c.mem, c.a[3], old_value)) ? -EFAULT : 0;
+        break;
+    }
+    case NR_timerfd_gettime: {
+        itimerspec value{};
+        if (::timerfd_gettime(static_cast<int>(c.a[0]), &value) != 0) {
+            res = -errno;
+            break;
+        }
+        res = write_itimerspec(c.mem, c.a[1], value) ? 0 : -EFAULT;
+        break;
+    }
+
+    // ---- sockets
+    case NR_bind: res = sys_sockaddr_in(c, SYS_bind); break;
+    case NR_listen: res = result_of(::listen(static_cast<int>(c.a[0]), static_cast<int>(c.a[1]))); break;
+    case NR_accept: res = sys_sockaddr_out(c, SYS_accept, false); break;
+    case NR_accept4: res = sys_sockaddr_out(c, SYS_accept4, true); break;
+    case NR_getsockname: res = sys_sockaddr_out(c, SYS_getsockname, false); break;
+    case NR_getpeername: res = sys_sockaddr_out(c, SYS_getpeername, false); break;
+    case NR_socketpair: {
+        std::uint8_t* out = c.mem.host_ptr(c.a[3], 8, kPageWrite);
+        int sv[2];
+        if (!out) {
+            res = -EFAULT;
+        } else if (::socketpair(static_cast<int>(c.a[0]), static_cast<int>(c.a[1]), static_cast<int>(c.a[2]), sv) != 0) {
+            res = -errno;
+        } else {
+            std::memcpy(out, sv, sizeof sv);
+            res = 0;
+        }
+        break;
+    }
+    case NR_send: res = sys_sendto(c, 0, 0); break;
+    case NR_sendto: res = sys_sendto(c, c.a[4], c.a[5]); break;
+    case NR_recv: res = sys_recvfrom(c, 0, 0); break;
+    case NR_recvfrom: res = sys_recvfrom(c, c.a[4], c.a[5]); break;
+    case NR_shutdown: res = result_of(::shutdown(static_cast<int>(c.a[0]), static_cast<int>(c.a[1]))); break;
+    case NR_setsockopt: res = sys_setsockopt(c); break;
+    case NR_getsockopt: res = sys_getsockopt(c); break;
+    case NR_sendmsg: res = sys_sendmsg(c); break;
+    case NR_recvmsg: res = sys_recvmsg(c); break;
+
+    // ---- time, resources, processes
+    case NR_setitimer: res = sys_setitimer(c); break;
+    case NR_getitimer: res = sys_getitimer(c); break;
+    case NR_times: {
+        tms t;
+        const clock_t r = ::times(&t);
+        if (r == static_cast<clock_t>(-1)) {
+            res = -errno;
+            break;
+        }
+        const g::tms32 out{static_cast<std::int32_t>(t.tms_utime), static_cast<std::int32_t>(t.tms_stime),
+                           static_cast<std::int32_t>(t.tms_cutime), static_cast<std::int32_t>(t.tms_cstime)};
+        res = (c.a[0] != 0 && !write_guest(c.mem, c.a[0], out)) ? -EFAULT : static_cast<std::int32_t>(r);
+        break;
+    }
+    case NR_getrusage: {
+        rusage ru;
+        if (::getrusage(static_cast<__rusage_who_t>(static_cast<int>(c.a[0])), &ru) != 0) {
+            res = -errno;
+            break;
+        }
+        g::rusage32 out{};
+        fill_rusage32(out, ru);
+        res = write_guest(c.mem, c.a[1], out) ? 0 : -EFAULT;
+        break;
+    }
+    case NR_wait4: {
+        int status = 0;
+        rusage ru{};
+        const pid_t r = ::wait4(static_cast<pid_t>(c.a[0]), &status, static_cast<int>(c.a[2]), &ru);
+        if (r < 0) {
+            res = -errno;
+            break;
+        }
+        if (c.a[1] != 0 && !write_guest(c.mem, c.a[1], static_cast<std::int32_t>(status))) {
+            res = -EFAULT;
+            break;
+        }
+        if (c.a[3] != 0) {
+            g::rusage32 out{};
+            fill_rusage32(out, ru);
+            write_guest(c.mem, c.a[3], out);
+        }
+        res = r;
+        break;
+    }
+    case NR_sysinfo: res = sys_sysinfo(c); break;
+    case NR_getpriority: res = result_of(::syscall(SYS_getpriority, static_cast<int>(c.a[0]), static_cast<int>(c.a[1]))); break;
+    case NR_setpriority:
+        res = result_of(::syscall(SYS_setpriority, static_cast<int>(c.a[0]), static_cast<int>(c.a[1]), static_cast<int>(c.a[2])));
+        break;
+    case NR_sched_setaffinity: {
+        std::uint8_t* mask = c.mem.host_ptr(c.a[2], c.a[1], kPageRead);
+        res = !mask ? -EFAULT : result_of(::syscall(SYS_sched_setaffinity, static_cast<pid_t>(c.a[0]), c.a[1], mask));
+        break;
+    }
+    case NR_getpgid: res = result_of(::getpgid(static_cast<pid_t>(c.a[0]))); break;
+    case NR_setsid: res = result_of(::setsid()); break;
+    case NR_rt_sigpending: {
+        const std::uint64_t pending = thread.pending_signals();
+        if (c.a[1] != 8) {
+            res = -EINVAL;
+        } else {
+            res = write_guest(c.mem, c.a[0], pending) ? 0 : -EFAULT;
+        }
         break;
     }
 

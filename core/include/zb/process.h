@@ -82,6 +82,10 @@ public:
     std::string translate_path(const char* guest_path) const;
     // Host path of the guest executable, as reported by /proc/self/exe.
     const std::string& exe_path() const { return exe_path_; }
+    // Opens a synthesized /proc file (/proc/self/maps, /proc/self/stat, /proc/cpuinfo) that
+    // must describe the 32-bit guest rather than the host. Returns false if guest_path is not
+    // one of them; otherwise sets result to a file descriptor or -errno (proc_files.cpp).
+    bool open_synthetic_file(const char* guest_path, int flags, std::int32_t& result);
     // True if addr lies in the image of the guest dynamic linker.
     bool in_guest_linker(std::uint32_t addr) const { return addr >= linker_start_ && addr < linker_end_; }
 
@@ -131,6 +135,8 @@ private:
     void wait_for_threads();
     [[noreturn]] void exit_host_process();
     void crash_report(const Stop& stop, GuestThread& thread) const;
+    std::string build_maps() const;
+    std::string build_stat() const;
 
     GuestMemory mem_;
     std::unique_ptr<Dynarmic::ExclusiveMonitor> monitor_;
@@ -150,6 +156,7 @@ private:
     std::string sysroot_;
     std::string exe_path_;
     bool precise_faults_ = false;
+    std::uint32_t initial_sp_ = 0;
     std::uint32_t linker_start_ = 0;
     std::uint32_t linker_end_ = 0;
     std::atomic<bool> exiting_{false};

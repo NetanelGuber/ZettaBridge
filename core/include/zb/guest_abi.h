@@ -134,6 +134,74 @@ struct sigframe32 {
     std::uint32_t retcode[4];
 };
 
+struct itimerval32 {
+    timeval32 it_interval;
+    timeval32 it_value;
+};
+
+struct itimerspec32 {
+    timespec32 it_interval;
+    timespec32 it_value;
+};
+
+struct tms32 {
+    std::int32_t tms_utime;
+    std::int32_t tms_stime;
+    std::int32_t tms_cutime;
+    std::int32_t tms_cstime;
+};
+
+struct rusage32 {
+    timeval32 ru_utime;
+    timeval32 ru_stime;
+    std::int32_t fields[14];  // ru_maxrss .. ru_nivcsw
+};
+
+struct sysinfo32 {
+    std::int32_t uptime;
+    std::uint32_t loads[3];
+    std::uint32_t totalram;
+    std::uint32_t freeram;
+    std::uint32_t sharedram;
+    std::uint32_t bufferram;
+    std::uint32_t totalswap;
+    std::uint32_t freeswap;
+    std::uint16_t procs;
+    std::uint16_t pad;
+    std::uint32_t totalhigh;
+    std::uint32_t freehigh;
+    std::uint32_t mem_unit;
+    std::uint8_t reserved[8];
+};
+
+struct msghdr32 {
+    std::uint32_t msg_name;
+    std::uint32_t msg_namelen;
+    std::uint32_t msg_iov;
+    std::uint32_t msg_iovlen;
+    std::uint32_t msg_control;
+    std::uint32_t msg_controllen;
+    std::int32_t msg_flags;
+};
+
+struct cmsghdr32 {
+    std::uint32_t cmsg_len;
+    std::int32_t cmsg_level;
+    std::int32_t cmsg_type;
+};
+
+static_assert(sizeof(itimerval32) == 16);
+static_assert(sizeof(itimerspec32) == 16);
+static_assert(sizeof(tms32) == 16);
+static_assert(sizeof(rusage32) == 72);
+static_assert(sizeof(sysinfo32) == 64);
+static_assert(offsetof(sysinfo32, totalram) == 16);
+static_assert(offsetof(sysinfo32, procs) == 40);
+static_assert(offsetof(sysinfo32, totalhigh) == 44);
+static_assert(offsetof(sysinfo32, mem_unit) == 52);
+static_assert(sizeof(msghdr32) == 28);
+static_assert(offsetof(msghdr32, msg_control) == 16);
+static_assert(sizeof(cmsghdr32) == 12);
 static_assert(sizeof(siginfo32) == 128);
 static_assert(sizeof(sigcontext32) == 84);
 static_assert(offsetof(sigcontext32, regs) == 12);

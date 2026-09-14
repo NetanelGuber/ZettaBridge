@@ -1,6 +1,9 @@
 /* Compiled by the NDK for armeabi-v7a only (tools/build_guest.sh, -c).
  * Asserts that bionic's arm layouts match core/include/zb/guest_abi.h. */
 #include <signal.h>
+#include <sys/socket.h>
+#include <sys/sysinfo.h>
+#include <sys/times.h>
 #include <stddef.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -30,3 +33,14 @@ _Static_assert(sizeof(struct statfs64) == 88, "statfs64 size");
 _Static_assert(offsetof(struct statfs64, f_blocks) == 8, "statfs64.f_blocks");
 _Static_assert(offsetof(struct statfs64, f_fsid) == 48, "statfs64.f_fsid");
 _Static_assert(offsetof(struct statfs64, f_flags) == 64, "statfs64.f_flags");
+_Static_assert(sizeof(struct itimerval) == 16, "itimerval32");
+_Static_assert(sizeof(struct tms) == 16, "tms32");
+_Static_assert(sizeof(struct rusage) == 72, "rusage32");
+_Static_assert(offsetof(struct rusage, ru_maxrss) == 16, "rusage32.ru_maxrss");
+_Static_assert(sizeof(struct sysinfo) == 64, "sysinfo32");
+_Static_assert(offsetof(struct sysinfo, totalram) == 16, "sysinfo32.totalram");
+_Static_assert(offsetof(struct sysinfo, procs) == 40, "sysinfo32.procs");
+_Static_assert(offsetof(struct sysinfo, mem_unit) == 52, "sysinfo32.mem_unit");
+_Static_assert(sizeof(struct msghdr) == 28, "msghdr32");
+_Static_assert(offsetof(struct msghdr, msg_control) == 16, "msghdr32.msg_control");
+_Static_assert(sizeof(struct cmsghdr) == 12, "cmsghdr32");

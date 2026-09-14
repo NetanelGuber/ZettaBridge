@@ -67,6 +67,7 @@ public:
     // Takes the lowest-numbered pending signal not in `blocked`; false if there is none.
     bool take_signal(std::uint64_t blocked, g::siginfo32& out);
     bool has_pending_signals(std::uint64_t blocked) const { return (pending_signals_.load() & ~blocked) != 0; }
+    std::uint64_t pending_signals() const { return pending_signals_.load(); }
 
     // Emulated per-thread kernel state.
     std::uint64_t sigmask = 0;
