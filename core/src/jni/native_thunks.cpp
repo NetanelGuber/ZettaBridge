@@ -1,12 +1,16 @@
 #include "zb/native_thunks.h"
 
 #include <cstddef>
+#include <cstdlib>
 #include <utility>
+
+#include "zb/log.h"
 
 extern "C" {
 // Both defined in or called from thunks.S.
 extern const char zb_native_thunk_base[];
-void zb_native_dispatch(std::uint32_t slot, zb::NativeRegs* regs);
+extern const char zb_native_thunk_end[];
+void zb_native_dispatch(std::uint32_t slot, zb::NativeRegs* regs) noexcept;
 }
 
 namespace zb {
@@ -32,6 +36,10 @@ void* native_thunk_address(std::uint32_t slot) {
     return const_cast<char*>(zb_native_thunk_base) + 8 * static_cast<std::size_t>(slot);
 }
 
+std::size_t native_thunk_pool_bytes() {
+    return static_cast<std::size_t>(zb_native_thunk_end - zb_native_thunk_base);
+}
+
 NativeSlots::NativeSlots(std::size_t capacity)
     : capacity_(capacity < kNativeThunkCount ? capacity : kNativeThunkCount),
       targets_(new NativeTarget[capacity_]) {}
@@ -51,7 +59,16 @@ const NativeTarget* NativeSlots::target(std::uint32_t slot) const {
 
 }  // namespace zb
 
-void zb_native_dispatch(std::uint32_t slot, zb::NativeRegs* regs) {
+void zb_native_dispatch(std::uint32_t slot, zb::NativeRegs* regs) noexcept {
     const zb::NativeDispatcher dispatcher = zb::g_dispatcher.load();
-    if (dispatcher != nullptr) dispatcher(slot, *regs);
+    if (dispatcher == nullptr) {
+        zb::log("native thunk slot %u called with no dispatcher", slot);
+        std::abort();
+    }
+    try {
+        dispatcher(slot, *regs);
+    } catch (...) {
+        zb::log("native thunk slot %u: dispatcher threw an exception", slot);
+        std::abort();
+    }
 }

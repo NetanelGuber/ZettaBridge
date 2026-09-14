@@ -29,6 +29,10 @@ void set_native_dispatcher(NativeDispatcher dispatcher);
 // Address of a thunk, usable as the fnPtr of RegisterNatives; nullptr when out of range.
 void* native_thunk_address(std::uint32_t slot);
 
+// Size in bytes of the precompiled thunk pool (zb_native_thunk_end - zb_native_thunk_base),
+// for sanity-checking that the pool matches kNativeThunkCount.
+std::size_t native_thunk_pool_bytes();
+
 // Assigns thunk slots to native methods. Slots are never freed (UnregisterNatives keeps them),
 // so target() needs no lock.
 class NativeSlots {
