@@ -28,12 +28,27 @@ local commit.
 |---|---|---|
 | 1. `Java_*` name decoding | done, reviewed | `5eeada8`, `96250bc` (strict ART-canonical decoding after review; the plan's Task 1 code was synced) |
 | 2. Signature -> shorty | done, reviewed | `cbfe969`, `7558c25` (strict class-name scan, 255-dimension limit; plan synced), `44362e8` (docs) |
-| 3. AAPCS64 -> AAPCS32 marshaling | implemented | `fe12334`; the review may still be pending, so rerun `jni_abi_test` and read the diff before building on it |
+| 3. AAPCS64 -> AAPCS32 marshaling | done, reviewed | `fe12334` (both ABIs checked against disassembly from NDK arm32 clang and host clang) |
 | 4. Handle tables | not started | |
 | 5. Thunk pool (`thunks.S`), dispatcher, slots | not started | the assembly in the plan was prototyped and verified on this machine |
 | 6. Regression run + docs | not started | |
 
 **Open review notes to fold into later tasks:**
+- **Task 3, Important. Do this first, before Task 4.**
+  - An unknown shorty letter must fail loudly. In `core/src/jni/native_call.cpp`, the
+    `default:` branches of `marshal_native_args` and `store_native_result` silently skip.
+    In `marshal_native_args` a skipped letter also leaves the host reader unadvanced,
+    which shifts every later argument.
+  - Make both functions abort with a log line naming the shorty. Add a note to the
+    header that shorties must come from `shorty_from_signature`.
+  - Then update the plan's Task 3 code block and commit.
+- **Task 3, Minor.**
+  - Add tests for the host FP stack-overflow path: 9+ `F`/`D`, so `next_fp()` reads
+    `regs.stack`.
+  - Add tests for `(JI)V` and `(DI)V`: the long takes r2:r3, then the int goes to the
+    stack.
+  - Add a comment that `sign_extend32/64` rely on the implicit promotion of the
+    `int8_t`/`int16_t` argument.
 - **Spec wording.** Spec section 2 still describes thunks as `movz x16, #i; b ...`. The
   plan and implementation use `adr x16, .; b zb_native_common`. Fix the spec wording in
   Task 6.
