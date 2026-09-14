@@ -25,6 +25,28 @@ The second command also extracts and fixes the Orange Roulette libs into `build/
 
 ## 2. Put them into a test app
 
+**Shortcut.** `tools/make_t6_bundle.sh` assembles everything into `build/t6/`: about 2.5 MB of
+native library and 20 MB of assets. Copy its three folders into an AndroidIDE app module
+(minSdk 26 or higher):
+
+- `build/t6/jniLibs` -> `app/src/main/jniLibs`
+- `build/t6/assets` -> `app/src/main/assets` (includes `zb-files.txt`, the extraction list)
+- `build/t6/java` -> `app/src/main/java`: `com.zettabridge.core.ZBridge` and
+  `com.zettabridge.core.GuestTestActivity`, compile-checked with javac against
+  `android.jar` API 36
+
+Declare the activity in its own process and launch it:
+
+```xml
+<activity android:name="com.zettabridge.core.GuestTestActivity" android:process=":guest" android:exported="true" />
+```
+
+It extracts the assets to `filesDir/zb/` and runs the table below on a background thread. The
+results show on screen and in logcat, tag `zbridge-t6` (translator messages use tag
+`zbridge`). Each test's stdout and stderr stay in `filesDir/zb/<test>.stdout|.stderr`.
+
+The manual layout, for reference:
+
 - `app/src/main/jniLibs/arm64-v8a/libzbridge.so` <- `build/android-arm64/core/libzbridge.so`
 - assets, keeping this layout; extract to `filesDir/zb/` on first start:
   - `zb/sysroot/system/bin/linker`, `zb/sysroot/system/lib/*.so` <- `sysroot/`
