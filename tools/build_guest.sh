@@ -26,7 +26,7 @@ done
 
 for src in "$ROOT"/guest/tests/*_dynamic.c; do
     name=$(basename "$src" .c)
-    "$CC" -O2 -Wall -o "$OUT/$name" "$src"
+    "$CC" -O2 -Wall -o "$OUT/$name" "$src" -llog
 done
 
 cp "$TOOLCHAIN/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" "$OUT/lib/"

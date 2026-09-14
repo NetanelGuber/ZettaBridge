@@ -38,6 +38,7 @@ run_case threads_dynamic 0
 run_case kuser_dynamic 0
 run_case signals_dynamic 134
 run_case syscalls_dynamic 0 "$GUEST/zb_syscalls_tmp"
+run_case log_dynamic 0
 CASE_ARGS="--env LD_LIBRARY_PATH=$GUEST/lib"
 run_case cxx_dynamic 0
 CASE_ARGS=""

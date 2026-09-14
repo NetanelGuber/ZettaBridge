@@ -7,7 +7,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 STAGE="$ROOT/build/termux/zb"
 ZBRUN="$ROOT/build/android-arm64/cli/zbrun/zbrun"
-TESTS="hello_static hello_dynamic threads_dynamic kuser_dynamic signals_dynamic syscalls_dynamic cxx_dynamic or_dlopen_dynamic"
+TESTS="hello_static hello_dynamic threads_dynamic kuser_dynamic signals_dynamic syscalls_dynamic log_dynamic cxx_dynamic or_dlopen_dynamic"
 
 for required in "$ZBRUN" "$ROOT/sysroot/system/bin/linker" "$ROOT/build/or/libApplicationMain.so"; do
     if [ ! -e "$required" ]; then

@@ -33,6 +33,7 @@ run_case threads_dynamic 0
 run_case kuser_dynamic 0
 run_case signals_dynamic 134
 run_case syscalls_dynamic 0 "$HERE/out/syscalls_tmp"
+run_case log_dynamic 0
 ZB_EXTRA="--env LD_LIBRARY_PATH=$HERE/guest/lib"
 run_case cxx_dynamic 0
 run_case or_dlopen_dynamic 0 "$HERE/or"
@@ -42,3 +43,4 @@ if [ "$failures" -ne 0 ]; then
     exit 1
 fi
 echo "all guest tests passed"
+echo "Phase 3 check: the guest log line must appear in: su -c logcat -d -s zbguest"

@@ -13,6 +13,19 @@ What exists after the night of 2026-09-13/14:
 Not done and not testable here: nothing has run inside ART yet. This machine is a chroot
 without Android's `/system`, so an Android binary cannot run on it.
 
+## Results so far
+
+- **2026-09-14, OnePlus 13, Termux, Android build of `zbrun`: all guest tests PASS.** The
+  bundle comes from `tools/make_termux_bundle.sh`; unpack it in the Termux home and run
+  `sh run_tests.sh`.
+  - First attempt: every dynamic test exited with 1. Termux's `LD_PRELOAD` (a 64-bit
+    library) reached the 32-bit guest linker. Fixed by never passing host
+    `LD_PRELOAD`/`LD_LIBRARY_PATH` to guests.
+- **Still open:**
+  - the in-app run inside the ART process (below);
+  - the logcat check: `su -c logcat -d -s zbguest` must show
+    "hello from arm32 guest" after `log_dynamic`.
+
 ## 1. Build the pieces (on this machine)
 
 ```

@@ -10,8 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Supported so far: threads, guest signal handlers, kuser helpers, and C++ exceptions
   across libraries.
 - All six Orange Roulette libraries `dlopen` with their JNI entry points resolvable.
-- Next: Phase 3 (`libzbridge.so` in the `:guest` process on device), plus the part 1
-  and part 4 specs.
+- On the phone (OnePlus 13, 2026-09-14): the Android build of `zbrun` passes the whole
+  guest suite in Termux (`tools/make_termux_bundle.sh`).
+- Next: the in-app T6 run next to ART (`tools/make_t6_bundle.sh`,
+  `docs/phase3-device-test.md`), then the part 1 (JNI) and part 4 (GLES/audio/assets)
+  specs.
 - Work is on branch `phase1-zbrun` (local only).
 
 Local git repo (no remote yet; pushing to GitHub is done together with the user).
@@ -211,6 +214,9 @@ functions. Accept: the game is playable start to finish.
   appears, decode it with `llvm-objdump -d --triple=thumbv8a` at the offset printed by
   the crash report. Get exact encodings by assembling a probe with
   `clang --target=armv8a-linux-androideabi`, not from memory.
+- **zbrun never passes the host's `LD_PRELOAD`/`LD_LIBRARY_PATH` to the guest.** They
+  name 64-bit host libraries. Termux always sets `LD_PRELOAD`, and before this filter
+  every dynamic guest died with exit 1 on the phone.
 - **Guest-only environment variables go through `zbrun --env NAME=VALUE`.** Plain
   `LD_DEBUG`/`LD_LIBRARY_PATH` in the host environment is also read by the host glibc
   loader of zbrun itself (`LD_DEBUG=help` prints glibc's help). Guest linker debug

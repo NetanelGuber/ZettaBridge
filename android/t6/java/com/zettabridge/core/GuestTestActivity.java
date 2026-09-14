@@ -87,6 +87,8 @@ public class GuestTestActivity extends Activity {
             cases.add(new TestCase("kuser_dynamic", 0, false));
             cases.add(new TestCase("signals_dynamic", 134, false));
             cases.add(new TestCase("syscalls_dynamic", 0, false, new File(root, "syscalls_tmp").getAbsolutePath()));
+            // Also check that "hello from arm32 guest" appears in logcat under tag zbguest.
+            cases.add(new TestCase("log_dynamic", 0, false));
             cases.add(new TestCase("cxx_dynamic", 0, true));
             cases.add(new TestCase("or_dlopen_dynamic", 0, true, new File(root, "or").getAbsolutePath()));
 
