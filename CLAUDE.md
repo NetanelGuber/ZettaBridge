@@ -232,6 +232,12 @@ functions. Accept: the game is playable start to finish.
   `crash_dump`). zbrun refuses to install handlers whose address lies inside the linker
   image, so guest crashes end with the signal and zbrun's crash report instead of
   `exit(1)`.
+- **Memory faults are imprecise by default.** The rest of the translated block runs, and the
+  ucontext PC is the block end. That is enough for handlers that `siglongjmp` out.
+  `ZB_PRECISE_FAULTS=1` / `zbrun --precise-faults` stops exactly at the faulting
+  instruction with registers committed, at roughly 2x cost on integer code, because it
+  turns off Dynarmic's GetSetElimination. Guests whose SIGSEGV handlers resume (Mono/Unity
+  null checks) need precise mode. `fault_pc_test` covers it.
 - **Signals.** Guest handlers and masks are emulated and never installed on the host.
   On device, libsigchain runs ART's handlers first, then ours. Dynarmic has its own
   SIGSEGV handler for fastmem and chains the rest.

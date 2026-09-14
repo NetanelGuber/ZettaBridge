@@ -1,3 +1,18 @@
+diff --git a/src/dynarmic/backend/arm64/a32_address_space.cpp b/src/dynarmic/backend/arm64/a32_address_space.cpp
+index bbdf925f..673dba0f 100644
+--- a/src/dynarmic/backend/arm64/a32_address_space.cpp
++++ b/src/dynarmic/backend/arm64/a32_address_space.cpp
+@@ -166,7 +166,9 @@ IR::Block A32AddressSpace::GenerateIR(IR::LocationDescriptor descriptor) const {
+ 
+     Optimization::PolyfillPass(ir_block, {});
+     Optimization::NamingPass(ir_block);
+-    if (conf.HasOptimization(OptimizationFlag::GetSetElimination)) {
++    // As in A64AddressSpace: register writes must be committed before a memory access that can
++    // halt the block, or a precise memory abort leaves stale guest registers.
++    if (conf.HasOptimization(OptimizationFlag::GetSetElimination) && !conf.check_halt_on_memory_access) {
+         Optimization::A32GetSetElimination(ir_block, {.convert_nzc_to_nz = true});
+         Optimization::DeadCodeElimination(ir_block);
+     }
 diff --git a/src/dynarmic/frontend/A32/decoder/thumb32.inc b/src/dynarmic/frontend/A32/decoder/thumb32.inc
 index ecc7a655..77674232 100644
 --- a/src/dynarmic/frontend/A32/decoder/thumb32.inc

@@ -1,5 +1,6 @@
-// Probe: which guest PC does a memory-fault Stop report? A guest SIGSEGV handler that fixes
-// the cause and returns needs the PC of the faulting instruction in its ucontext.
+// Memory faults are precise: the Stop reports the PC of the faulting instruction, and nothing
+// after it in the same translated block has run. Guest SIGSEGV handlers that fix the cause
+// and return depend on this.
 #include <sys/mman.h>
 
 #include <cstdio>
@@ -44,18 +45,27 @@ int main() {
     put16(mem, 0x10108, 0xDFFF);
     CHECK(mem.protect(0x10000, 0x1000, PROT_READ | PROT_EXEC));
 
-    zb::GuestThread arm(mem, &monitor, 0);
+    zb::GuestThread arm(mem, &monitor, 0, /*precise_faults=*/true);
     arm.set_cpsr(0x10);
     arm.regs()[15] = 0x10000;
     zb::Stop s = arm.run();
-    std::printf("arm:   kind=%d fault_addr=0x%x stop.pc=0x%x r15=0x%x r2=%u (faulting insn at 0x10008)\n",
-                static_cast<int>(s.kind), s.fault_addr, s.pc, arm.regs()[15], arm.regs()[2]);
+    std::printf("arm:   kind=%d fault_addr=0x%x stop.pc=0x%x r2=%u\n", static_cast<int>(s.kind), s.fault_addr, s.pc,
+                arm.regs()[2]);
+    CHECK(s.kind == zb::StopKind::MemoryFault);
+    CHECK(s.fault_addr == 0);
+    CHECK(s.pc == 0x10008);
+    CHECK(arm.regs()[2] == 5);
 
-    zb::GuestThread thumb(mem, &monitor, 0);
+    zb::GuestThread thumb(mem, &monitor, 0, /*precise_faults=*/true);
     thumb.set_cpsr(0x30);
     thumb.regs()[15] = 0x10100;
     s = thumb.run();
-    std::printf("thumb: kind=%d fault_addr=0x%x stop.pc=0x%x r15=0x%x r2=%u (faulting insn at 0x10104)\n",
-                static_cast<int>(s.kind), s.fault_addr, s.pc, thumb.regs()[15], thumb.regs()[2]);
+    std::printf("thumb: kind=%d fault_addr=0x%x stop.pc=0x%x r2=%u\n", static_cast<int>(s.kind), s.fault_addr, s.pc,
+                thumb.regs()[2]);
+    CHECK(s.kind == zb::StopKind::MemoryFault);
+    CHECK(s.pc == 0x10104);
+    CHECK(thumb.regs()[2] == 5);
+
+    std::puts("fault_pc_test PASS");
     return 0;
 }

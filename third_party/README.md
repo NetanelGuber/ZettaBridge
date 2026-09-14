@@ -31,6 +31,11 @@ Adds ARMv8 AArch32 T32 instructions that the A32 decoder already had.
    A32 `CRC32Variant`. scudo in the GSI libc computes chunk checksums with `crc32cw`
    unconditionally, so every `malloc` needs it.
 
+3. **Precise memory aborts in A32 on arm64.** `A32AddressSpace::GenerateIR` now skips
+   `A32GetSetElimination` when `check_halt_on_memory_access` is set, as
+   `A64AddressSpace` already did. Without it, a halted block leaves guest registers
+   written by earlier instructions of the block uncommitted.
+
 - **Why the family is needed.** The GSI's arm32 bionic is built for armv8-a and uses these
   instructions heavily (the linker alone has ~1000 of them).
   `__libc_arc4random_ready()` (LDAB) and `pthread_mutex_lock()` (LDAEXH) run during

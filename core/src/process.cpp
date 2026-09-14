@@ -150,7 +150,9 @@ bool map_kuser_page(GuestMemory& mem) {
 
 }  // namespace
 
-Process::Process() : monitor_(std::make_unique<Dynarmic::ExclusiveMonitor>(kMaxThreads)) {}
+Process::Process() : monitor_(std::make_unique<Dynarmic::ExclusiveMonitor>(kMaxThreads)) {
+    if (const char* precise = std::getenv("ZB_PRECISE_FAULTS")) precise_faults_ = precise[0] == '1';
+}
 
 Process::~Process() = default;
 
@@ -319,7 +321,8 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
         return 1;
     }
 
-    main_ = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(allocate_processor_id()));
+    main_ = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(allocate_processor_id()),
+                                          precise_faults_);
     auto& regs = main_->regs();
     regs.fill(0);
     regs[13] = sp;
@@ -399,7 +402,7 @@ std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std
     const int processor_id = allocate_processor_id();
     if (processor_id < 0) return -EAGAIN;
 
-    auto child = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(processor_id));
+    auto child = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(processor_id), precise_faults_);
     child->regs() = parent.regs();
     child->regs()[0] = 0;
     if (stack != 0) child->regs()[13] = stack;

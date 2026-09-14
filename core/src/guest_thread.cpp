@@ -15,6 +15,9 @@ namespace {
 
 constexpr Dynarmic::HaltReason kStopHalt = Dynarmic::HaltReason::UserDefined1;
 constexpr Dynarmic::HaltReason kInterruptHalt = Dynarmic::HaltReason::UserDefined2;
+// With check_halt_on_memory_access, code emitted after each memory access tests this bit and
+// returns with PC set to the accessing instruction, so faults are precise.
+constexpr Dynarmic::HaltReason kMemoryAbortHalt = Dynarmic::HaltReason::MemoryAbort;
 
 template <typename T>
 T load(const std::uint8_t* p) {
@@ -30,7 +33,8 @@ void store(std::uint8_t* p, T v) {
 
 }  // namespace
 
-GuestThread::GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id)
+GuestThread::GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id,
+                         bool precise_faults)
     : mem_(mem), processor_id_(processor_id) {
     cp15_ = std::make_shared<Cp15>(&tpidruro_, &tpidrurw_);
 
@@ -43,7 +47,7 @@ GuestThread::GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, 
     cfg.coprocessors[15] = cp15_;
     cfg.define_unpredictable_behaviour = true;
     cfg.enable_cycle_counting = false;
-    cfg.check_halt_on_memory_access = true;
+    cfg.check_halt_on_memory_access = precise_faults;
     cfg.code_cache_size = 32 * 1024 * 1024;
     jit_ = std::make_unique<Dynarmic::A32::Jit>(cfg);
 }
@@ -78,7 +82,7 @@ Stop GuestThread::run() {
     pending_ = Stop{};
     for (;;) {
         const Dynarmic::HaltReason reason = jit_->Run();
-        jit_->ClearHalt(kStopHalt);
+        jit_->ClearHalt(kStopHalt | kMemoryAbortHalt);
         if (pending_.kind == StopKind::None && Dynarmic::Has(reason, kInterruptHalt)) {
             jit_->ClearHalt(kInterruptHalt);
             pending_.kind = StopKind::Interrupted;
@@ -130,7 +134,7 @@ bool GuestThread::check_access(std::uint32_t vaddr, std::uint32_t len, std::uint
         pending_.fault_addr = vaddr;
         pending_.fault_write = write;
     }
-    halt();
+    jit_->HaltExecution(kMemoryAbortHalt);
     return false;
 }
 

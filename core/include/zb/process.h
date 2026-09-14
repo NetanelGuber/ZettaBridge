@@ -39,6 +39,8 @@ public:
 
     // Host directory holding the arm32 Android system files (system/bin/linker, system/lib/...).
     void set_sysroot(std::string dir) { sysroot_ = std::move(dir); }
+    // See GuestThread: precise memory faults at a speed cost. Defaults to $ZB_PRECISE_FAULTS.
+    void set_precise_faults(bool enabled) { precise_faults_ = enabled; }
 
     // Loads an arm32 executable (and its PT_INTERP), builds its stack and runs it until the
     // process exits. Returns the guest exit status, or 128 + signal for a fatal guest fault.
@@ -147,6 +149,7 @@ private:
     std::vector<std::pair<std::uint32_t, std::uint32_t>> textrel_ranges_;
     std::string sysroot_;
     std::string exe_path_;
+    bool precise_faults_ = false;
     std::uint32_t linker_start_ = 0;
     std::uint32_t linker_end_ = 0;
     std::atomic<bool> exiting_{false};

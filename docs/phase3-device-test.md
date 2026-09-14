@@ -80,6 +80,8 @@ Diagnostics:
 - **stderr file:** the guest linker's own messages, for example "unused DT entry"
   warnings for the fixed libs.
 - **Syscall trace:** pass `ZB_STRACE=1` in envp.
+- **Precise faults:** `ZB_PRECISE_FAULTS=1` in the app process environment (read by the
+  translator, not the guest).
 
 ## Expected differences from zbrun on Ubuntu (things to watch)
 

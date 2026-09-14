@@ -40,7 +40,11 @@ struct Stop {
 // record a Stop and halt the JIT; the caller of run() handles it and calls run() again.
 class GuestThread final : public Dynarmic::A32::UserCallbacks {
 public:
-    GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id);
+    // precise_faults: a memory fault stops at the faulting instruction with all guest registers
+    // committed (needed by guests whose SIGSEGV handlers resume, e.g. Mono). It disables
+    // Dynarmic's GetSetElimination, which costs roughly 2x on integer-heavy code.
+    GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id,
+                bool precise_faults = false);
     ~GuestThread() override;
 
     std::array<std::uint32_t, 16>& regs();

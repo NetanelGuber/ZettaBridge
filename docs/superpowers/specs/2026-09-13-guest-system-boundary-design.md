@@ -353,7 +353,14 @@ as a reference, to diff syscall traces. It is a developer tool only.
   erofs-utils, which is not in the current apt index. This is the first task of the
   plan. Fallback: an older GSI (Android 13), or an Android emulator arm64 system image.
   - Disk: about 11 GiB free; delete the image after extracting about 10 files.
-- **Precise guest state at faults** inside a translated block. Needed for correct
+- **Resolved in Phase 2: precise guest state at faults.** Dynarmic's arm64 backend stops
+  exactly at the faulting instruction when the memory callback halts with
+  `HaltReason::MemoryAbort` and `check_halt_on_memory_access` is set.
+  - The A32 path also had to skip GetSetElimination in that mode (Dynarmic patch);
+    otherwise registers are stale.
+  - Cost is about 2x on integer-heavy code, so it is a per-process option
+    (`ZB_PRECISE_FAULTS`), off by default.
+- **Original risk text: precise guest state at faults** inside a translated block. Needed for correct
   `ucontext` in guest SIGSEGV handlers. To be prototyped in T4.
 - **The guest linker and libc** may probe the Android environment
   (`/dev/__properties__`, linkerconfig, `/apex`). Under `zbrun` on Ubuntu the property
