@@ -4,6 +4,8 @@
 #   guest/tests/*_dynamic.c     -> dynamic PIE executables (run with --sysroot)
 #   guest/tests/*_dynamic.cpp   -> dynamic C++ executables linked with libzbthrow + libc++_shared
 #   guest/testlib/zbthrow.cpp   -> build/guest/lib/libzbthrow.so
+#   guest/testlib/zbcallprobe.c -> build/guest/lib/libzbcallprobe.so
+#   guest/zbhost/zbhost.c       -> build/guest/zbhost
 #   guest/stubs/gen/*.S         -> build/guest/lib/<lib>.so host-call stub libraries
 #   guest/compat/zbcompat.c     -> build/guest/lib/libzbcompat.so
 set -eu
@@ -35,6 +37,9 @@ done
 cp "$TOOLCHAIN/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" "$OUT/lib/"
 "$CXX" -shared -O2 -Wall -nostdlib++ -Wl,-soname,libzbthrow.so -o "$OUT/lib/libzbthrow.so" \
     "$ROOT/guest/testlib/zbthrow.cpp" -lc++_shared
+# Base AAPCS probe library for library_runtime_test.
+"$CC" -shared -fPIC -O2 -Wall -Wl,-soname,libzbcallprobe.so -o "$OUT/lib/libzbcallprobe.so" \
+    "$ROOT/guest/testlib/zbcallprobe.c"
 for src in "$ROOT"/guest/tests/*_dynamic.cpp; do
     name=$(basename "$src" .cpp)
     "$CXX" -O2 -Wall -nostdlib++ -o "$OUT/$name" "$src" -L"$OUT/lib" -lzbthrow -lc++_shared

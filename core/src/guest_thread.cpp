@@ -1,6 +1,11 @@
 #include "zb/guest_thread.h"
 
+#include <linux/futex.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <bit>
+#include <climits>
 #include <cstring>
 
 #include <dynarmic/interface/exclusive_monitor.h>
@@ -164,6 +169,16 @@ void GuestThread::post_signal(const g::siginfo32& info) {
     pending_info_[static_cast<std::size_t>(sig)] = info;
     pending_signals_.fetch_or(1ULL << (sig - 1));
     jit_->HaltExecution(kInterruptHalt);
+    wake();
+}
+
+void GuestThread::park(std::uint32_t token) {
+    ::syscall(SYS_futex, &park_word_, FUTEX_WAIT_PRIVATE, token, nullptr, nullptr, 0);
+}
+
+void GuestThread::wake() {
+    park_word_.fetch_add(1);
+    ::syscall(SYS_futex, &park_word_, FUTEX_WAKE_PRIVATE, INT_MAX, nullptr, nullptr, 0);
 }
 
 bool GuestThread::take_signal(std::uint64_t blocked, g::siginfo32& out) {

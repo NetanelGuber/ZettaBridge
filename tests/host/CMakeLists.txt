@@ -38,6 +38,14 @@ add_test(NAME zbhost_protocol_test COMMAND zbhost_protocol_test
     ${CMAKE_SOURCE_DIR}/build/guest/lib)
 
 # Needs tools/build_guest.sh and the extracted sysroot.
+add_executable(library_runtime_test library_runtime_test.cpp)
+target_link_libraries(library_runtime_test PRIVATE zbcore)
+add_test(NAME library_runtime_test COMMAND library_runtime_test
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/zbhost
+    ${CMAKE_SOURCE_DIR}/build/guest/lib/libzbcallprobe.so)
+
+# Needs tools/build_guest.sh and the extracted sysroot.
 add_executable(async_signal_test async_signal_test.cpp)
 target_link_libraries(async_signal_test PRIVATE zbcore)
 add_test(NAME async_signal_test COMMAND async_signal_test ${CMAKE_SOURCE_DIR}/sysroot ${CMAKE_SOURCE_DIR}/build/guest)

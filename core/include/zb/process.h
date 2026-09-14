@@ -76,6 +76,8 @@ public:
 
     // Signals (signals.cpp).
     static void set_current_thread(GuestThread* thread);
+    // Guest thread running on the calling host thread, or nullptr.
+    static GuestThread* current_thread();
     // Guest thread that takes host signals arriving on threads without guest code.
     static void set_process_signal_target(GuestThread* thread);
     static void clear_process_signal_target(GuestThread* thread);

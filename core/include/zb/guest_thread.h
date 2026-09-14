@@ -79,12 +79,21 @@ public:
     // Drop translated code for [addr, addr + len). Safe to call from other host threads.
     void invalidate(std::uint32_t addr, std::uint32_t len);
 
-    // Queues a signal for this thread and interrupts its JIT. Async-signal-safe.
+    // Queues a signal for this thread, interrupts its JIT and wakes park(). Async-signal-safe.
     void post_signal(const g::siginfo32& info);
     // Takes the lowest-numbered pending signal not in `blocked`; false if there is none.
     bool take_signal(std::uint64_t blocked, g::siginfo32& out);
     bool has_pending_signals(std::uint64_t blocked) const { return (pending_signals_.load() & ~blocked) != 0; }
     std::uint64_t pending_signals() const { return pending_signals_.load(); }
+
+    // Parking for a thread that waits inside a host call (library runtime service and carriers).
+    // wake() and post_signal() change the token; park(token) sleeps only while the token is
+    // unchanged, so a waiter that reads the token before checking its condition loses no wakeup.
+    // park() may return spuriously (host signal, EINTR).
+    std::uint32_t park_token() const { return park_word_.load(); }
+    void park(std::uint32_t token);
+    // Async-signal-safe.
+    void wake();
 
     // Emulated per-thread kernel state.
     std::uint64_t sigmask = 0;
@@ -128,6 +137,8 @@ private:
     Stop pending_;
     std::atomic<std::uint64_t> pending_signals_{0};
     std::array<g::siginfo32, 65> pending_info_{};
+    // futex word; std::atomic<std::uint32_t> has the layout of std::uint32_t.
+    std::atomic<std::uint32_t> park_word_{0};
 };
 
 }  // namespace zb

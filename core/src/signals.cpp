@@ -73,6 +73,10 @@ void Process::set_current_thread(GuestThread* thread) {
     t_current_thread = thread;
 }
 
+GuestThread* Process::current_thread() {
+    return t_current_thread;
+}
+
 void Process::set_process_signal_target(GuestThread* thread) {
     g_process_signal_target.store(thread, std::memory_order_release);
 }
