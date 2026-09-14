@@ -99,11 +99,49 @@ int main() {
     auto default_package = zb::decode_jni_export("Java_Main_start");
     CHECK(default_package && default_package->class_name == "Main" && default_package->method == "start");
 
+    // "__" followed by '0'..'3' is not the argument separator: it is '/' followed by an escape.
+    auto jna = zb::decode_jni_export("Java_com_sun_jna_Native__1getPointer");
+    CHECK(jna && jna->class_name == "com/sun/jna/Native" && jna->method == "_getPointer");
+    CHECK(!jna->arguments);
+
+    auto init_array = zb::decode_jni_export("Java_pkg_Foo__1init___3I");
+    CHECK(init_array && init_array->class_name == "pkg/Foo" && init_array->method == "_init");
+    CHECK(init_array->arguments && *init_array->arguments == "([I)");
+
+    auto org_internal = zb::decode_jni_export("Java_org__1internal_Foo_bar");
+    CHECK(org_internal && org_internal->class_name == "org/_internal/Foo" && org_internal->method == "bar");
+    CHECK(!org_internal->arguments);
+
+    auto ref_arg = zb::decode_jni_export("Java_pkg_Foo_bar__Lorg__1x_Y_2");
+    CHECK(ref_arg && ref_arg->class_name == "pkg/Foo" && ref_arg->method == "bar");
+    CHECK(ref_arg->arguments && *ref_arg->arguments == "(Lorg/_x/Y;)");
+
+    auto array_after_sep = zb::decode_jni_export("Java_pkg_Foo_bar___3I");
+    CHECK(array_after_sep && array_after_sep->class_name == "pkg/Foo" && array_after_sep->method == "bar");
+    CHECK(array_after_sep->arguments && *array_after_sep->arguments == "([I)");
+
+    auto inner_class = zb::decode_jni_export("Java_pkg_Outer_00024Inner_run");
+    CHECK(inner_class && inner_class->class_name == "pkg/Outer$Inner" && inner_class->method == "run");
+    CHECK(!inner_class->arguments);
+
+    auto surrogate_pair = zb::decode_jni_export("Java_pkg_X_0d83d_0de00_run");
+    CHECK(surrogate_pair && surrogate_pair->class_name == "pkg/X\xED\xA0\xBD\xED\xB8\x80" &&
+          surrogate_pair->method == "run");
+
     CHECK(!zb::decode_jni_export("JNI_OnLoad"));
     CHECK(!zb::decode_jni_export("Java_nomethod"));
     CHECK(!zb::decode_jni_export("Java_pkg_Foo_bar_"));
     CHECK(!zb::decode_jni_export("Java_pkg_Foo_bar_0zz12"));
     CHECK(!zb::decode_jni_export("Java_pkg_Foo_bar__I__J"));
+    CHECK(!zb::decode_jni_export("Java_"));
+    CHECK(!zb::decode_jni_export("Java__a_b"));
+    CHECK(!zb::decode_jni_export("Java_a/b_c"));
+    CHECK(!zb::decode_jni_export("Java_pkg_Foo_0002fbar"));
+    CHECK(!zb::decode_jni_export("Java_pkg_Foo_00000bar"));
+    CHECK(!zb::decode_jni_export("Java_pkg_Foo_b_00061r"));
+    CHECK(!zb::decode_jni_export("Java_pkg_Foo_000E9run"));
+    CHECK(!zb::decode_jni_export("Java_pkg_Foo_bar_000e"));
+    CHECK(!zb::decode_jni_export("Java_pkg_Foo__3bar"));
 
     std::printf("jni_mangle_test ok\n");
     return 0;
@@ -174,20 +212,41 @@ void append_utf8(std::string& out, unsigned unit) {
     }
 }
 
+// Lowercase hex digits only: ART's mangler always emits "_0xxxx" in lowercase.
 int hex_value(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
     return -1;
 }
 
+bool is_ascii_alnum(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+}
+
+// True for a code unit that has its own canonical form, so ART's mangler would never reach it
+// through "_0xxxx": ASCII alphanumerics pass through unescaped, '.' and '/' become a lone '_',
+// '_' becomes "_1", ';' becomes "_2", '[' becomes "_3".
+bool has_canonical_form(unsigned unit) {
+    if (unit > 0x7F) return false;
+    const char c = static_cast<char>(unit);
+    return is_ascii_alnum(c) || c == '.' || c == '/' || c == '_' || c == ';' || c == '[';
+}
+
 // Decodes from pos until the end or a "__" separator (then hit_separator is set and pos is past
-// it). A plain '_' becomes '/'. Returns false for a malformed escape or a trailing '_'.
+// it). A raw character must be [A-Za-z0-9]. A lone '_' (the next character is not '_') becomes
+// '/'. "__" is the separator, unless the character after it is '0'..'3': then the first '_' is
+// itself a lone '/' and the second '_' starts an escape for the following source character (e.g.
+// a method named "_init" mangles as "..__1init", not a separator). "___3" (an array argument
+// right after the real separator) still parses as separator + "_3". Escapes: "_1" = '_',
+// "_2" = ';', "_3" = '[', "_0xxxx" = a UTF-16 code unit as 4 lowercase hex digits. Returns false
+// for a non-alnum raw character, a malformed escape, a trailing '_', or an "_0xxxx" escape for a
+// code unit that ART could not have produced that way: 0, or one with its own canonical form.
 bool decode_part(std::string_view in, std::size_t& pos, std::string& out, bool& hit_separator) {
     hit_separator = false;
     while (pos < in.size()) {
         const char c = in[pos];
         if (c != '_') {
+            if (!is_ascii_alnum(c)) return false;
             out.push_back(c);
             ++pos;
             continue;
@@ -214,11 +273,19 @@ bool decode_part(std::string_view in, std::size_t& pos, std::string& out, bool& 
                 if (v < 0) return false;
                 unit = unit * 16 + static_cast<unsigned>(v);
             }
+            if (unit == 0 || has_canonical_form(unit)) return false;
             append_utf8(out, unit);
             pos += 6;
             break;
         }
         case '_':
+            if (pos + 2 < in.size() && in[pos + 2] >= '0' && in[pos + 2] <= '3') {
+                // The first '_' is a lone separator; the second one begins an escape for the
+                // very next source character.
+                out.push_back('/');
+                ++pos;
+                break;
+            }
             hit_separator = true;
             pos += 2;
             return true;
@@ -235,12 +302,16 @@ bool decode_part(std::string_view in, std::size_t& pos, std::string& out, bool& 
 
 std::optional<JniExport> decode_jni_export(std::string_view symbol) {
     constexpr std::string_view kPrefix = "Java_";
-    if (symbol.substr(0, kPrefix.size()) != kPrefix) return std::nullopt;
+    if (!symbol.starts_with(kPrefix)) return std::nullopt;
     std::size_t pos = kPrefix.size();
 
     std::string path;
     bool separator = false;
     if (!decode_part(symbol, pos, path, separator)) return std::nullopt;
+    if (path.starts_with('/') || path.ends_with('/') || path.find("//") != std::string::npos ||
+        path.find(';') != std::string::npos || path.find('[') != std::string::npos) {
+        return std::nullopt;
+    }
     const std::size_t slash = path.rfind('/');
     if (slash == std::string::npos || slash == 0 || slash + 1 == path.size()) return std::nullopt;
 
