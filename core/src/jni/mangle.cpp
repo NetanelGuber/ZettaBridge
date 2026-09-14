@@ -87,8 +87,8 @@ bool decode_part(std::string_view in, std::size_t& pos, std::string& out, bool& 
         }
         case '_':
             if (pos + 2 < in.size() && in[pos + 2] >= '0' && in[pos + 2] <= '3') {
-                // The first '_' is a lone separator; the second one begins an escape for the
-                // very next source character.
+                // The first '_' is a lone '_' meaning '/'; the second one begins an escape for
+                // the very next source character.
                 out.push_back('/');
                 ++pos;
                 break;
@@ -115,6 +115,8 @@ std::optional<JniExport> decode_jni_export(std::string_view symbol) {
     std::string path;
     bool separator = false;
     if (!decode_part(symbol, pos, path, separator)) return std::nullopt;
+    // starts_with is required for the class/method split; the other path-shape checks are
+    // defensive because canonical decoding cannot otherwise produce trailing or doubled '/'.
     if (path.starts_with('/') || path.ends_with('/') || path.find("//") != std::string::npos ||
         path.find(';') != std::string::npos || path.find('[') != std::string::npos) {
         return std::nullopt;

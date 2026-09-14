@@ -99,6 +99,9 @@ int main() {
     auto default_package = zb::decode_jni_export("Java_Main_start");
     CHECK(default_package && default_package->class_name == "Main" && default_package->method == "start");
 
+    auto digit_component = zb::decode_jni_export("Java_pkg_Foo_bar_4x");
+    CHECK(digit_component && digit_component->class_name == "pkg/Foo/bar" && digit_component->method == "4x");
+
     // "__" followed by '0'..'3' is not the argument separator: it is '/' followed by an escape.
     auto jna = zb::decode_jni_export("Java_com_sun_jna_Native__1getPointer");
     CHECK(jna && jna->class_name == "com/sun/jna/Native" && jna->method == "_getPointer");
@@ -183,7 +186,9 @@ struct JniExport {
     std::optional<std::string> arguments;
 };
 
-// Returns nullopt when the symbol is not a well-formed JNI export name.
+// Returns nullopt when the symbol is not a well-formed JNI export name. A name component after
+// a separator cannot be decoded when it starts with '0' through '3', because JNI mangling makes
+// those spellings indistinguishable from an escape beginning at the separator.
 std::optional<JniExport> decode_jni_export(std::string_view symbol);
 
 }  // namespace zb
@@ -280,8 +285,8 @@ bool decode_part(std::string_view in, std::size_t& pos, std::string& out, bool& 
         }
         case '_':
             if (pos + 2 < in.size() && in[pos + 2] >= '0' && in[pos + 2] <= '3') {
-                // The first '_' is a lone separator; the second one begins an escape for the
-                // very next source character.
+                // The first '_' is a lone '_' meaning '/'; the second one begins an escape for
+                // the very next source character.
                 out.push_back('/');
                 ++pos;
                 break;
@@ -308,6 +313,8 @@ std::optional<JniExport> decode_jni_export(std::string_view symbol) {
     std::string path;
     bool separator = false;
     if (!decode_part(symbol, pos, path, separator)) return std::nullopt;
+    // starts_with is required for the class/method split; the other path-shape checks are
+    // defensive because canonical decoding cannot otherwise produce trailing or doubled '/'.
     if (path.starts_with('/') || path.ends_with('/') || path.find("//") != std::string::npos ||
         path.find(';') != std::string::npos || path.find('[') != std::string::npos) {
         return std::nullopt;
@@ -446,7 +453,8 @@ namespace zb {
 
 // Method shorty: the return type letter first, then one letter per parameter. Primitive types
 // keep their descriptor letter (Z B C S I J F D, and V for the return); references and arrays
-// are 'L'. Example: "(IFFIFF)I" -> "IIFFIFF". Returns nullopt for a malformed descriptor.
+// are 'L'. Example: "(IFFIFF)I" -> "IIFFIFF". Returns nullopt for a structurally malformed
+// descriptor; characters inside an otherwise well-formed class name are not fully validated.
 std::optional<std::string> shorty_from_signature(std::string_view signature);
 
 }  // namespace zb
@@ -1673,6 +1681,9 @@ git commit -m "jni: precompiled arm64 native thunk pool with dispatcher and slot
 ### Task 6: Full regression run and status docs
 
 **Files:**
+- Modify: `core/include/zb/jni_mangle.h`, `core/src/jni/mangle.cpp`, `tests/host/jni_mangle_test.cpp` (review nits)
+- Modify: `core/include/zb/jni_shorty.h` (document structural validation scope)
+- Modify: `docs/superpowers/specs/2026-09-14-jni-bridge-design.md` (actual thunk instruction)
 - Modify: `CLAUDE.md` (code map, current state)
 - Modify: `AGENTS.md` (progress)
 
@@ -1681,7 +1692,19 @@ git commit -m "jni: precompiled arm64 native thunk pool with dispatcher and slot
 Run: `ninja -C build/host && ctest --test-dir build/host --output-on-failure && tools/build_guest.sh && tools/run_guest_tests.sh`
 Expected: `100% tests passed, 0 tests failed out of 10`, then `all guest tests passed`.
 
-- [ ] **Step 2: Update CLAUDE.md**
+- [ ] **Step 2: Fold in the remaining review notes**
+
+Keep the complete Task 1 and Task 2 code blocks above synchronized with the source changes:
+- clarify the ambiguous underscore comment and the defensive path checks;
+- cover `Java_pkg_Foo_bar_4x` and document why components starting with `0` through `3`
+  cannot be decoded;
+- state that shorty parsing rejects structurally malformed descriptors without fully validating
+  class-name characters.
+
+In spec section 2, describe each thunk as `adr x16, .; b zb_native_common` and state that the
+common entry derives the slot from the thunk address.
+
+- [ ] **Step 3: Update CLAUDE.md**
 
 In the "Code map" list, after the `process` bullet, add:
 ```markdown
@@ -1695,21 +1718,15 @@ In "Current state", replace the `Next:` bullet with:
 - Next: plan 4b (library-mode guest process, host->guest calls, carriers).
 ```
 
-- [ ] **Step 3: Update AGENTS.md**
+- [ ] **Step 4: Update AGENTS.md**
 
-In "State", replace the Todo 1 bullet about merging with:
-```markdown
-- The Phase 0 launcher branch was merged into `phase1-zbrun` on 2026-09-14.
-```
-In "Next", add this line directly under the `## Next: Phase 4 plan and implementation` heading:
-```markdown
-Progress: plan 4a is done (steps 2-4 of the list below, including the thunk pool); continue with plan 4b.
-```
+Mark Tasks 4-6 done, record their commits, remove the closed review notes, and identify plan 4b
+as the next task.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add CLAUDE.md AGENTS.md
+git add AGENTS.md CLAUDE.md core/include/zb/jni_mangle.h core/include/zb/jni_shorty.h core/src/jni/mangle.cpp tests/host/jni_mangle_test.cpp docs/superpowers/plans/2026-09-14-phase4a-jni-host-units.md docs/superpowers/specs/2026-09-14-jni-bridge-design.md
 git commit -m "docs: Phase 4a done"
 ```
 

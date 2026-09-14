@@ -26,6 +26,9 @@ int main() {
     auto default_package = zb::decode_jni_export("Java_Main_start");
     CHECK(default_package && default_package->class_name == "Main" && default_package->method == "start");
 
+    auto digit_component = zb::decode_jni_export("Java_pkg_Foo_bar_4x");
+    CHECK(digit_component && digit_component->class_name == "pkg/Foo/bar" && digit_component->method == "4x");
+
     // "__" followed by '0'..'3' is not the argument separator: it is '/' followed by an escape.
     auto jna = zb::decode_jni_export("Java_com_sun_jna_Native__1getPointer");
     CHECK(jna && jna->class_name == "com/sun/jna/Native" && jna->method == "_getPointer");

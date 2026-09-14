@@ -103,8 +103,8 @@ class loaders).
 ### Thunk pool
 
 - **The pool.** `libzbridge.so` contains 16384 precompiled arm64 thunks, 8 bytes each:
-  `movz x16, #i; b zb_native_common`. No code is generated at run time, so there is no
-  W^X or `execmem` dependency.
+  `adr x16, .; b zb_native_common`. The common entry derives the slot from the thunk address.
+  No code is generated at run time, so there is no W^X or `execmem` dependency.
 - **Slot `i`** holds the guest function address (with Thumb bit), the method shorty and
   the static flag.
 - **Exhaustion.** Slots are allocated by `RegisterNatives`. If the pool runs out,
