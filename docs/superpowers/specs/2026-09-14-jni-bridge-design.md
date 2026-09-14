@@ -72,10 +72,23 @@ Requirements on Phase 0 (plugin class loader):
 ### Translator side (`onProxyLoaded`)
 
 1. **Start the guest process** in library mode if it is not running. The arm32 service
-   executable `zbhost` starts, preloads `libzbjni.so`, and parks waiting for requests.
-2. **Load the library.** On a carrier for the calling Java thread, call guest
+   executable `zbhost <target_sdk> <preload>` starts, preloads `libzbcompat.so` and
+   `libzbjni.so` with `RTLD_GLOBAL`, and parks in `READY` waiting for requests.
+   - A failed preload ends `zbhost` with status 4, and the start fails with that error.
+     A `READY` that does not arrive within the timeout (10 s) also fails the start.
+   - The runtime is process-lifetime: it is started once per `:guest` process and never
+     shut down or restarted (guest threads cannot be torn down).
+2. **Load the library.** On a carrier for the calling Java thread
+   (`LibraryRuntime::Carrier::load_library`), call guest
    `dlopen(<arm32 lib path>, RTLD_NOW)`. On failure, throw `UnsatisfiedLinkError` with
-   the guest `dlerror()` text.
+   the guest `dlerror()` text, read on the same carrier because `dlerror` is per thread.
+   - Flags are 32-bit bionic values (`ZB_GUEST_RTLD_*`): `RTLD_NOW` is 0, `RTLD_GLOBAL`
+     is 2, and `RTLD_DEFAULT` is `0xffffffff`. Host `<dlfcn.h>` values are wrong for the
+     guest (host `RTLD_NOW | RTLD_GLOBAL` is `0x102`, which bionic rejects).
+   - Each carrier has its own guest `malloc` string buffer, so concurrent loads never
+     share the service thread's scratch buffer.
+   - If the calling Java thread already runs guest code (native -> Java -> `loadLibrary`),
+     the load runs as a nested call on that thread instead of a new carrier.
 3. **Bind `Java_*` exports.**
    - Read the dynamic symbol table of the arm32 ELF on the host and resolve each
      `Java_*` symbol through guest `dlsym`, which keeps the Thumb bit.
@@ -87,7 +100,7 @@ Requirements on Phase 0 (plugin class loader):
    - Call the real `RegisterNatives` with a host thunk (section 2).
    - Classes missing from the dex are logged once and skipped. Calling such a method
      later throws `UnsatisfiedLinkError` from ART as usual.
-4. **Run guest `JNI_OnLoad`** if exported, with the guest `JavaVM*` (section 3). A version
+4. **Run guest `JNI_OnLoad`** if exported, on the same carrier, with the guest `JavaVM*` (section 3). A version
    it does not accept fails the load. Its `RegisterNatives` calls go through the same thunk
    mechanism:
    - a leading `!` (pre-O fast JNI marker, still accepted by ART) is stripped;
@@ -146,8 +159,8 @@ builds. The dispatcher builds the guest call:
 ### Which thread runs the guest
 
 - **The host thread already runs a guest thread** (a guest pthread called Java, which
-  called native): nested host->guest call on its own JIT (part 3, "Host-to-guest
-  call").
+  called native, or a borrower inside a host call): nested host->guest call on its own
+  JIT (part 3, "Host-to-guest call"; `LibraryRuntime::call_on_current`).
 - **Any other Java thread** (UI thread, `GLThread`, binder threads): borrow a carrier
   (part 3, "Threads"). The binding lasts for the host thread's lifetime and is released
   by a host `pthread_key` destructor.
