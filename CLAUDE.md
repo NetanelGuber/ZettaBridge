@@ -14,6 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   guest suite in Termux (`tools/make_termux_bundle.sh`).
 - T6 passed on 2026-09-14: all 9 guest tests pass inside an app process next to ART
   (`android/t6/project/`), and guest `__android_log_print` shows in logcat.
+- Phase 0 launcher works on the phone (2026-09-14): arm64 plugins launch, including an
+  app with Firebase/AdMob (`android/launcher/`, `docs/phase0-launcher.md`).
 - Part 1 (JNI bridge) spec approved:
   `docs/superpowers/specs/2026-09-14-jni-bridge-design.md`.
 - Next: the Phase 4 plan and implementation, then the part 4 (GLES/audio/assets)
