@@ -13,3 +13,7 @@ endforeach()
 add_executable(elf_loader_test elf_loader_test.cpp)
 target_link_libraries(elf_loader_test PRIVATE zbcore)
 add_test(NAME elf_loader_test COMMAND elf_loader_test ${CMAKE_SOURCE_DIR}/build/guest/hello_static)
+
+# Diagnostic, not a pass/fail test: prints the PC a memory-fault Stop reports.
+add_executable(fault_pc_probe fault_pc_probe.cpp)
+target_link_libraries(fault_pc_probe PRIVATE zbcore)

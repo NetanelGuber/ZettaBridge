@@ -30,6 +30,14 @@ cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_CO
 ```
 tools/build_guest.sh; ctest --test-dir build/host --output-on-failure; tools/run_guest_tests.sh
 ```
+- **Android arm64 build of the core** (`libzbridge.so`, JNI class
+  `com.zettabridge.core.ZBridge`). Boost headers only, via a directory holding just the
+  `boost/` link:
+  ```
+  N=$HOME/android-ndk-r29; mkdir -p build/boost-headers; ln -sfn /usr/include/boost build/boost-headers/boost; cmake -S . -B build/android-arm64 -G Ninja -DCMAKE_TOOLCHAIN_FILE=$N/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 -DCMAKE_BUILD_TYPE=Release -DZB_BUILD_TESTS=OFF -DBoost_INCLUDE_DIR=$PWD/build/boost-headers; ninja -C build/android-arm64 zbridge
+  ```
+  Running it on the device (T6) is described in `docs/phase3-device-test.md`. Android
+  binaries cannot run on this machine: the chroot has no `/system`.
 - **Single host test:** `ctest --test-dir build/host -R t1_blob_test --output-on-failure`.
   `elf_loader_test` needs `tools/build_guest.sh` first.
 - **Any arm32 binary:** `build/host/cli/zbrun/zbrun <elf> [args]`. Diagnostics go to
