@@ -5,7 +5,7 @@ out/
 *.so.dbg
 
 # extracted arm32 system files and downloaded images
-sysroot/
+sysroot
 *.img
 *.zip
 
