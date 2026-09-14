@@ -577,6 +577,10 @@ git commit -m "jni: method descriptor to shorty"
 // Host AAPCS64 JNI registers -> guest AAPCS32 softfp call layout, and guest results -> host.
 #include <cstdio>
 #include <cstring>
+#include <functional>
+
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "check.h"
 #include "zb/native_call.h"
@@ -602,6 +606,18 @@ std::uint32_t to_handle(std::uint64_t ref) {
 
 zb::GuestCall marshal(const char* shorty, const zb::NativeRegs& regs) {
     return zb::marshal_native_args(shorty, regs, 0xE000, to_handle);
+}
+
+bool aborts(const std::function<void()>& function) {
+    const pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        function();
+        _exit(0);
+    }
+    int status = 0;
+    CHECK(waitpid(child, &status, 0) == child);
+    return WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT;
 }
 
 }  // namespace
@@ -650,6 +666,31 @@ int main() {
         CHECK(c.stack.size() == 2 && c.stack[0] == 0xCCCCDDDDu && c.stack[1] == 0xAAAABBBBu);
     }
 
+    // (JI)V: the long takes r2:r3, then the int goes to the stack.
+    {
+        zb::NativeRegs r{};
+        r.x[1] = 1;
+        r.x[2] = 0x1122334455667788ull;
+        r.x[3] = 9;
+        r.stack = stack;
+        const zb::GuestCall c = marshal("VJI", r);
+        CHECK(c.regs[2] == 0x55667788u && c.regs[3] == 0x11223344u);
+        CHECK(c.stack.size() == 1 && c.stack[0] == 9);
+    }
+
+    // (DI)V has the same guest layout, while the host reads D from d0 and I from x2.
+    {
+        zb::NativeRegs r{};
+        r.x[1] = 1;
+        r.x[2] = 11;
+        r.d[0] = dbits(3.25);
+        r.stack = stack;
+        const zb::GuestCall c = marshal("VDI", r);
+        CHECK(c.regs[2] == static_cast<std::uint32_t>(dbits(3.25)));
+        CHECK(c.regs[3] == static_cast<std::uint32_t>(dbits(3.25) >> 32));
+        CHECK(c.stack.size() == 1 && c.stack[0] == 11);
+    }
+
     // (IIIJ)V: the third int is stack word 0, so the long is padded to the 8-byte boundary.
     {
         zb::NativeRegs r{};
@@ -675,6 +716,34 @@ int main() {
         const zb::GuestCall c = marshal("VIIIIIIII", r);
         CHECK(c.regs[2] == 10 && c.regs[3] == 20);
         CHECK(c.stack.size() == 6 && c.stack[0] == 30 && c.stack[4] == 70 && c.stack[5] == 80);
+    }
+
+    // More than eight host FP arguments overflow d0-d7 into 8-byte host stack slots.
+    {
+        zb::NativeRegs r{};
+        r.x[1] = 1;
+        for (int i = 0; i < 8; ++i) r.d[i] = fbits(static_cast<float>(i + 1));
+        stack[0] = fbits(9.0f);
+        stack[1] = fbits(10.0f);
+        r.stack = stack;
+        const zb::GuestCall c = marshal("VFFFFFFFFFF", r);
+        CHECK(c.regs[2] == fbits(1.0f) && c.regs[3] == fbits(2.0f));
+        CHECK(c.stack.size() == 8 && c.stack[5] == fbits(8.0f));
+        CHECK(c.stack[6] == fbits(9.0f) && c.stack[7] == fbits(10.0f));
+    }
+
+    {
+        zb::NativeRegs r{};
+        r.x[1] = 1;
+        for (int i = 0; i < 8; ++i) r.d[i] = dbits(static_cast<double>(i + 1));
+        stack[0] = dbits(9.0);
+        r.stack = stack;
+        const zb::GuestCall c = marshal("VDDDDDDDDD", r);
+        CHECK(c.regs[2] == static_cast<std::uint32_t>(dbits(1.0)));
+        CHECK(c.regs[3] == static_cast<std::uint32_t>(dbits(1.0) >> 32));
+        CHECK(c.stack.size() == 16);
+        CHECK(c.stack[14] == static_cast<std::uint32_t>(dbits(9.0)));
+        CHECK(c.stack[15] == static_cast<std::uint32_t>(dbits(9.0) >> 32));
     }
 
     // Narrow types are extended per Java type, a null reference stays 0, a double after a stack
@@ -721,6 +790,15 @@ int main() {
         CHECK(r.x[0] == 0x7F0000000040ull);
         zb::store_native_result('L', 0, 0, r, to_ref);
         CHECK(r.x[0] == 0);
+    }
+
+    // Structurally invalid shorties must never silently shift or discard arguments/results.
+    {
+        zb::NativeRegs r{};
+        r.x[1] = 1;
+        r.stack = stack;
+        CHECK(aborts([&] { (void)marshal("VXI", r); }));
+        CHECK(aborts([&] { zb::store_native_result('X', 0, 0, r, to_handle); }));
     }
 
     std::printf("jni_abi_test ok\n");
@@ -780,10 +858,13 @@ using HandleToRef = std::function<std::uint64_t(std::uint32_t handle)>;
 
 // Builds the guest call for a native method with the given shorty (return type first):
 // r0 = guest JNIEnv*, r1 = handle for x1 (jclass or jobject), then the Java arguments.
+// shorty must be produced by shorty_from_signature; an unknown letter is a fatal invariant
+// violation.
 GuestCall marshal_native_args(std::string_view shorty, const NativeRegs& regs, std::uint32_t guest_env,
                               const RefToHandle& ref_to_handle);
 
 // Stores the guest result (r0, r1) in regs.x[0] or regs.d[0] according to the return type.
+// return_type must come from a shorty produced by shorty_from_signature.
 void store_native_result(char return_type, std::uint32_t r0, std::uint32_t r1, NativeRegs& regs,
                          const HandleToRef& handle_to_ref);
 
@@ -797,6 +878,9 @@ void store_native_result(char return_type, std::uint32_t r0, std::uint32_t r1, N
 #include "zb/native_call.h"
 
 #include <cstddef>
+#include <cstdlib>
+
+#include "zb/log.h"
 
 namespace zb {
 
@@ -852,12 +936,19 @@ private:
     int ncrn_ = 0;
 };
 
+// Passing int8_t/int16_t to these wider parameters performs the sign extension by implicit
+// integral promotion before the bit-preserving unsigned conversion.
 std::uint32_t sign_extend32(std::int32_t value) {
     return static_cast<std::uint32_t>(value);
 }
 
 std::uint64_t sign_extend64(std::int64_t value) {
     return static_cast<std::uint64_t>(value);
+}
+
+[[noreturn]] void invalid_shorty(std::string_view shorty) {
+    log("invalid JNI shorty: '%.*s'", static_cast<int>(shorty.size()), shorty.data());
+    std::abort();
 }
 
 }  // namespace
@@ -899,7 +990,7 @@ GuestCall marshal_native_args(std::string_view shorty, const NativeRegs& regs, s
             out.put32(ref_to_handle(in.next_int()));
             break;
         default:
-            break;  // shorties come from shorty_from_signature, which yields only the letters above
+            invalid_shorty(shorty);
         }
     }
     return call;
@@ -936,8 +1027,10 @@ void store_native_result(char return_type, std::uint32_t r0, std::uint32_t r1, N
     case 'L':
         regs.x[0] = handle_to_ref(r0);
         break;
+    case 'V':
+        break;
     default:
-        break;  // 'V'
+        invalid_shorty(std::string_view(&return_type, 1));
     }
 }
 

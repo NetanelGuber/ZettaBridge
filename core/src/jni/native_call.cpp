@@ -3,6 +3,9 @@
 #include "zb/native_call.h"
 
 #include <cstddef>
+#include <cstdlib>
+
+#include "zb/log.h"
 
 namespace zb {
 
@@ -58,12 +61,19 @@ private:
     int ncrn_ = 0;
 };
 
+// Passing int8_t/int16_t to these wider parameters performs the sign extension by implicit
+// integral promotion before the bit-preserving unsigned conversion.
 std::uint32_t sign_extend32(std::int32_t value) {
     return static_cast<std::uint32_t>(value);
 }
 
 std::uint64_t sign_extend64(std::int64_t value) {
     return static_cast<std::uint64_t>(value);
+}
+
+[[noreturn]] void invalid_shorty(std::string_view shorty) {
+    log("invalid JNI shorty: '%.*s'", static_cast<int>(shorty.size()), shorty.data());
+    std::abort();
 }
 
 }  // namespace
@@ -105,7 +115,7 @@ GuestCall marshal_native_args(std::string_view shorty, const NativeRegs& regs, s
             out.put32(ref_to_handle(in.next_int()));
             break;
         default:
-            break;  // shorties come from shorty_from_signature, which yields only the letters above
+            invalid_shorty(shorty);
         }
     }
     return call;
@@ -142,8 +152,10 @@ void store_native_result(char return_type, std::uint32_t r0, std::uint32_t r1, N
     case 'L':
         regs.x[0] = handle_to_ref(r0);
         break;
+    case 'V':
+        break;
     default:
-        break;  // 'V'
+        invalid_shorty(std::string_view(&return_type, 1));
     }
 }
 
