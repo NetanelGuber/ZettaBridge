@@ -1643,5 +1643,8 @@ Each builds on the code above and is written with the real interfaces in hand.
   - `libzbproxy.so`, `ZBridge.onProxyLoaded`, `core/src/jni/loader.cpp` (dlopen, `Java_*` binding, guest `JNI_OnLoad`).
   - Launcher class-loader changes (`com.zettabridge.core` delegation, `findLibrary` proxies).
   - Device test T7 and the Orange Roulette smoke test (spec "Phase 4 acceptance").
-  - If the real RegisterNatives fails, the thunk slot allocated for it must be reusable (add a
-    release path to NativeSlots), so failed registrations do not leak slots.
+  - Guest RegisterNatives calls the real RegisterNatives once per method (count 1) and stops at
+    the first failure with JNI_ERR, matching ART, which keeps the methods it already bound. Only
+    the slot of that single failed call is released for reuse (add a release path to
+    NativeSlots); a slot ART has bound is never reused. target() stays lock-free because a
+    released slot was never reachable from Java and the slot storage is a fixed array.

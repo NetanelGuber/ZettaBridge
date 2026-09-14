@@ -87,9 +87,13 @@ Requirements on Phase 0 (plugin class loader):
    - Call the real `RegisterNatives` with a host thunk (section 2).
    - Classes missing from the dex are logged once and skipped. Calling such a method
      later throws `UnsatisfiedLinkError` from ART as usual.
-4. **Run guest `JNI_OnLoad`** if exported, with the guest `JavaVM*` (section 3). Its
-   `RegisterNatives` calls go through the same thunk mechanism. A version it does not
-   accept fails the load.
+4. **Run guest `JNI_OnLoad`** if exported, with the guest `JavaVM*` (section 3). A version
+   it does not accept fails the load. Its `RegisterNatives` calls go through the same thunk
+   mechanism:
+   - a leading `!` (pre-O fast JNI marker, still accepted by ART) is stripped;
+   - each method is registered with its own real `RegisterNatives(..., 1)` call, stopping
+     at the first failure with `JNI_ERR` (ART keeps the methods already bound);
+   - only the thunk slot of the failed call is released; a slot ART bound is never reused.
 
 Libraries are never unloaded, and `JNI_OnUnload` is not called (same as ART for app
 class loaders).
@@ -170,9 +174,10 @@ builds. The dispatcher builds the guest call:
 - **`Call*Method` with `...` and `va_list`.** These are converted to a `jvalue` array with
   the compiler's own `va_arg`, driven by the method shorty. One host call executes all
   93 variants.
-- **Shorty cache.** `GetMethodID` / `GetStaticMethodID` derive the shorty from the
-  signature string they pass and cache id -> shorty in a guest table. Ids obtained
-  otherwise (`FromReflectedMethod`) ask the host once.
+- **Shorty cache.** The `GetMethodID` / `GetStaticMethodID` host calls return the shorty
+  together with the id, computed on the host from the signature ART accepted. The guest
+  caches id -> shorty, so there is no second descriptor parser. Ids obtained otherwise
+  (`FromReflectedMethod`) ask the host once.
 - **Buffers.** These functions allocate with guest `malloc`, fill through a host
   `Get*Region` call, and set `*isCopy = JNI_TRUE`:
   - `Get<Prim>ArrayElements`, `GetPrimitiveArrayCritical`;
