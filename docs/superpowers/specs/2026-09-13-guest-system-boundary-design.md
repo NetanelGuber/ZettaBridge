@@ -272,9 +272,9 @@ is never modified.
   - The guest tid is the host tid.
 - **Host threads entering the guest** (Java UI thread, `GLThread`). Each one borrows a
   **carrier**.
-  - On first entry, the service thread runs guest `pthread_create(carrier_main)`.
-    Carrier spawning is serialized through the service thread. The carrier immediately
-    makes the blocking `PARK` host call and waits inside it.
+  - On first entry, the service thread runs guest `pthread_create(carrier_main)`,
+    which serializes carrier spawning. The carrier immediately makes the blocking
+    `PARK` host call and waits inside it.
   - The entering host thread gets its own JIT (the borrower). It runs guest code with
     TPIDRURO equal to the carrier's TLS, a stack below the carrier's parked `sp`, and
     the carrier's guest tid.
@@ -310,6 +310,9 @@ is never modified.
   - **PI futexes are not supported on borrowers.** The kernel records the calling host
     tid as the owner, which is not the guest tid bionic stored in the mutex. (The
     syscall layer currently refuses PI futex commands for every thread.)
+  - **`tkill`/`tgkill` look up their target and post under the thread registry lock**
+    (`threads_mutex_`, `Process::post_signal_to`), so a lease change or thread exit
+    cannot race the lookup and post to a thread that has just been retired.
 - **Resources.**
   - `code_cache_size` is 32 MiB per JIT. Carrier JITs, which only run thread start-up,
     parking and exit, use 2 MiB.
@@ -348,6 +351,12 @@ is never modified.
 - **Asynchronous signals** (`alarm`, `raise`, `tgkill`, SIGPIPE). Mark the signal
   pending on the target guest thread and call `HaltExecution` on its JIT. Delivery
   happens as above.
+- **Process signal target lifetime.** The process-directed forwarding target (the main
+  guest thread; see Threads) is retired safely when its `Process` finishes: the
+  pointer is CAS'd to null and the retiring code waits on an always-lock-free reader
+  counter that every forwarding handler increments before loading the target, so a
+  handler already holding the pointer finishes before the `GuestThread` it points to
+  is freed.
 
 ## Errors and diagnostics
 

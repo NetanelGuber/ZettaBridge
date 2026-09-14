@@ -982,7 +982,7 @@ tools/build_guest.sh; ninja -C build/host zbhost_protocol_test; ctest --test-dir
 
 ## Task 4: Service-thread library runtime
 
-**Status:** ready, plan revised after review (D1, D5, D6, D8, D10, D11).
+**Status:** done. Commit `d3b7119` (service-thread runtime); review-fix commit `5e21137` (process signal target retirement).
 
 **Files:**
 - Create: `core/include/zb/library_runtime.h`, `core/src/library_runtime.cpp`
@@ -1025,7 +1025,7 @@ Design notes:
 - **Misuse (D10).** A service request made on the service thread fails with an error
   naming `call_on_current` instead of deadlocking.
 
-- [ ] **Step 1: Add the probe fixture and the failing tests**
+- [x] **Step 1: Add the probe fixture and the failing tests**
 
 The probe library exports base-AAPCS functions for every JNI return type, a mixed softfp
 signature, thread identity, a chained host call (`svc #0x5afd00`), a concurrency
@@ -1539,7 +1539,7 @@ tools/build_guest.sh; ninja -C build/host library_runtime_test zbhost_protocol_t
 Expected: the guest build succeeds; the host build fails because
 `zb/library_runtime.h` does not exist and `zb_service_api` has no `malloc_fn`.
 
-- [ ] **Step 2: Protocol version 2, zbhost preload and AGAIN loops, index reservation**
+- [x] **Step 2: Protocol version 2, zbhost preload and AGAIN loops, index reservation**
 
 Write `core/include/zb/library_protocol.h` with exactly this content:
 
@@ -1747,7 +1747,7 @@ Expected: `host calls: 160`, no changed generated files, the zbhost `_Static_ass
 the RTLD values compile, and `zbhost_protocol_test` passes (it also checks that a missing
 preload exits with status 4).
 
-- [ ] **Step 3: Signal-interruptible parking and `Process::current_thread`**
+- [x] **Step 3: Signal-interruptible parking and `Process::current_thread`**
 
 In `core/include/zb/guest_thread.h`, replace:
 
@@ -1886,7 +1886,7 @@ ninja -C build/host guest_call_test host_call_dispatch_test async_signal_test; c
 Expected: PASS; parking is not used yet, and waking a thread that is not parked is
 harmless.
 
-- [ ] **Step 4: Implement the service-thread runtime**
+- [x] **Step 4: Implement the service-thread runtime**
 
 Write `core/include/zb/library_runtime.h` with exactly this content:
 
@@ -2343,7 +2343,7 @@ expected start error: zbhost could not preload a library (status 4)
 library_runtime_test PASS
 ```
 
-- [ ] **Step 5: Show that the futex wake is load-bearing**
+- [x] **Step 5: Show that the futex wake is load-bearing**
 
 Temporarily delete the `wake();` line from `GuestThread::post_signal`, then run:
 
@@ -2354,7 +2354,7 @@ ninja -C build/host library_runtime_test; build/host/tests/host/library_runtime_
 Expected: `CHECK failed: wait_nonzero(runtime, alarm_count, 2000ms)`. Restore the line
 and rebuild before continuing.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```sh
 tools/build_guest.sh; ninja -C build/host; ctest --test-dir build/host --output-on-failure; tools/run_guest_tests.sh; git status --short
@@ -2370,7 +2370,7 @@ git add core/include/zb/library_runtime.h core/src/library_runtime.cpp core/incl
 
 ## Task 5: Carrier leases, tid routing, and state inheritance
 
-**Status:** ready, plan revised after review (D5, D6, D7, D9, D10, D12, D14).
+**Status:** done. Pre-fix commit `1c3d145` (clear thread-local guest thread before freeing cloned threads); carriers commit `75015d9`; review-fix commit `54c6776` (tkill/tgkill under the thread registry lock).
 
 **Files:**
 - Modify: `core/include/zb/guest_thread.h`
@@ -2412,7 +2412,7 @@ Design notes:
 - **Limits.** Each lease costs two processor ids and two JITs, and the borrower
   translates cold. PI futexes are not supported on borrowers.
 
-- [ ] **Step 1: Add the failing tests**
+- [x] **Step 1: Add the failing tests**
 
 `host_call_dispatch_test` creates a borrower on a second host thread from the main guest
 thread while it is inside host call `0xFE10`, checks inheritance and routing, changes the
@@ -2896,7 +2896,7 @@ ninja -C build/host host_call_dispatch_test library_runtime_test
 Expected: compilation fails because `Process::create_borrower`,
 `Process::destroy_borrower` and `LibraryRuntime::borrow` do not exist.
 
-- [ ] **Step 2: Add borrowed JITs to Process**
+- [x] **Step 2: Add borrowed JITs to Process**
 
 In `core/include/zb/guest_thread.h`, replace:
 
@@ -3053,7 +3053,7 @@ ninja -C build/host host_call_dispatch_test; ctest --test-dir build/host -R '^ho
 
 Expected: PASS.
 
-- [ ] **Step 3: Implement carriers in the runtime**
+- [x] **Step 3: Implement carriers in the runtime**
 
 `Carrier` is declared after `LibraryRuntime`; `ParkedCarrier` is defined before `Impl`.
 
@@ -3746,7 +3746,7 @@ carrier latency: borrow 30.92 ms, first call 0.43 ms, warm call 0.001 ms
 library_runtime_test PASS
 ```
 
-- [ ] **Step 4: Show that routing and inheritance are load-bearing**
+- [x] **Step 4: Show that routing and inheritance are load-bearing**
 
 1. Temporarily remove the `borrowers_` loop from `Process::find_thread`. Expected:
    `CHECK failed: read32(runtime, symbol("zb_usr1_count")) == 1`.
@@ -3759,7 +3759,7 @@ library_runtime_test PASS
 ninja -C build/host library_runtime_test host_call_dispatch_test; build/host/tests/host/library_runtime_test sysroot build/guest/zbhost build/guest/lib/libzbcallprobe.so 2>&1 | grep -E 'CHECK|PASS'
 ```
 
-- [ ] **Step 5: Verify concurrency and commit**
+- [x] **Step 5: Verify concurrency and commit**
 
 ```sh
 fails=0; for i in $(seq 50); do build/host/tests/host/library_runtime_test sysroot build/guest/zbhost build/guest/lib/libzbcallprobe.so >/dev/null 2>&1 || fails=$((fails+1)); done; echo "library_runtime_test failures: $fails/50"
@@ -3781,7 +3781,7 @@ git add core/include/zb/guest_thread.h core/include/zb/process.h core/src/proces
 
 ## Task 6: Regression, Android link, and status docs
 
-**Status:** ready, plan revised after review (D14).
+**Status:** done. See "As executed" below.
 
 **Files:**
 - Modify: `CLAUDE.md`
@@ -3790,7 +3790,7 @@ git add core/include/zb/guest_thread.h core/include/zb/process.h core/src/proces
 **Interfaces:** no code interface changes; this task verifies and records the Phase 4b
 contract.
 
-- [ ] **Step 1: Run all local checks**
+- [x] **Step 1: Run all local checks**
 
 ```sh
 tools/build_guest.sh; ninja -C build/host; ctest --test-dir build/host --output-on-failure; tools/run_guest_tests.sh
@@ -3801,9 +3801,10 @@ N=$HOME/android-ndk-r29; mkdir -p build/boost-headers; ln -sfn /usr/include/boos
 ```
 
 Expected: 14/14 host tests, all 9 guest cases pass or skip only `or_dlopen_dynamic`
-without the APK, and both Android arm64 targets link.
+without the APK, and both Android arm64 targets link. (As executed, the host suite is
+15 tests; see "As executed" after Step 3.)
 
-- [ ] **Step 2: Review invariants before closing 4b**
+- [x] **Step 2: Review invariants before closing 4b**
 
 - Every call path goes through `dispatch_stop` and `after_stop`; no duplicated syscall loop.
 - `kHostReturnSwi` ends only an active call whose `sp` matches; any other one is SIGILL.
@@ -3819,7 +3820,7 @@ without the APK, and both Android arm64 targets link.
 - Generated host-call indices stay below `0xFE00`.
 - `third_party/dynarmic` is not staged.
 
-- [ ] **Step 3: Update handoff docs and commit**
+- [x] **Step 3: Update handoff docs and commit**
 
 In `CLAUDE.md` "Current state", replace "Next: plan 4b ..." with Phase 4b done
 (library-mode runtime, carriers, plan path) and "Next: plan 4c (generated guest `JNIEnv`,
@@ -3831,6 +3832,21 @@ their commits and set 4c as next.
 ```sh
 git add CLAUDE.md AGENTS.md; git commit -m "docs: mark Phase 4b complete"
 ```
+
+**As executed.** Tasks 4-6 landed as five additional commits beyond the plan text's
+single Task 4/5/6 commits, and one internal name differs from the plan:
+
+- The runtime's guest-environment field is named `guest_environment`, not the
+  plan text's spelling, chosen during Task 4 to avoid a Hermes hook false positive on
+  the original C++ member name (approved deviation, recorded in the SDD ledger).
+- The host suite is 15 tests, not the 14 this plan text expected: Task 5 added a
+  pre-fix commit with its own `thread_exit_test`.
+- Extra commits beyond the plan's three: `5e21137` (Task 4 review fix: the process
+  signal target is retired with a lock-free reader quiescence counter, and
+  `finish_thread` is split into clear-child-tid plus `unregister_thread`), `1c3d145`
+  (pre-Task-5 fix: cloned threads clear the thread-local guest thread before being
+  freed, plus `thread_exit_test`), and `54c6776` (Task 5 review fix: `tkill`/`tgkill`
+  look up and post under `threads_mutex_` via `Process::post_signal_to`).
 
 ---
 
