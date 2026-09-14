@@ -60,3 +60,7 @@ plans". Use the same format as the 4a plan: TDD tasks with complete code.
 - **Every app manifest must remove the `LogWireInitializer` provider** that AndroidIDE
   injects (see CLAUDE.md).
 - **Commit messages:** plain English, imperative subject line.
+
+## Open launcher bug (reported 2026-09-14)
+
+In arm64 plugins (repostzap, avtobuy), some assets (`assets/...`) and some string resources are not found at run time. The user will send the exact names and the APKs. Suspects: `PluginContext` resources/assets, and `getIdentifier(name, type, getPackageName())` returning 0 because the package name is the launcher's.
