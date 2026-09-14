@@ -19,6 +19,10 @@ constexpr Dynarmic::HaltReason kInterruptHalt = Dynarmic::HaltReason::UserDefine
 // returns with PC set to the accessing instruction, so faults are precise.
 constexpr Dynarmic::HaltReason kMemoryAbortHalt = Dynarmic::HaltReason::MemoryAbort;
 
+constexpr std::uint32_t kCpsrThumb = 0x20;
+constexpr std::uint32_t kCpsrEndian = 0x200;
+constexpr std::uint32_t kCpsrItMask = 0x0600FC00;
+
 template <typename T>
 T load(const std::uint8_t* p) {
     T v;
@@ -34,7 +38,7 @@ void store(std::uint8_t* p, T v) {
 }  // namespace
 
 GuestThread::GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id,
-                         bool precise_faults)
+                         bool precise_faults, std::size_t code_cache_size)
     : mem_(mem), processor_id_(processor_id) {
     cp15_ = std::make_shared<Cp15>(&tpidruro_, &tpidrurw_);
 
@@ -48,7 +52,7 @@ GuestThread::GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, 
     cfg.define_unpredictable_behaviour = true;
     cfg.enable_cycle_counting = false;
     cfg.check_halt_on_memory_access = precise_faults;
-    cfg.code_cache_size = 32 * 1024 * 1024;
+    cfg.code_cache_size = code_cache_size;
     jit_ = std::make_unique<Dynarmic::A32::Jit>(cfg);
 }
 
@@ -126,17 +130,26 @@ std::optional<GuestResult> GuestThread::call(std::uint32_t target, const GuestCa
     regs()[13] = call_sp;
     regs()[14] = kHostReturnAddress;
     regs()[15] = target & ~1u;
-    set_cpsr((saved_cpsr & ~0x20u) | ((target & 1u) ? 0x20u : 0));
+    // A fresh call starts outside any IT block with little-endian data; only T follows the target.
+    set_cpsr((saved_cpsr & ~(kCpsrThumb | kCpsrItMask | kCpsrEndian)) | ((target & 1u) ? kCpsrThumb : 0));
 
+    ++call_depth;
     std::optional<GuestResult> result;
     for (;;) {
         const Stop stop = run();
         if (stop.kind == StopKind::Svc && stop.swi == kHostReturnSwi) {
-            result = GuestResult{regs()[0], regs()[1]};
-            break;
+            if (regs()[13] == call_sp) {
+                result = GuestResult{regs()[0], regs()[1]};
+                break;
+            }
+            // Not this frame's return: the handler treats the svc as an illegal instruction.
+            log("host-to-guest return with sp 0x%08x, frame sp 0x%08x: a longjmp or unwind crossed the "
+                "host-to-guest call frame",
+                regs()[13], call_sp);
         }
         if (!handle_stop(stop)) break;
     }
+    --call_depth;
     restore();
     return result;
 }

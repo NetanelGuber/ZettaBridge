@@ -26,6 +26,9 @@ class Cp15;
 // svc immediate used to return from a host->guest call.
 inline constexpr std::uint32_t kHostReturnSwi = 0x5AFFFF;
 inline constexpr std::uint32_t kHostReturnAddress = 0xFFFF0F00;
+// Translated-code cache of one JIT. Carrier JITs only run thread start-up and parking.
+inline constexpr std::size_t kDefaultCodeCacheSize = 32 * 1024 * 1024;
+inline constexpr std::size_t kCarrierCodeCacheSize = 2 * 1024 * 1024;
 
 struct GuestResult {
     std::uint32_t r0 = 0;
@@ -54,7 +57,7 @@ public:
     // committed (needed by guests whose SIGSEGV handlers resume, e.g. Mono). It disables
     // Dynarmic's GetSetElimination, which costs roughly 2x on integer-heavy code.
     GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id,
-                bool precise_faults = false);
+                bool precise_faults = false, std::size_t code_cache_size = kDefaultCodeCacheSize);
     ~GuestThread() override;
 
     std::array<std::uint32_t, 16>& regs();
@@ -88,6 +91,8 @@ public:
     g::stack32 altstack{0, 2 /* SS_DISABLE */, 0};
     std::uint32_t clear_child_tid = 0;
     int exit_status = 0;
+    // Number of host-to-guest calls active on this thread (call() frames).
+    int call_depth = 0;
     // Host tid of the host thread running this guest thread.
     std::int32_t tid = 0;
 

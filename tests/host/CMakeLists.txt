@@ -1,6 +1,5 @@
 set(ZB_HOST_TESTS
     fault_pc_test
-    guest_call_test
     guest_memory_test
     jni_abi_test
     jni_handles_test
@@ -20,6 +19,11 @@ endforeach()
 add_executable(elf_loader_test elf_loader_test.cpp)
 target_link_libraries(elf_loader_test PRIVATE zbcore)
 add_test(NAME elf_loader_test COMMAND elf_loader_test ${CMAKE_SOURCE_DIR}/build/guest/hello_static)
+
+# Needs build/guest/host_call_static from tools/build_guest.sh.
+add_executable(guest_call_test guest_call_test.cpp)
+target_link_libraries(guest_call_test PRIVATE zbcore)
+add_test(NAME guest_call_test COMMAND guest_call_test ${CMAKE_SOURCE_DIR}/build/guest/host_call_static)
 
 add_executable(host_call_dispatch_test host_call_dispatch_test.cpp)
 target_link_libraries(host_call_dispatch_test PRIVATE zbcore)

@@ -49,7 +49,16 @@ public:
     // process exits. Returns the guest exit status, or 128 + signal for a fatal guest fault.
     int run(const std::string& path, const std::vector<std::string>& argv, const std::vector<std::string>& envp);
 
+    // Handles svc #(0x5A0000 | index) before the generated host-call table; returns true if it
+    // handled the index. Set before run().
     void set_host_call_handler(HostCallHandler handler) { host_call_handler_ = std::move(handler); }
+    // Runs a guest function on `thread`, which is stopped outside Dynarmic (typically inside a
+    // host call), through the same stop dispatch as the thread's own loop. Returns nullopt when
+    // the call cannot be laid out or the guest cannot continue:
+    // - a fatal fault or signal, or exit_group, with other guest threads alive ends the host
+    //   process; on the only guest thread it fails the call with exiting() set, and run()
+    //   later returns the status;
+    // - a thread exit (exit, pthread_exit) inside the call always ends the host process.
     std::optional<GuestResult> call_guest(GuestThread& thread, std::uint32_t target, const GuestCall& args);
 
     GuestMemory& memory() { return mem_; }
@@ -135,7 +144,12 @@ private:
 
     int allocate_processor_id();
     void register_thread(GuestThread* thread);
+    // Handles one stop; true if the thread may resume.
     bool dispatch_stop(GuestThread& thread, const Stop& stop);
+    // Delivers pending unblocked signals after a stop; false if one ended the guest.
+    bool after_stop(GuestThread& thread);
+    // A fault or exception becomes a guest signal, or a crash report and process exit.
+    bool fault_or_crash(GuestThread& thread, const Stop& stop);
     // Runs a guest thread until it exits. Process-wide exits with other live threads end the
     // host process from here.
     void thread_loop(GuestThread& thread);

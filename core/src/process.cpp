@@ -360,10 +360,25 @@ bool Process::dispatch_stop(GuestThread& thread, const Stop& stop) {
     case StopKind::Svc:
         if (stop.swi == 0) {
             if (handle_syscall(*this, thread)) return true;
+            if (!exiting_ && thread.call_depth > 0) {
+                // bionic has already released this thread's TLS and stack; nothing may run on it.
+                log("guest thread exited inside a host-to-guest call");
+                request_exit(1);
+                exit_host_process();
+            }
             if (exiting_ && thread_count() > 1) exit_host_process();
             return false;
         }
-        if ((stop.swi & 0xFF0000u) == kHostCallBase && stop.swi != kHostReturnSwi) {
+        if (stop.swi == kHostReturnSwi) {
+            // GuestThread::call consumes its own return; any other one is an illegal instruction.
+            if (thread.call_depth == 0) log("host return svc outside a host-to-guest call at pc 0x%08x", stop.pc - 4);
+            Stop illegal;
+            illegal.kind = StopKind::Exception;
+            illegal.exception = Dynarmic::A32::Exception::UndefinedInstruction;
+            illegal.pc = stop.pc - 4;
+            return fault_or_crash(thread, illegal);
+        }
+        if ((stop.swi & 0xFF0000u) == kHostCallBase) {
             const std::uint32_t index = stop.swi & 0xFFFFu;
             if (host_call_handler_ && host_call_handler_(index, thread)) return !exiting_;
             if (first_time(kSeenHostCall | index)) {
@@ -382,11 +397,7 @@ bool Process::dispatch_stop(GuestThread& thread, const Stop& stop) {
         return true;
     case StopKind::MemoryFault:
     case StopKind::Exception:
-        if (deliver_fault(thread, stop)) return true;
-        crash_report(stop, thread);
-        request_exit(128 + (stop.kind == StopKind::MemoryFault ? SIGSEGV : SIGILL));
-        if (thread_count() > 1) exit_host_process();
-        return false;
+        return fault_or_crash(thread, stop);
     case StopKind::None:
         log("guest stopped without a reason at pc 0x%08x", stop.pc);
         request_exit(1);
@@ -396,22 +407,28 @@ bool Process::dispatch_stop(GuestThread& thread, const Stop& stop) {
     return false;
 }
 
+bool Process::fault_or_crash(GuestThread& thread, const Stop& stop) {
+    if (deliver_fault(thread, stop)) return true;
+    crash_report(stop, thread);
+    request_exit(128 + (stop.kind == StopKind::MemoryFault ? SIGSEGV : SIGILL));
+    if (thread_count() > 1) exit_host_process();
+    return false;
+}
+
+bool Process::after_stop(GuestThread& thread) {
+    if (!thread.has_pending_signals(thread.sigmask) || dispatch_pending_signals(thread)) return true;
+    if (thread_count() > 1) exit_host_process();
+    return false;
+}
+
 void Process::thread_loop(GuestThread& thread) {
     set_current_thread(&thread);
-    for (;;) {
-        if (!dispatch_stop(thread, thread.run())) return;
-        if (thread.has_pending_signals(thread.sigmask) && !dispatch_pending_signals(thread)) {
-            if (thread_count() > 1) exit_host_process();
-            return;
-        }
+    while (dispatch_stop(thread, thread.run()) && after_stop(thread)) {
     }
 }
 
 std::optional<GuestResult> Process::call_guest(GuestThread& thread, std::uint32_t target, const GuestCall& args) {
-    return thread.call(target, args, [&](const Stop& stop) {
-        if (!dispatch_stop(thread, stop)) return false;
-        return !thread.has_pending_signals(thread.sigmask) || dispatch_pending_signals(thread);
-    });
+    return thread.call(target, args, [&](const Stop& stop) { return dispatch_stop(thread, stop) && after_stop(thread); });
 }
 
 std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std::uint32_t stack,
@@ -487,7 +504,12 @@ void Process::crash_report(const Stop& stop, GuestThread& thread) const {
     for (int i = 0; i < 16; i += 4) {
         log("  r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x", i, r[i], i + 1, r[i + 1], i + 2, r[i + 2], i + 3, r[i + 3]);
     }
-    log("  cpsr %08x  tls %08x  tid %ld", thread.cpsr(), thread.tls(), static_cast<long>(::syscall(SYS_gettid)));
+    const long host_tid = ::syscall(SYS_gettid);
+    if (thread.tid != 0 && thread.tid != host_tid) {
+        log("  cpsr %08x  tls %08x  tid %ld  guest tid %d", thread.cpsr(), thread.tls(), host_tid, thread.tid);
+    } else {
+        log("  cpsr %08x  tls %08x  tid %ld", thread.cpsr(), thread.tls(), host_tid);
+    }
     log("  pc in %s", describe_address(stop.pc).c_str());
     log("  lr in %s", describe_address(r[14]).c_str());
 }
