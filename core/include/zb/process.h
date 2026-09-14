@@ -78,8 +78,11 @@ public:
     static void set_current_thread(GuestThread* thread);
     // Guest thread running on the calling host thread, or nullptr.
     static GuestThread* current_thread();
-    // Guest thread that takes host signals arriving on threads without guest code.
+    // Guest thread that takes host signals arriving on threads without guest code. A published
+    // target must be cleared before another one is set.
     static void set_process_signal_target(GuestThread* thread);
+    // Unpublishes `thread` if it is the target and waits until no signal handler still uses it;
+    // afterwards the thread may be destroyed. Must not be called from a signal handler.
     static void clear_process_signal_target(GuestThread* thread);
     static void install_host_signal_forwarding();
     // Delivers pending, unblocked signals of the thread; false if one terminated the process.
@@ -156,8 +159,11 @@ private:
     // host process from here.
     void thread_loop(GuestThread& thread);
     void thread_main(std::unique_ptr<GuestThread> thread);
-    // Thread exit bookkeeping: CLONE_CHILD_CLEARTID, exclusive monitor, registry.
+    // Thread exit bookkeeping: CLONE_CHILD_CLEARTID, then unregister_thread().
     void finish_thread(GuestThread& thread);
+    // Retires the signal target publication, exclusive monitor slot, registry entry and
+    // processor id of a thread that runs no more guest code.
+    void unregister_thread(GuestThread& thread);
     void wait_for_threads();
     [[noreturn]] void exit_host_process();
     void crash_report(const Stop& stop, GuestThread& thread) const;

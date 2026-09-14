@@ -40,6 +40,9 @@ add_test(NAME zbhost_protocol_test COMMAND zbhost_protocol_test
 # Needs tools/build_guest.sh and the extracted sysroot.
 add_executable(library_runtime_test library_runtime_test.cpp)
 target_link_libraries(library_runtime_test PRIVATE zbcore)
+# Hold a real signal-forwarding reader at post_signal without a production test hook.
+target_link_options(library_runtime_test PRIVATE
+    -Wl,--wrap=_ZN2zb11GuestThread11post_signalERKNS_1g9siginfo32E)
 add_test(NAME library_runtime_test COMMAND library_runtime_test
     ${CMAKE_SOURCE_DIR}/sysroot
     ${CMAKE_SOURCE_DIR}/build/guest/zbhost

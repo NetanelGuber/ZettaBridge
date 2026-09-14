@@ -3,14 +3,20 @@
 // to the parked service thread.
 // Usage: library_runtime_test <sysroot> <zbhost> <libzbcallprobe.so>
 #include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include <chrono>
+#include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <string>
 #include <thread>
+#include <vector>
+
+#include <dynarmic/interface/exclusive_monitor.h>
 
 #include "check.h"
 #include "zb/library_runtime.h"
@@ -18,7 +24,117 @@
 
 namespace {
 
+// The wrapper executes in a signal handler: only always-lock-free atomics are allowed.
+static_assert(std::atomic<bool>::is_always_lock_free);
+std::atomic<bool> hold_signal_reader{false};
+std::atomic<bool> signal_reader_entered{false};
+std::atomic<bool> release_signal_reader{false};
+// Acquire-order stress: a forwarding reader must never use a target whose retirement completed.
+std::atomic<bool> stress_active{false};
+std::atomic<bool> stress_target_retired{true};
+std::atomic<bool> stress_violation{false};
+std::atomic<std::uint64_t> stress_posts{0};
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
+
+}  // namespace
+
+extern "C" void real_post_signal(zb::GuestThread*, const zb::g::siginfo32&)
+    asm("__real__ZN2zb11GuestThread11post_signalERKNS_1g9siginfo32E");
+extern "C" void wrapped_post_signal(zb::GuestThread*, const zb::g::siginfo32&)
+    asm("__wrap__ZN2zb11GuestThread11post_signalERKNS_1g9siginfo32E");
+
+extern "C" void wrapped_post_signal(zb::GuestThread* thread, const zb::g::siginfo32& info) {
+    if (hold_signal_reader.load() && info.si_signo == SIGALRM) {
+        signal_reader_entered.store(true);
+        while (!release_signal_reader.load()) {
+        }
+    }
+    if (stress_active.load() && info.si_signo == SIGUSR1) {
+        if (stress_target_retired.load()) stress_violation.store(true);
+        stress_posts.fetch_add(1);
+    }
+    real_post_signal(thread, info);
+}
+
+namespace {
+
 using namespace std::chrono_literals;
+
+void check_signal_target_retirement() {
+    zb::GuestMemory memory;
+    Dynarmic::ExclusiveMonitor monitor(1);
+    zb::GuestThread target(memory, &monitor, 0);
+    zb::Process::install_host_signal_forwarding();
+    zb::Process::set_process_signal_target(&target);
+    hold_signal_reader.store(true);
+    std::thread sender([] { CHECK(raise(SIGALRM) == 0); });
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (!signal_reader_entered.load()) {
+        CHECK(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+
+    // The handler has acquired target but has not used it yet. Retirement must wait.
+    std::promise<void> started;
+    auto retiring = std::async(std::launch::async, [&] {
+        started.set_value();
+        zb::Process::clear_process_signal_target(&target);
+    });
+    started.get_future().wait();
+    CHECK(retiring.wait_for(100ms) == std::future_status::timeout);
+    release_signal_reader.store(true);
+    sender.join();
+    CHECK(retiring.wait_for(2s) == std::future_status::ready);
+    retiring.get();
+    hold_signal_reader.store(false);
+    zb::g::siginfo32 info;
+    CHECK(target.take_signal(0, info) && info.si_signo == SIGALRM);
+    // After quiescence, new handlers cannot acquire the retired target.
+    CHECK(raise(SIGALRM) == 0);
+    CHECK(!target.take_signal(0, info));
+}
+
+// The held reader above is already counted when it blocks inside post_signal, so it cannot tell
+// whether a handler registers before or after loading the target. Here readers on several threads
+// race a publish/retire loop. stress_target_retired is cleared before each publication and set only
+// after clear_process_signal_target() returns, so with correct ordering no post_signal can observe
+// it set. A handler that loads the target before registering can run its post_signal after the
+// retirement already finished; the loop stops at the first such violation.
+void check_signal_target_acquire_order() {
+    zb::GuestMemory memory;
+    Dynarmic::ExclusiveMonitor monitor(1);
+    zb::GuestThread target(memory, &monitor, 0);
+    zb::Process::install_host_signal_forwarding();
+    stress_violation.store(false);
+    stress_posts.store(0);
+    stress_target_retired.store(true);
+    stress_active.store(true);
+    const unsigned cpus = std::thread::hardware_concurrency();
+    const unsigned readers = cpus > 2 ? (cpus - 1 < 4 ? cpus - 1 : 4) : 2;
+    std::vector<std::thread> senders;
+    std::atomic<bool> stop{false};
+    for (unsigned i = 0; i < readers; ++i) {
+        senders.emplace_back([&] {
+            while (!stop.load()) CHECK(raise(SIGUSR1) == 0);
+        });
+    }
+    const auto deadline = std::chrono::steady_clock::now() + 1s;
+    while (!stress_violation.load() && std::chrono::steady_clock::now() < deadline) {
+        for (int i = 0; i < 1000; ++i) {
+            stress_target_retired.store(false);
+            zb::Process::set_process_signal_target(&target);
+            zb::Process::clear_process_signal_target(&target);
+            stress_target_retired.store(true);
+        }
+    }
+    stop.store(true);
+    for (auto& sender : senders) sender.join();
+    stress_active.store(false);
+    std::fprintf(stderr, "signal target stress: %u readers, %llu posts\n", readers,
+                 static_cast<unsigned long long>(stress_posts.load()));
+    CHECK(!stress_violation.load());
+    CHECK(stress_posts.load() > 0);
+}
 
 std::uint32_t fbits(float value) {
     std::uint32_t bits;
@@ -65,13 +181,18 @@ void check_preload_failure(char** argv) {
     const pid_t child = fork();
     CHECK(child >= 0);
     if (child == 0) {
-        zb::LibraryRuntime runtime;
-        zb::LibraryRuntimeOptions options = runtime_options(argv);
-        options.preload = "libzb-does-not-exist.so";
-        std::string error;
-        if (runtime.start(options, error)) std::_Exit(10);
-        std::fprintf(stderr, "expected start error: %s\n", error.c_str());
-        std::_Exit(error.find("status 4") != std::string::npos ? 0 : 11);
+        {
+            zb::LibraryRuntime runtime;
+            zb::LibraryRuntimeOptions options = runtime_options(argv);
+            options.preload = "libzb-does-not-exist.so";
+            std::string error;
+            if (runtime.start(options, error)) std::_Exit(10);
+            std::fprintf(stderr, "expected start error: %s\n", error.c_str());
+            CHECK(error.find("status 4") != std::string::npos);
+        }
+        // Ordinary failed-start destruction must retire the process signal target.
+        CHECK(raise(SIGALRM) == 0);
+        std::_Exit(0);
     }
     int status = 0;
     CHECK(waitpid(child, &status, 0) == child);
@@ -81,10 +202,17 @@ void check_preload_failure(char** argv) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--signal-target-retirement") {
+        check_signal_target_retirement();
+        check_signal_target_acquire_order();
+        return 0;
+    }
     CHECK(argc == 4);
     const std::string probe = argv[3];
     const std::string libdir = std::filesystem::path(probe).parent_path();
     check_preload_failure(argv);
+    check_signal_target_retirement();
+    check_signal_target_acquire_order();
 
     CHECK(ZB_GUEST_RTLD_NOW == 0u && ZB_GUEST_RTLD_LAZY == 1u && ZB_GUEST_RTLD_GLOBAL == 2u);
     CHECK(ZB_GUEST_RTLD_NOLOAD == 4u && ZB_GUEST_RTLD_NODELETE == 0x1000u && ZB_GUEST_RTLD_DEFAULT == 0xFFFFFFFFu);

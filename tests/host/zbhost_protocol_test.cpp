@@ -47,6 +47,8 @@ int main(int argc, char** argv) {
         return true;
     });
     CHECK(process.run(argv[2], {argv[2], "16"}, {library_path}) == 0);
+    CHECK(process.thread_count() == 0);
+    CHECK(zb::Process::current_thread() == nullptr);
     CHECK(ready);
     std::puts("zbhost_protocol_test PASS");
     return 0;

@@ -346,11 +346,22 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
     install_host_signal_forwarding();
 
     thread_loop(*main_);
-    if (exiting_) return exit_status_;
+    // Every return below retires what run() published, so destroying the Process afterwards cannot
+    // leave a signal handler with a freed main_. The target is retired while t_current_thread still
+    // names main_, then this host thread stops naming it.
+    if (exiting_) {
+        // exit_group/fatal exit: other live threads would already have ended the host process, so
+        // main_ is the only registered thread. Its CLONE_CHILD_CLEARTID is not honoured on a
+        // process-wide exit.
+        unregister_thread(*main_);
+        set_current_thread(nullptr);
+        return exit_status_;
+    }
 
     // The main thread called exit() while other threads may still run: wait for them.
     const int main_status = main_->exit_status;
     finish_thread(*main_);
+    set_current_thread(nullptr);
     wait_for_threads();
     return exiting_ ? exit_status_.load() : main_status;
 }
@@ -476,6 +487,11 @@ void Process::finish_thread(GuestThread& thread) {
             ::syscall(SYS_futex, p, FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
         }
     }
+    unregister_thread(thread);
+}
+
+void Process::unregister_thread(GuestThread& thread) {
+    // Waits for in-flight forwarding handlers, so the caller may free the thread afterwards.
     clear_process_signal_target(&thread);
     monitor_->ClearProcessor(thread.processor_id());
     std::lock_guard<std::mutex> lock(threads_mutex_);
