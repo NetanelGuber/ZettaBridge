@@ -37,7 +37,7 @@ were implemented in order, with the full host suite run before each local commit
 | 3. AAPCS64 -> AAPCS32 marshaling | done, reviewed | `fe12334`, `69051d4` (strict invalid-shorty failure and additional ABI coverage) |
 | 4. Handle tables | done | `07c2443` |
 | 5. Thunk pool (`thunks.S`), dispatcher, slots | done | `1ffb543` |
-| 6. Regression run + docs | done | `docs: Phase 4a done` |
+| 6. Regression run + docs | done | `3d7d15e` |
 
 All Phase 4a review notes were folded into the implementation, tests, plan, and spec.
 
@@ -55,6 +55,9 @@ no Task 4 production or test file is currently modified.
 | 4. Service-thread library runtime | next | |
 | 5. Carrier leases and guest-tid routing | not started | |
 | 6. Regression, Android link, and docs | not started | |
+
+Phase 4a hardening after review (thunk abort/CFI/exception barrier, handle serials and LIFO
+reclaim) landed on this branch before Task 4.
 
 Task 1 has one deferred minor review note: make the intermediate host-call register
 mutation observable in `guest_call_test` and exercise handler-false after execution.

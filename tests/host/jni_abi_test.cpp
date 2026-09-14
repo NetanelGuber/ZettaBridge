@@ -142,6 +142,27 @@ int main() {
         CHECK(c.stack.size() == 6 && c.stack[0] == 30 && c.stack[4] == 70 && c.stack[5] == 80);
     }
 
+    // Interleaved host stack overflow: 7 ints then 9 floats. Ints 1-6 come from x2-x7, the 7th
+    // from stack[0]; floats 1-8 come from d0-d7, the 9th from stack[1] -- the two classes share
+    // one host stack cursor in argument order. On the guest side, r2/r3 take int1/int2 and the
+    // guest stack holds int3..int7 followed by float1..float9 (14 words).
+    {
+        zb::NativeRegs r{};
+        r.x[1] = 1;
+        for (int i = 0; i < 6; ++i) r.x[2 + i] = static_cast<std::uint64_t>(100 + i);  // int1..int6
+        stack[0] = 700;                                                                // int7
+        for (int i = 0; i < 8; ++i) r.d[i] = fbits(static_cast<float>(i + 1));         // float1..float8
+        stack[1] = fbits(9.0f);                                                        // float9
+        r.stack = stack;
+        const zb::GuestCall c = marshal("VIIIIIIIFFFFFFFFF", r);
+        CHECK(c.regs[2] == 100 && c.regs[3] == 101);
+        CHECK(c.stack.size() == 14);
+        CHECK(c.stack[0] == 102 && c.stack[1] == 103 && c.stack[2] == 104 && c.stack[3] == 105 &&
+              c.stack[4] == 700);
+        for (int i = 0; i < 8; ++i) CHECK(c.stack[5 + i] == fbits(static_cast<float>(i + 1)));
+        CHECK(c.stack[13] == fbits(9.0f));
+    }
+
     // More than eight host FP arguments overflow d0-d7 into 8-byte host stack slots.
     {
         zb::NativeRegs r{};
