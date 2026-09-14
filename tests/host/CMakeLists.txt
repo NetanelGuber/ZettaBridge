@@ -2,6 +2,7 @@ set(ZB_HOST_TESTS
     fault_pc_test
     guest_memory_test
     jni_abi_test
+    jni_handles_test
     jni_mangle_test
     jni_shorty_test
     t1_blob_test
