@@ -16,6 +16,19 @@ Phase 1 core (`Process`, `GuestThread`, syscall layer).
 its files, behavior, test and acceptance. Code is written directly during execution,
 and anything discovered is recorded in the spec.
 
+**Status (2026-09-14, night):**
+- **Task A, path translation:** done.
+- **Task B, PT_INTERP loading:** done.
+- **Task C, T3a:** PASS.
+- **Task D, stubs + compat + T5:** PASS.
+- **Additional work found necessary:**
+  - Dynarmic T32 ARMv8 patch;
+  - `statfs64`;
+  - crash reports naming file and offset;
+  - `ZB_STRACE`, `zbrun --env`;
+  - import-time library fixups, because the Android 17 linker dropped pre-M compatibility.
+- **Tasks E-G:** remaining.
+
 **Verified inputs (2026-09-14):**
 - **Sysroot contents.** The GSI system.img is ext4. `/system/lib/{libc,libm,libdl}.so`
   are symlinks into the runtime APEX; the regular-file copies are in

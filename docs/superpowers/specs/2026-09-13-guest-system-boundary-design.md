@@ -55,9 +55,16 @@ against its APK and against upstream sources on 2026-09-13.
 - **Missing bionic symbols.** The three `__cxa_type_match/begin_cleanup/call_unexpected`
   imports are weak. `__aeabi_d2lz` is strong and was not found in modern
   `libc.map.txt`, so it may need a one-function shim library.
-- **Linker compatibility.** The arm32 bionic linker (`linker.cpp`, `!__LP64__`)
-  basenames full-path `DT_NEEDED` entries and allows `DT_TEXTREL` (with a warning)
-  when the target SDK is below 23. The guest manifest says targetSdk 16.
+- **Linker compatibility: correction found in Phase 2.** Android 16 bionic (LineageOS
+  `lineage-23.0`) still basenames full-path `DT_NEEDED` and allows `DT_TEXTREL` when the
+  target SDK is below 23. The **Android 17 GSI linker has removed both paths**. Its
+  binary has no "invalid DT_NEEDED entry" string, and with target SDK 16 set (verified
+  through `android_get_application_target_sdk_version`) it still rejects both. Old
+  libraries therefore need import-time fixups; see "Import-time library fixups".
+- **ARMv8-only instructions.** The GSI arm32 bionic is built for armv8-a and uses T32
+  instructions Dynarmic lacked (`LDA*`/`LDAEX*`/`STL*`/`STLEX*`, `CRC32*`). They are
+  added by `third_party/patches/dynarmic-0001-thumb32-armv8.patch`; scudo's malloc
+  needs `crc32cw`.
 - **Where 32-bit system files come from.** `aosp_arm64.mk` inherits `core_64_bit.mk`
   (64-bit plus 32-bit) on android13, android14, android15 and main. Nobody has yet
   opened an actual image to confirm `/system/lib` is present; see Risks.
@@ -149,8 +156,10 @@ vehicle.
    edsp, neon, vfpv3, tls, vfpv4, idiva and idivt, matching Dynarmic `ArchVersion::v8`.
 3. **Guest main thread.** A dedicated host thread runs the JIT from the linker entry.
    The linker loads libc, runs constructors, and calls `zbhost` `main()`.
-4. **Target SDK.** `zbhost` calls `android_set_application_target_sdk_version(guest_target_sdk)`,
-   with the value taken from the guest manifest, then enters its service loop.
+4. **Target SDK.** `zbhost` calls `android_set_application_target_sdk_version(guest_target_sdk)`
+   (it lives in `libdl_android.so`), with the value taken from the guest manifest, then
+   enters its service loop. This no longer enables pre-M linker behaviour on the Android
+   17 sysroot; import-time fixups cover that.
 5. **Loading a guest lib.** `zb_dlopen(path)` sends a command to `zbhost`, which runs
    guest `dlopen`. The guest linker resolves system libs from the sysroot and resolves
    `libGLESv2.so`/`libandroid.so` to our stubs. `zb_dlsym` and `zb_call` work the same
@@ -168,6 +177,25 @@ vehicle.
      (`CPU architecture: 8`), with features matching `AT_HWCAP`.
    - `/proc/self/maps` lists guest mappings only, with 32-bit addresses.
    - `/proc/self/exe` points to `zbhost`.
+
+## Import-time library fixups
+
+When a guest APK is imported, its native libraries are extracted to private storage and
+patched by `tools/fix_guest_lib.py`. The launcher will do the same in code. The APK itself
+is never modified.
+
+- **Full-path `DT_NEEDED`** (`C:\\Development\\ndk/.../libc.so`). `d_val` is moved to the
+  basename tail of the same `.dynstr` string, so no string bytes change.
+- **`DT_TEXTREL` / `DF_TEXTREL`.** Replaced by the marker tag `DT_ZB_TEXTREL` (`0x60005A42`,
+  OS-specific range). The guest linker ignores it with an "unused DT entry" warning on
+  stderr.
+  - When a file-backed `mmap2` with `PROT_EXEC` hits a marked file, zbrun maps the
+    pages writable inside the emulator and records the range. `mprotect` keeps
+    `PROT_WRITE` there.
+  - The linker therefore applies text relocations as it did before M, and the guest never
+    sees a W+X segment.
+- **`__aeabi_d2lz`**, absent from modern libc, comes from `libzbcompat.so`, which is
+  preloaded `RTLD_GLOBAL`.
 
 ## Transitions
 

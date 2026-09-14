@@ -4,8 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # ZettaBridge
 
-**Current state: Phase 1 done (T1 and T2 pass); Phase 2 next.** `zbrun` runs static
-arm32 Android executables through Dynarmic on this machine.
+**Current state: Phase 1 done (T1, T2); Phase 2 in progress (T3a and T5 pass).**
+- `zbrun` runs static and dynamic arm32 Android executables through Dynarmic and the
+  real Android 17 arm32 linker and bionic.
+- All six Orange Roulette libraries `dlopen` with their JNI entry points resolvable.
+- Still to do in Phase 2: threads (clone), guest signal delivery, and the rest of the
+  T4 suite. Plan: `docs/superpowers/plans/2026-09-14-phase2-guest-linker.md`.
 
 Local git repo (no remote yet; pushing to GitHub is done together with the user).
 Commit locally after each finished task.
@@ -181,10 +185,28 @@ functions. Accept: the game is playable start to finish.
 - **`lib/armeabi` does not mean ARMv5.** Orange Roulette's libs are ARMv7-A (Thumb-1/2,
   VFP, no NEON, softfp). Other guests range from v5 to v7+NEON. Real v5 code uses
   kuser helpers at `0xFFFF0Fxx`; they are emulated.
-- **Guest targetSdk must be passed to the guest linker**
-  (`android_set_application_target_sdk_version`). Without it (< 23) old libs fail on
-  absolute `DT_NEEDED` paths (`C:\Development\ndk/...`, `/home/joshua/...`) and on
-  `DT_TEXTREL` (`libApplicationMain.so`, `liblime.so`).
+- **The Android 17 guest linker has no pre-M compatibility at any target SDK.** Old
+  libraries must go through `tools/fix_guest_lib.py` after extraction:
+  - absolute `DT_NEEDED` (`C:\Development\ndk/...`, `/home/joshua/...`) is pointed at
+    the basename;
+  - `DT_TEXTREL` becomes the `DT_ZB_TEXTREL` marker, and zbrun then keeps that
+    library's code writable.
+
+  Without the fixups, `dlopen` fails with "has text relocations" or
+  "C:\...\libc.so not found".
+- **The GSI arm32 bionic is armv8-a code.** Dynarmic needs the local patch
+  `third_party/patches/dynarmic-0001-thumb32-armv8.patch`: T32 `LDA*`/`LDAEX*`/`STL*`/
+  `STLEX*` and `CRC32*`; scudo's malloc uses `crc32cw`. If an "undefined instruction"
+  appears, decode it with `llvm-objdump -d --triple=thumbv8a` at the offset printed by
+  the crash report. Get exact encodings by assembling a probe with
+  `clang --target=armv8a-linux-androideabi`, not from memory.
+- **Guest-only environment variables go through `zbrun --env NAME=VALUE`.** Plain
+  `LD_DEBUG`/`LD_LIBRARY_PATH` in the host environment is also read by the host glibc
+  loader of zbrun itself (`LD_DEBUG=help` prints glibc's help). Guest linker debug
+  options are `calls`, `cfi`, `dynamic`, `lookup`, `props`, `reloc`, `timing`,
+  `statistics`.
+- **`statfs64`/`fstatfs64`:** bionic passes size 88 while the kernel layout is 84 bytes;
+  both sizes must be accepted.
 - **Guest `dlopen`/`dlsym` are guest linker calls.** hxcpp loads its ndlls as
   `lib<name>.ndll`/`.so` and resolves primitives as `name__N`.
 - **Guest Java calls `System.loadLibrary` on arm32 libs** (`std`, `regexp`, `zlib`,
