@@ -16,6 +16,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (`android/t6/project/`), and guest `__android_log_print` shows in logcat.
 - Next: the part 1 (JNI bridge) spec, then Phase 4; part 4 (GLES/audio/assets) spec
   before Phase 5.
+- Phase 0 launcher shell written, not yet tested on the phone: `android/launcher/`,
+  `docs/phase0-launcher.md`.
 - Work is on branch `phase1-zbrun` (local only).
 
 Local git repo (no remote yet; pushing to GitHub is done together with the user).
