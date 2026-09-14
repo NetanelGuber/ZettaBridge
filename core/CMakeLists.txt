@@ -8,7 +8,9 @@ add_library(zbcore STATIC
     src/jni/handles.cpp
     src/jni/mangle.cpp
     src/jni/native_call.cpp
+    src/jni/native_thunks.cpp
     src/jni/shorty.cpp
+    src/jni/thunks.S
     src/log.cpp
     src/proc_files.cpp
     src/process.cpp

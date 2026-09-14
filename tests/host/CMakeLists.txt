@@ -5,6 +5,7 @@ set(ZB_HOST_TESTS
     jni_handles_test
     jni_mangle_test
     jni_shorty_test
+    native_thunk_test
     t1_blob_test
 )
 

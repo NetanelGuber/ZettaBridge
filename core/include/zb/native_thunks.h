@@ -1,0 +1,50 @@
+#pragma once
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+
+#include "zb/native_call.h"
+
+namespace zb {
+
+// Number of precompiled thunks; must match the .rept count in core/src/jni/thunks.S.
+constexpr std::size_t kNativeThunkCount = 16384;
+
+// What a registered native method runs: a guest function and how to marshal its arguments.
+struct NativeTarget {
+    std::uint32_t guest_function = 0;  // Thumb bit included
+    std::string shorty;                // return type first
+    bool is_static = false;
+};
+
+// Receives every thunk call with the slot number. It reads the arguments from regs and stores
+// the result in regs.x[0] / regs.d[0].
+using NativeDispatcher = void (*)(std::uint32_t slot, NativeRegs& regs);
+void set_native_dispatcher(NativeDispatcher dispatcher);
+
+// Address of a thunk, usable as the fnPtr of RegisterNatives; nullptr when out of range.
+void* native_thunk_address(std::uint32_t slot);
+
+// Assigns thunk slots to native methods. Slots are never freed (UnregisterNatives keeps them),
+// so target() needs no lock.
+class NativeSlots {
+public:
+    // capacity is capped at kNativeThunkCount.
+    explicit NativeSlots(std::size_t capacity = kNativeThunkCount);
+    // The slot number, or -1 when every slot is taken.
+    std::int32_t allocate(NativeTarget target);
+    // The target of an allocated slot, or nullptr.
+    const NativeTarget* target(std::uint32_t slot) const;
+
+private:
+    std::size_t capacity_;
+    std::mutex mutex_;
+    std::unique_ptr<NativeTarget[]> targets_;
+    std::atomic<std::uint32_t> count_{0};
+};
+
+}  // namespace zb

@@ -1581,6 +1581,7 @@ private:
 #include "zb/native_thunks.h"
 
 #include <cstddef>
+#include <utility>
 
 extern "C" {
 // Both defined in or called from thunks.S.
