@@ -34,6 +34,7 @@ run_case() {
 CASE_ENV=""
 run_case hello_static 7 world
 run_case hello_dynamic 3 "$GUEST/zb_io.tmp"
+run_case threads_dynamic 0
 
 if [ -f "$APK" ]; then
     mkdir -p "$OR_LIBS"

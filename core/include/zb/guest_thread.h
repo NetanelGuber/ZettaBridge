@@ -9,6 +9,7 @@
 #include <dynarmic/interface/A32/a32.h>
 #include <dynarmic/interface/A32/config.h>
 
+#include "zb/guest_abi.h"
 #include "zb/guest_memory.h"
 
 namespace Dynarmic {
@@ -42,17 +43,24 @@ public:
     ~GuestThread() override;
 
     std::array<std::uint32_t, 16>& regs();
+    std::array<std::uint32_t, 64>& ext_regs();
     std::uint32_t cpsr() const;
     void set_cpsr(std::uint32_t value);
+    std::uint32_t fpscr() const;
+    void set_fpscr(std::uint32_t value);
     std::uint32_t tls() const { return tpidruro_; }
     void set_tls(std::uint32_t value) { tpidruro_ = value; }
+    std::size_t processor_id() const { return processor_id_; }
 
     Stop run();
-    // Drop translated code for [addr, addr + len). Safe to call from a host call handler.
+    // Drop translated code for [addr, addr + len). Safe to call from other host threads.
     void invalidate(std::uint32_t addr, std::uint32_t len);
 
-    // Emulated guest signal state.
+    // Emulated per-thread kernel state.
     std::uint64_t sigmask = 0;
+    g::stack32 altstack{0, 2 /* SS_DISABLE */, 0};
+    std::uint32_t clear_child_tid = 0;
+    int exit_status = 0;
 
     std::uint8_t MemoryRead8(std::uint32_t vaddr) override;
     std::uint16_t MemoryRead16(std::uint32_t vaddr) override;
@@ -78,6 +86,7 @@ private:
     void halt();
 
     GuestMemory& mem_;
+    std::size_t processor_id_;
     std::uint32_t tpidruro_ = 0;
     std::uint32_t tpidrurw_ = 0;
     std::shared_ptr<Cp15> cp15_;

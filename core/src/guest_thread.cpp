@@ -28,7 +28,8 @@ void store(std::uint8_t* p, T v) {
 
 }  // namespace
 
-GuestThread::GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id) : mem_(mem) {
+GuestThread::GuestThread(GuestMemory& mem, Dynarmic::ExclusiveMonitor* monitor, std::size_t processor_id)
+    : mem_(mem), processor_id_(processor_id) {
     cp15_ = std::make_shared<Cp15>(&tpidruro_, &tpidrurw_);
 
     Dynarmic::A32::UserConfig cfg;
@@ -51,8 +52,20 @@ std::array<std::uint32_t, 16>& GuestThread::regs() {
     return jit_->Regs();
 }
 
+std::array<std::uint32_t, 64>& GuestThread::ext_regs() {
+    return jit_->ExtRegs();
+}
+
 std::uint32_t GuestThread::cpsr() const {
     return jit_->Cpsr();
+}
+
+std::uint32_t GuestThread::fpscr() const {
+    return jit_->Fpscr();
+}
+
+void GuestThread::set_fpscr(std::uint32_t value) {
+    jit_->SetFpscr(value);
 }
 
 void GuestThread::set_cpsr(std::uint32_t value) {
@@ -61,8 +74,14 @@ void GuestThread::set_cpsr(std::uint32_t value) {
 
 Stop GuestThread::run() {
     pending_ = Stop{};
-    jit_->Run();
-    jit_->ClearHalt(kStopHalt);
+    for (;;) {
+        const Dynarmic::HaltReason reason = jit_->Run();
+        jit_->ClearHalt(kStopHalt);
+        // Another thread invalidated translated code while we were running; the JIT applies
+        // the invalidation at the start of the next Run().
+        if (pending_.kind == StopKind::None && Dynarmic::Has(reason, Dynarmic::HaltReason::CacheInvalidation)) continue;
+        break;
+    }
     Stop s = pending_;
     if (s.kind != StopKind::Exception) s.pc = jit_->Regs()[15];
     return s;

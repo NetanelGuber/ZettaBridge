@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -321,8 +322,8 @@ std::int32_t sys_sigaltstack(Ctx& c) {
     g::stack32 ss{};
     const bool has_new = c.a[0] != 0;
     if (has_new && !read_guest(c.mem, c.a[0], ss)) return -EFAULT;
-    if (c.a[1] != 0 && !write_guest(c.mem, c.a[1], c.proc.altstack)) return -EFAULT;
-    if (has_new) c.proc.altstack = ss;
+    if (c.a[1] != 0 && !write_guest(c.mem, c.a[1], c.thread.altstack)) return -EFAULT;
+    if (has_new) c.thread.altstack = ss;
     return 0;
 }
 
@@ -582,10 +583,25 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
 
     switch (nr) {
     case NR_exit:
+        // Ends only the calling thread; Process decides what that means for the process.
+        if (trace_enabled()) log("exit(%d)", static_cast<int>(c.a[0]));
+        thread.exit_status = static_cast<int>(c.a[0] & 0xff);
+        return false;
     case NR_exit_group:
-        if (trace_enabled()) log("%s(%d)", syscall_name(nr), static_cast<int>(c.a[0]));
+        if (trace_enabled()) log("exit_group(%d)", static_cast<int>(c.a[0]));
+        if (proc.thread_count() > 1) std::_Exit(static_cast<int>(c.a[0] & 0xff));
         proc.request_exit(static_cast<int>(c.a[0] & 0xff));
         return false;
+    case NR_clone: {
+        constexpr std::uint32_t kRequired = 0x00000100 | 0x00010000;  // CLONE_VM | CLONE_THREAD
+        if ((c.a[0] & kRequired) != kRequired) {
+            if (proc.first_time(nr)) log("clone without CLONE_VM|CLONE_THREAD (fork) is refused");
+            res = -EPERM;
+            break;
+        }
+        res = proc.clone_thread(thread, c.a[0], c.a[1], c.a[2], c.a[3], c.a[4]);
+        break;
+    }
 
     case NR_read: res = sys_read_write(c, false); break;
     case NR_write: res = sys_read_write(c, true); break;
@@ -684,11 +700,31 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
         break;
     }
 
-    case NR_brk: res = sys_brk(c); break;
-    case NR_mmap2: res = sys_mmap2(c); break;
-    case NR_munmap: res = sys_munmap(c); break;
-    case NR_mprotect: res = sys_mprotect(c); break;
-    case NR_madvise: res = sys_madvise(c); break;
+    case NR_brk: {
+        std::lock_guard<std::mutex> lock(proc.mm_mutex());
+        res = sys_brk(c);
+        break;
+    }
+    case NR_mmap2: {
+        std::lock_guard<std::mutex> lock(proc.mm_mutex());
+        res = sys_mmap2(c);
+        break;
+    }
+    case NR_munmap: {
+        std::lock_guard<std::mutex> lock(proc.mm_mutex());
+        res = sys_munmap(c);
+        break;
+    }
+    case NR_mprotect: {
+        std::lock_guard<std::mutex> lock(proc.mm_mutex());
+        res = sys_mprotect(c);
+        break;
+    }
+    case NR_madvise: {
+        std::lock_guard<std::mutex> lock(proc.mm_mutex());
+        res = sys_madvise(c);
+        break;
+    }
     case NR_mremap: res = -ENOMEM; break;
 
     case NR_ARM_set_tls:
@@ -702,7 +738,7 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
         break;
 
     case NR_set_tid_address:
-        proc.clear_child_tid = c.a[0];
+        thread.clear_child_tid = c.a[0];
         res = result_of(::syscall(SYS_gettid));
         break;
     case NR_getpid: res = result_of(::getpid()); break;
@@ -713,7 +749,11 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
     case NR_getgid32: res = static_cast<std::int32_t>(::getgid()); break;
     case NR_getegid32: res = static_cast<std::int32_t>(::getegid()); break;
 
-    case NR_rt_sigaction: res = sys_rt_sigaction(c); break;
+    case NR_rt_sigaction: {
+        std::lock_guard<std::mutex> lock(proc.signal_mutex());
+        res = sys_rt_sigaction(c);
+        break;
+    }
     case NR_rt_sigprocmask: res = sys_rt_sigprocmask(c); break;
     case NR_sigaltstack: res = sys_sigaltstack(c); break;
     case NR_kill:

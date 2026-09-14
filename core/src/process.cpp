@@ -1,7 +1,9 @@
 #include "zb/process.h"
 
 #include <elf.h>
+#include <linux/futex.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -9,7 +11,10 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <future>
 #include <string_view>
+#include <thread>
 
 #include <dynarmic/interface/exclusive_monitor.h>
 
@@ -42,6 +47,12 @@ constexpr std::uint32_t kGuestHwcap = kHwcapHalf | kHwcapThumb | kHwcapFastMult 
 
 constexpr std::uint32_t kCpsrUserMode = 0x10;
 constexpr std::uint32_t kCpsrThumb = 0x20;
+
+// Linux clone flags (identical on arm and arm64).
+constexpr std::uint32_t kCloneSetTls = 0x00080000;
+constexpr std::uint32_t kCloneParentSetTid = 0x00100000;
+constexpr std::uint32_t kCloneChildClearTid = 0x00200000;
+constexpr std::uint32_t kCloneChildSetTid = 0x01000000;
 
 constexpr std::uint64_t kSeenUnexpectedSvc = 1ULL << 40;
 constexpr std::uint64_t kSeenHostCall = 1ULL << 41;
@@ -97,21 +108,28 @@ const char* exception_name(Dynarmic::A32::Exception e) {
     return "unknown exception";
 }
 
+void write_guest_u32(GuestMemory& mem, std::uint32_t addr, std::uint32_t value) {
+    if (std::uint8_t* p = mem.host_ptr(addr, 4, kPageWrite)) std::memcpy(p, &value, 4);
+}
+
 }  // namespace
 
-Process::Process() : monitor_(std::make_unique<Dynarmic::ExclusiveMonitor>(256)) {}
+Process::Process() : monitor_(std::make_unique<Dynarmic::ExclusiveMonitor>(kMaxThreads)) {}
 
 Process::~Process() = default;
 
 void Process::request_exit(int status) {
     exit_status_ = status;
+    exiting_ = true;
 }
 
 void Process::invalidate(std::uint32_t addr, std::uint32_t len) {
-    if (main_) main_->invalidate(addr, len);
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    for (GuestThread* t : threads_) t->invalidate(addr, len);
 }
 
 bool Process::first_time(std::uint64_t key) {
+    std::lock_guard<std::mutex> lock(seen_mutex_);
     return seen_.insert(key).second;
 }
 
@@ -131,18 +149,6 @@ void Process::forget_mappings(std::uint32_t start, std::uint64_t length) {
     });
 }
 
-void Process::add_textrel_range(std::uint32_t start, std::uint32_t length) {
-    textrel_ranges_.emplace_back(start, length);
-}
-
-bool Process::overlaps_textrel_range(std::uint32_t start, std::uint64_t length) const {
-    const std::uint64_t end = static_cast<std::uint64_t>(start) + length;
-    for (const auto& [range_start, range_length] : textrel_ranges_) {
-        if (range_start < end && static_cast<std::uint64_t>(range_start) + range_length > start) return true;
-    }
-    return false;
-}
-
 std::string Process::describe_address(std::uint32_t addr) const {
     for (const auto& m : file_mappings_) {
         if (addr >= m.start && addr - m.start < m.length) {
@@ -153,6 +159,18 @@ std::string Process::describe_address(std::uint32_t addr) const {
         }
     }
     return "?";
+}
+
+void Process::add_textrel_range(std::uint32_t start, std::uint32_t length) {
+    textrel_ranges_.emplace_back(start, length);
+}
+
+bool Process::overlaps_textrel_range(std::uint32_t start, std::uint64_t length) const {
+    const std::uint64_t end = static_cast<std::uint64_t>(start) + length;
+    for (const auto& [range_start, range_length] : textrel_ranges_) {
+        if (range_start < end && static_cast<std::uint64_t>(range_start) + range_length > start) return true;
+    }
+    return false;
 }
 
 std::string Process::translate_path(const char* guest_path) const {
@@ -171,6 +189,27 @@ std::string Process::translate_path(const char* guest_path) const {
     return std::string(path);
 }
 
+std::size_t Process::thread_count() const {
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    return threads_.size();
+}
+
+int Process::allocate_processor_id() {
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    for (std::size_t i = 0; i < processor_ids_.size(); ++i) {
+        if (!processor_ids_.test(i)) {
+            processor_ids_.set(i);
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void Process::register_thread(GuestThread* thread) {
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    threads_.push_back(thread);
+}
+
 int Process::run(const std::string& path, const std::vector<std::string>& argv, const std::vector<std::string>& envp) {
     if (!mem_.ok()) return 1;
 
@@ -183,7 +222,6 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
         log("%s", error.c_str());
         return 1;
     }
-
     record_file_mapping(exe.load_start, exe.load_end - exe.load_start, exe.load_start - exe.bias, exe_path_, true);
 
     std::uint32_t start_pc = exe.entry;
@@ -231,20 +269,35 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
         return 1;
     }
 
-    main_ = std::make_unique<GuestThread>(mem_, monitor_.get(), 0);
+    main_ = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(allocate_processor_id()));
     auto& regs = main_->regs();
     regs.fill(0);
     regs[13] = sp;
     regs[15] = start_pc & ~1u;
     main_->set_cpsr(kCpsrUserMode | ((start_pc & 1) ? kCpsrThumb : 0));
+    register_thread(main_.get());
 
+    thread_loop(*main_);
+    if (exiting_) return exit_status_;
+
+    // The main thread called exit() while other threads may still run: wait for them.
+    const int main_status = main_->exit_status;
+    finish_thread(*main_);
+    wait_for_threads();
+    return exiting_ ? exit_status_.load() : main_status;
+}
+
+void Process::thread_loop(GuestThread& thread) {
     for (;;) {
-        const Stop stop = main_->run();
+        const Stop stop = thread.run();
         switch (stop.kind) {
         case StopKind::Svc:
             if (stop.swi == 0) {
-                if (!handle_syscall(*this, *main_)) return exit_status_;
-            } else if ((stop.swi & 0xFF0000u) == kHostCallBase && stop.swi != kHostReturnSwi) {
+                if (handle_syscall(*this, thread)) break;
+                if (exiting_ && thread_count() > 1) exit_host_process();
+                return;
+            }
+            if ((stop.swi & 0xFF0000u) == kHostCallBase && stop.swi != kHostReturnSwi) {
                 const std::uint32_t index = stop.swi & 0xFFFFu;
                 if (first_time(kSeenHostCall | index)) {
                     const char* library = "?";
@@ -258,25 +311,90 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
                     }
                     log("host call %s:%s is not implemented yet", library, name);
                 }
-                main_->regs()[0] = 0;
-            } else {
-                if (first_time(kSeenUnexpectedSvc | stop.swi)) {
-                    log("unexpected svc #0x%x at pc 0x%08x", stop.swi, stop.pc);
-                }
-                main_->regs()[0] = static_cast<std::uint32_t>(-ENOSYS);
+                thread.regs()[0] = 0;
+                break;
             }
+            if (first_time(kSeenUnexpectedSvc | stop.swi)) log("unexpected svc #0x%x at pc 0x%08x", stop.swi, stop.pc);
+            thread.regs()[0] = static_cast<std::uint32_t>(-ENOSYS);
             break;
         case StopKind::MemoryFault:
-            crash_report(stop, *main_);
-            return 128 + SIGSEGV;
+            crash_report(stop, thread);
+            request_exit(128 + SIGSEGV);
+            if (thread_count() > 1) exit_host_process();
+            return;
         case StopKind::Exception:
-            crash_report(stop, *main_);
-            return 128 + SIGILL;
+            crash_report(stop, thread);
+            request_exit(128 + SIGILL);
+            if (thread_count() > 1) exit_host_process();
+            return;
         case StopKind::None:
             log("guest stopped without a reason at pc 0x%08x", stop.pc);
-            return 1;
+            request_exit(1);
+            if (thread_count() > 1) exit_host_process();
+            return;
         }
     }
+}
+
+std::int32_t Process::clone_thread(GuestThread& parent, std::uint32_t flags, std::uint32_t stack,
+                                   std::uint32_t parent_tid_addr, std::uint32_t tls, std::uint32_t child_tid_addr) {
+    const int processor_id = allocate_processor_id();
+    if (processor_id < 0) return -EAGAIN;
+
+    auto child = std::make_unique<GuestThread>(mem_, monitor_.get(), static_cast<std::size_t>(processor_id));
+    child->regs() = parent.regs();
+    child->regs()[0] = 0;
+    if (stack != 0) child->regs()[13] = stack;
+    child->ext_regs() = parent.ext_regs();
+    child->set_cpsr(parent.cpsr());
+    child->set_fpscr(parent.fpscr());
+    child->set_tls((flags & kCloneSetTls) ? tls : parent.tls());
+    child->sigmask = parent.sigmask;
+    if (flags & kCloneChildClearTid) child->clear_child_tid = child_tid_addr;
+
+    std::promise<pid_t> tid_promise;
+    std::future<pid_t> tid_future = tid_promise.get_future();
+    register_thread(child.get());
+    std::thread([this, owned = std::move(child), promise = &tid_promise, flags, child_tid_addr]() mutable {
+        const auto tid = static_cast<pid_t>(::syscall(SYS_gettid));
+        if (flags & kCloneChildSetTid) write_guest_u32(mem_, child_tid_addr, static_cast<std::uint32_t>(tid));
+        promise->set_value(tid);
+        thread_main(std::move(owned));
+    }).detach();
+
+    const pid_t tid = tid_future.get();
+    if (flags & kCloneParentSetTid) write_guest_u32(mem_, parent_tid_addr, static_cast<std::uint32_t>(tid));
+    return tid;
+}
+
+void Process::thread_main(std::unique_ptr<GuestThread> thread) {
+    thread_loop(*thread);
+    finish_thread(*thread);
+}
+
+void Process::finish_thread(GuestThread& thread) {
+    if (thread.clear_child_tid != 0) {
+        if (std::uint8_t* p = mem_.host_ptr(thread.clear_child_tid, 4, kPageWrite)) {
+            const std::uint32_t zero = 0;
+            std::memcpy(p, &zero, 4);
+            ::syscall(SYS_futex, p, FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
+        }
+    }
+    monitor_->ClearProcessor(thread.processor_id());
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    std::erase(threads_, &thread);
+    processor_ids_.reset(thread.processor_id());
+    threads_cv_.notify_all();
+}
+
+void Process::wait_for_threads() {
+    std::unique_lock<std::mutex> lock(threads_mutex_);
+    threads_cv_.wait(lock, [&] { return threads_.empty(); });
+}
+
+void Process::exit_host_process() {
+    std::fflush(stderr);
+    std::_Exit(exit_status_);
 }
 
 void Process::crash_report(const Stop& stop, GuestThread& thread) const {
@@ -289,7 +407,7 @@ void Process::crash_report(const Stop& stop, GuestThread& thread) const {
     for (int i = 0; i < 16; i += 4) {
         log("  r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x", i, r[i], i + 1, r[i + 1], i + 2, r[i + 2], i + 3, r[i + 3]);
     }
-    log("  cpsr %08x  tls %08x", thread.cpsr(), thread.tls());
+    log("  cpsr %08x  tls %08x  tid %ld", thread.cpsr(), thread.tls(), static_cast<long>(::syscall(SYS_gettid)));
     log("  pc in %s", describe_address(stop.pc).c_str());
     log("  lr in %s", describe_address(r[14]).c_str());
 }
