@@ -70,14 +70,19 @@ In progress: wiring the JNI bridge into the launcher on a real phone.
 |---|---|
 | **v0.1** | 32-bit apps whose native libraries do not draw on their own: utilities and apps using old native libs for crypto, image processing, parsers, databases. |
 | **v0.2** | OpenGL ES passthrough and Android assets: simple 2D games, starting with Orange Roulette. |
-| later | more games and apps, performance work, broader compatibility |
+| **v0.3+** | 3D games and performance work: GL call batching, faster floating point, JNI fast paths |
+| exploring | x86 / x86_64 guests through [Box64](https://github.com/ptitSeb/box64) |
 
 ## Honest limits
 
 - **Speed.** Translated code runs slower than native: roughly 2x for integer code and
   3.5x for memory copies on a Snapdragon 8 Elite, more for floating-point-heavy loops.
-- **Every call from the app into the system crosses a translation boundary.** ZettaBridge
-  targets **2D games and utility apps; 3D-heavy games are not a goal.**
+- **3D games are harder, not off-limits.** Every call from the app into the system, and
+  OpenGL ES calls in particular, crosses a translation boundary, so 3D-heavy games will be
+  slow at first. Making them playable is a goal. Planned work:
+  - batching GL calls;
+  - faster floating point;
+  - host-side JNI fast paths.
 - **Apps that need a real installation are out of scope:** their own UID and
   permissions, visibility to other apps, accounts, push notifications.
 - **Some apps refuse to run inside another app on purpose** (Play Integrity / clone

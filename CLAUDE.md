@@ -174,8 +174,11 @@ or stub generators by hand.
 
 ## Non-goals
 
-- 3D-heavy games. The per-call cost across the boundary makes this a 2D / utility-app
-  tool. Say so honestly in the README.
+- None for 3D: 3D games ARE a goal (user decision, 2026-09-15), after 2D. Priority order:
+  2D games and utilities first (v0.1/v0.2), then 3D games plus performance work (GL call
+  batching, faster floating point, JNI host-stub fast paths). Keep designs
+  performance-friendly and do not dismiss 3D in docs. Box64 integration for x86 guests is
+  an idea for later.
 - Supporting apps that need real package installation (their own UID, per-app
   permissions, being visible to other apps, accounts, push).
 - A general-purpose emulator. One app brought up well beats ten half-working.
