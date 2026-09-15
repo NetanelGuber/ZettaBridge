@@ -210,3 +210,11 @@ the host suite):
     needed;
   - `thread_local` destructor ordering against ART detach, untested on device;
   - buffers are always copied.
+
+## HANDOFF addendum (Claude at 90% limit)
+
+- The Sonnet review of Phase 4c may not finish before the limit. Codex: run your own code review of `2141dc6..30c811c` first, using the focus list above, and fix any Critical or Important findings before plan 4d.
+- **The `.worktrees/proto-4c` working tree differs from the committed 4c code.** Diff stat vs `30c811c` over `core guest tests tools`:  24 files changed, 6480 deletions(-).
+  - Treat `phase1-zbrun` as the source of truth.
+  - Before deleting the worktree, check `git -C .worktrees/proto-4c diff 30c811c` for any fix that is not yet committed. Port such fixes on purpose.
+- **Next after the review: write plan 4d** (inputs above). Use the lean style of the 4c record: task list, decisions, tests, acceptance. Do not reproduce full code per task. Implement it task by task with a commit per task.
