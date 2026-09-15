@@ -20,9 +20,11 @@ English and ASCII only.
 - **Phase 4c done (2026-09-15).** Guest `JNIEnv`/`JavaVM`, host JNI calls against
   `JniBackend`, Java -> guest dispatch, `RegisterNatives`, attach/detach; committed directly
   to `phase1-zbrun` (see "Phase 4c done" below). Host tests are 18/18. Next is plan 4d.
-- Phase 4c review fixes continue on branch `codex/phase4c-review-fixes`, based on
-  `phase1-zbrun`.
-- Commit locally; pushing is done together with the user (no Git remote is configured).
+- **Phase 4d Tasks 1-6 done.** ELF fixups/symbol scanning, JNI loader, ART backend, standalone
+  proxy, process-lifetime runtime, and launcher integration are implemented. Next is Task 7 (T7
+  on real ART), then the two recorded ART discovery review fixes before Task 8.
+- Work continues on local branch `codex/phase4d-launcher`, based on `phase1-zbrun`.
+- Commit locally after every task and update this file. Push only with the user's agreement.
 
 ## Phase 4a completed (JNI host units)
 
@@ -328,28 +330,43 @@ Orange Roulette smoke launch.
 - **Direction changed (user decision):** 3D games and performance work are goals after 2D (see CLAUDE.md Non-goals). The user will provide the Portal (NVIDIA Shield) APK as a future 3D target; it may need Tegra-specific GLES extensions.
 - **Remote:** `origin/main` = pushed `phase1-zbrun`. Push only with the user's agreement.
 
-## NEXT (after Task 5, 2026-09-15)
+## NEXT (after Task 6, 2026-09-15)
 
 - **Done:**
   - Task 5 (`f90638b`); the Java API for Task 6 is in `android/launcher/.../core/ZBridge.java` (`activatePlugin`, `onProxyLoaded`, `loadError`, `lastLoadError`, `fixGuestLibrary`);
-  - host tests 27/27.
+  - Task 6 on local branch `codex/phase4d-launcher`: launcher arm32 import, runtime bundle,
+    `PluginClassLoader`, activation before plugin code, proxy routing, and persistent diagnostics;
+  - host tests 27/27 and guest tests 9/9.
 - **Review of Tasks 3-4:** `docs/superpowers/reviews/2026-09-15-phase4d-tasks3-4-review.md` (`61c2361`). Fix its two Important items before Task 8:
   1. `getDeclaredMethods` can fail a whole library: bind long-form exports through `GetMethodID`, and skip-and-log short-form ones.
   2. Add executable host tests for `jni_env_backend.cpp` with a fake reflective `JNIEnv`.
 - **Task 5 review passed:**
   `docs/superpowers/reviews/2026-09-15-phase4d-task5-review.md`. No Critical or Important
   findings. Focused tests passed 3/3 and `proxy_runtime_test` passed 50/50 repeated runs.
-- **Task 6** (launcher extraction, `PluginClassLoader`, runtime bundle) must:
-  - call `ZBridge.activatePlugin` before plugin code runs;
-  - return proxy paths shaped `plugins/<pkg>/proxy/lib<name>.so`;
-  - show `lastLoadError()` through `Diagnostics`;
-  - mark import complete only after `fixGuestLibrary` succeeds (ELF fixup writes are not atomic).
+- **Task 6 is complete.** Key details:
+  - ABI priority is arm64-v8a, armeabi-v7a, then armeabi; old 32-bit imports require reimport;
+  - staging import runs `fixGuestLibrary` before metadata/publication, removes stale native files,
+    and preserves `plugins/<pkg>/data` on reimport;
+  - `PluginClassLoader` delegates only `com.zettabridge.core.*`, returns real arm64 libraries or
+    atomically-created `plugins/<pkg>/proxy/lib<name>.so` copies for arm32, and returns null for the
+    normal system fallback when a library is absent;
+  - `tools/make_launcher_bundle.sh` produces an ignored 6.9 MiB `build/launcher` tree from the exact
+    10-file sysroot/runtime set. Gradle consumes only that generated assets/jniLibs tree;
+  - runtime assets install atomically before plugin code and `ZBridge.activatePlugin` runs before
+    providers or `Application`; a bridge load failure is shown through `Diagnostics` and the
+    unusable `:guest` process exits after preserving the error.
+- **Task 6 verification:** launcher contract test PASS; full Java compile against android-36 PASS;
+  bundle filename/ELF/size validation PASS; Android `zbridge` and `zbproxy` link; host 27/27; guest
+  9/9; `tools/gen_jni.py --check` PASS. No Gradle wrapper or system Gradle is available here, so an
+  APK build was not run locally.
 - **Any load failure needs a `:guest` process restart.**
+- **Next:** Task 7, the real-ART T7 diagnostics app and OnePlus 13 device run. Then fix the two
+  Tasks 3-4 review findings above before Task 8 (Orange Roulette smoke launch).
 
 ## Codex continuation (2026-09-15)
 
 - Work continues on local branch `codex/phase4d-launcher`, based on `3085daa` from
   `phase1-zbrun`. Do not push without the user's agreement.
-- Task 5 review is complete and recorded as above. Next is Phase 4d Task 6.
+- Task 5 review and Task 6 are complete. Next is Phase 4d Task 7.
 - Commit every completed task locally and update this file in the same task commit so a fresh
   Claude or Codex session can resume from the latest `NEXT` section.

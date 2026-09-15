@@ -13,14 +13,14 @@ import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.util.Log;
 
-import dalvik.system.DexClassLoader;
-
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+
+import com.zettabridge.core.ZBridge;
 
 /** A plugin loaded into the :guest process: its class loader, resources and Application. */
 final class LoadedPlugin {
@@ -68,14 +68,24 @@ final class LoadedPlugin {
         Resources res = pm.getResourcesForApplication(ai);
 
         File codeCache = new File(host.getCodeCacheDir(), "plugins/" + record.packageName);
-        codeCache.mkdirs();
-        record.dataDir().mkdirs();
-        // Parent is the boot class loader, so the plugin never sees launcher classes.
-        ClassLoader cl = new DexClassLoader(record.apk().getPath(), codeCache.getPath(), record.libDir().getPath(),
-                android.content.Context.class.getClassLoader());
+        if (!codeCache.isDirectory() && !codeCache.mkdirs()) {
+            throw new IllegalStateException("cannot create " + codeCache);
+        }
+        if (!record.dataDir().isDirectory() && !record.dataDir().mkdirs()) {
+            throw new IllegalStateException("cannot create " + record.dataDir());
+        }
+        if (record.isTranslated()) RuntimeBundle.install(host);
+        // Plugin dex is child-first and isolated from launcher implementation classes. Only the
+        // stable com.zettabridge.core bridge is explicitly delegated to the launcher loader.
+        ClassLoader cl = new PluginClassLoader(record, codeCache, RuntimeBundle.proxyLibrary(host),
+                android.content.Context.class.getClassLoader(), ZBridge.class.getClassLoader());
 
         LoadedPlugin p = new LoadedPlugin(record, ai, res, cl);
         p.info = info;
+        if (record.isTranslated()) {
+            // Must precede every plugin class initialization, provider and Application callback.
+            ZBridge.activatePlugin(record.dir.getCanonicalPath(), record.targetSdk, cl);
+        }
         if (info.activities != null) {
             for (ActivityInfo a : info.activities) {
                 a.applicationInfo = ai;

@@ -122,12 +122,21 @@
 
 **Produces:** a launcher APK that packages/extracts the 4.1 MB arm32 sysroot and guest helpers, fixes arm32 imports, delegates bridge classes, and returns unique proxy paths.
 
-- [ ] Add filesystem/class-loader contract tests for ABI priority, path sanitization, atomic proxy creation, core-only parent delegation, missing-library fallback, reimport cleanup, and metadata/status.
-- [ ] Observe RED against the current arm64-only extractor and boot-parent `DexClassLoader`.
-- [ ] Extract the selected arm32 ABI to the private plugin lib dir, invoke the native fixer before marking import complete, and leave the APK unchanged/read-only.
-- [ ] Build runtime assets from exactly the 10 sysroot files plus `zbhost`, `libzbcompat.so`, `libzbjni.so`, generated `libGLESv2.so`/`libandroid.so`, `libzbridge.so`, and `libzbproxy.so`; make Gradle consume only ignored `build/launcher` outputs.
-- [ ] Initialize runtime assets before plugin code, create `PluginClassLoader`, and preserve the existing resource/context fixes.
-- [ ] Run Java compile checks, bundle validation (filenames, ELF class/machine, size), launcher Gradle build where available, and existing core suites; commit `launcher: route arm32 libraries through ZettaBridge`.
+- [x] Add filesystem/class-loader contract tests for ABI priority, path sanitization, atomic proxy creation, core-only parent delegation, missing-library fallback, reimport cleanup, and metadata/status.
+- [x] Observe RED against the current arm64-only extractor and boot-parent `DexClassLoader`.
+- [x] Extract the selected arm32 ABI to the private plugin lib dir, invoke the native fixer before marking import complete, and leave the APK unchanged/read-only.
+- [x] Build runtime assets from exactly the 10 sysroot files plus `zbhost`, `libzbcompat.so`, `libzbjni.so`, generated `libGLESv2.so`/`libandroid.so`, `libzbridge.so`, and `libzbproxy.so`; make Gradle consume only ignored `build/launcher` outputs.
+- [x] Initialize runtime assets before plugin code, create `PluginClassLoader`, and preserve the existing resource/context fixes.
+- [x] Run Java compile checks, bundle validation (filenames, ELF class/machine, size), launcher Gradle build where available, and existing core suites; commit `launcher: route arm32 libraries through ZettaBridge`.
+
+**Task 6 decisions:** ABI priority is arm64-v8a, armeabi-v7a, then armeabi. Imports are
+prepared in a sibling staging directory; metadata is written last, the old plugin data directory
+is preserved, and the staged directory replaces all other old files. Runtime assets are versioned
+and atomically installed under `files/zb`. `PluginClassLoader` is child-first outside platform
+classes, delegates only `com.zettabridge.core.*` to the launcher, and creates one immutable proxy
+copy per arm32 library. This checkout has no Gradle wrapper or system Gradle, so the portable full
+Java compile harness replaces the unavailable local APK build; AndroidIDE/device packaging remains
+part of Task 7.
 
 ### Task 7: T7 on real ART
 

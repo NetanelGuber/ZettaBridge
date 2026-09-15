@@ -15,13 +15,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.List;
-import java.util.Set;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
-/** Imported plugins on disk. Import copies the APK, extracts arm64 libraries and caches metadata. */
+import com.zettabridge.core.ZBridge;
+
+/** Imported plugins on disk. Import is staged and published only after every native fixup succeeds. */
 final class PluginStore {
     static final int ARCHIVE_FLAGS = PackageManager.GET_ACTIVITIES | PackageManager.GET_PROVIDERS
             | PackageManager.GET_SERVICES | PackageManager.GET_RECEIVERS | PackageManager.GET_META_DATA;
@@ -60,7 +58,7 @@ final class PluginStore {
     }
 
     static PluginRecord importApk(Context c, Uri uri) throws IOException {
-        File tmp = new File(c.getCacheDir(), "import.apk");
+        File tmp = File.createTempFile("zb-import-", ".apk", c.getCacheDir());
         try (InputStream in = c.getContentResolver().openInputStream(uri)) {
             if (in == null) throw new IOException("cannot open " + uri);
             copy(in, tmp);
@@ -76,59 +74,62 @@ final class PluginStore {
             throw new IOException("refusing to import " + info.packageName);
         }
 
-        PluginRecord r = new PluginRecord(new File(root(c), info.packageName));
-        if (!r.dir.isDirectory() && !r.dir.mkdirs()) throw new IOException("cannot create " + r.dir);
-        File apk = r.apk();
-        if (apk.exists()) {
-            apk.setWritable(true);
-            if (!apk.delete()) throw new IOException("cannot replace " + apk);
-        }
-        if (!tmp.renameTo(apk)) {
-            throw new IOException("cannot move the APK into " + r.dir);
-        }
-        // Android 14+ refuses to load dex code from writable files.
-        apk.setReadOnly();
-
-        r.packageName = info.packageName;
-        r.versionName = info.versionName;
-        ApplicationInfo ai = applicationInfo(info, r);
-        r.targetSdk = ai.targetSdkVersion;
-        extractLibraries(apk, r.libDir(), r.abis);
-        r.dataDir().mkdirs();
-
-        CharSequence label = ai.loadLabel(pm);
-        r.label = label != null && label.length() > 0 ? label.toString() : r.packageName;
-        saveIcon(ai.loadIcon(pm), r.iconFile());
+        File plugins = root(c);
+        if (!plugins.isDirectory() && !plugins.mkdirs()) throw new IOException("cannot create " + plugins);
+        File target = new File(plugins, info.packageName);
+        File staging = new File(plugins, "." + info.packageName + ".importing");
+        PluginFiles.deleteRecursive(staging);
+        if (!staging.mkdirs()) throw new IOException("cannot create " + staging);
         try {
-            r.launcherActivity = ManifestReader.findLauncherActivity(pm.getResourcesForApplication(ai), r.packageName);
-        } catch (PackageManager.NameNotFoundException e) {
-            r.launcherActivity = null;
+            PluginRecord r = new PluginRecord(staging);
+            File apk = r.apk();
+            try (InputStream in = new java.io.FileInputStream(tmp)) {
+                PluginFiles.copyAtomic(in, apk);
+            }
+            // Android 14+ refuses to load dex code from writable files.
+            if (!apk.setReadOnly()) throw new IOException("cannot make APK read-only: " + apk);
+
+            r.packageName = info.packageName;
+            r.versionName = info.versionName;
+            ApplicationInfo ai = applicationInfo(info, r);
+            r.targetSdk = ai.targetSdkVersion;
+            r.abis.addAll(PluginFiles.scanAbis(apk));
+            r.selectedAbi = PluginFiles.selectAbi(r.abis);
+            if (r.selectedAbi != null) {
+                final boolean translated = r.isTranslated();
+                if (translated) RuntimeBundle.install(c);
+                PluginFiles.extractLibraries(apk, r.libDir(), r.selectedAbi, library -> {
+                    if (!translated) return;
+                    String result = ZBridge.fixGuestLibrary(library.getPath());
+                    if (result == null || result.startsWith("skipped:")) {
+                        throw new IOException("cannot prepare " + library.getName() + ": " + result);
+                    }
+                });
+            } else if (!r.libDir().mkdirs()) {
+                throw new IOException("cannot create " + r.libDir());
+            }
+            CharSequence label = ai.loadLabel(pm);
+            r.label = label != null && label.length() > 0 ? label.toString() : r.packageName;
+            saveIcon(ai.loadIcon(pm), r.iconFile());
+            try {
+                r.launcherActivity = ManifestReader.findLauncherActivity(pm.getResourcesForApplication(ai), r.packageName);
+            } catch (PackageManager.NameNotFoundException e) {
+                r.launcherActivity = null;
+            }
+            // Completion marker: never write this until extraction and all in-place fixups pass.
+            r.save();
+            PluginFiles.replaceDirectoryKeeping(staging, target, "data");
+            PluginRecord published = PluginRecord.load(target);
+            if (published == null) throw new IOException("cannot read published metadata for " + info.packageName);
+            return published;
+        } finally {
+            tmp.delete();
+            PluginFiles.deleteRecursive(staging);
         }
-        r.save();
-        return r;
     }
 
     static void delete(PluginRecord r) {
-        deleteRecursive(r.dir);
-    }
-
-    /** Records every lib/<abi>/ directory and extracts lib/arm64-v8a/*.so (Phase 0 runs arm64 only). */
-    private static void extractLibraries(File apk, File libDir, Set<String> abis) throws IOException {
-        deleteRecursive(libDir);
-        if (!libDir.mkdirs()) throw new IOException("cannot create " + libDir);
-        try (ZipFile zip = new ZipFile(apk)) {
-            Enumeration<? extends ZipEntry> entries = zip.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry e = entries.nextElement();
-                String[] parts = e.getName().split("/");
-                if (parts.length != 3 || !parts[0].equals("lib") || e.isDirectory()) continue;
-                abis.add(parts[1]);
-                if (!parts[1].equals(PluginRecord.ABI_ARM64) || !parts[2].endsWith(".so")) continue;
-                try (InputStream in = zip.getInputStream(e)) {
-                    copy(in, new File(libDir, parts[2]));
-                }
-            }
-        }
+        PluginFiles.deleteRecursive(r.dir);
     }
 
     private static void saveIcon(Drawable d, File out) {
@@ -153,11 +154,4 @@ final class PluginStore {
         }
     }
 
-    static void deleteRecursive(File f) {
-        File[] children = f.listFiles();
-        if (children != null) {
-            for (File child : children) deleteRecursive(child);
-        }
-        f.delete();
-    }
 }

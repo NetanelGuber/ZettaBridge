@@ -16,6 +16,8 @@ import java.util.TreeSet;
 /** One imported app: filesDir/plugins/<package>/{base.apk, lib/, data/, icon.png, meta.properties}. */
 final class PluginRecord {
     static final String ABI_ARM64 = "arm64-v8a";
+    static final String ABI_ARM32_V7A = "armeabi-v7a";
+    static final String ABI_ARM32 = "armeabi";
 
     final File dir;
     String packageName;
@@ -23,6 +25,8 @@ final class PluginRecord {
     String launcherActivity;
     String versionName;
     int targetSdk;
+    /** ABI extracted into lib/, or null for Java-only/unsupported/legacy imports. */
+    String selectedAbi;
     /** Every ABI directory found under lib/ in the APK. */
     final Set<String> abis = new TreeSet<>();
 
@@ -45,6 +49,10 @@ final class PluginRecord {
         return new File(dir, "data");
     }
 
+    File proxyDir() {
+        return new File(dir, "proxy");
+    }
+
     File iconFile() {
         return new File(dir, "icon.png");
     }
@@ -54,18 +62,23 @@ final class PluginRecord {
     }
 
     boolean has32Bit() {
-        return abis.contains("armeabi") || abis.contains("armeabi-v7a");
+        return abis.contains(ABI_ARM32) || abis.contains(ABI_ARM32_V7A);
+    }
+
+    boolean isTranslated() {
+        return ABI_ARM32.equals(selectedAbi) || ABI_ARM32_V7A.equals(selectedAbi);
     }
 
     boolean isLaunchable() {
-        return launcherActivity != null && (abis.isEmpty() || hasArm64());
+        return launcherActivity != null && (abis.isEmpty() || selectedAbi != null);
     }
 
     String status() {
         if (launcherActivity == null) return "no launcher activity";
-        if (hasArm64()) return "arm64: ready";
-        if (has32Bit()) return "32-bit: needs translator (not yet)";
+        if (ABI_ARM64.equals(selectedAbi)) return "arm64: ready";
+        if (isTranslated()) return "32-bit " + selectedAbi + ": ready";
         if (abis.isEmpty()) return "Java only: ready";
+        if (has32Bit()) return "32-bit: reimport required";
         return "unsupported ABIs: " + abis;
     }
 
@@ -85,6 +98,7 @@ final class PluginRecord {
         if (versionName != null) p.setProperty("version", versionName);
         p.setProperty("targetSdk", Integer.toString(targetSdk));
         p.setProperty("abis", String.join(",", abis));
+        if (selectedAbi != null) p.setProperty("selectedAbi", selectedAbi);
         try (OutputStream out = new FileOutputStream(new File(dir, "meta.properties"))) {
             p.store(out, "ZettaBridge plugin");
         }
@@ -113,6 +127,10 @@ final class PluginRecord {
         for (String abi : p.getProperty("abis", "").split(",")) {
             if (!abi.isEmpty()) r.abis.add(abi);
         }
+        r.selectedAbi = p.getProperty("selectedAbi");
+        // Phase 0 arm64 imports are already complete. Old 32-bit records must be reimported so
+        // every library passes through the non-atomic ELF fixer before metadata says ready.
+        if (r.selectedAbi == null && r.abis.contains(ABI_ARM64)) r.selectedAbi = ABI_ARM64;
         return r;
     }
 }

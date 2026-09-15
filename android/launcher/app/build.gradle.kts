@@ -1,4 +1,4 @@
-// ZettaBridge launcher. Phase 0: runs arm64 APKs as plugins in the :guest process (no translation).
+// ZettaBridge launcher. Generated native/runtime inputs come only from build/launcher.
 // Plain Java, UI built in code, no AndroidX.
 plugins {
     id("com.android.application")
@@ -23,6 +23,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    sourceSets.getByName("main") {
+        assets.srcDir(rootProject.file("../../build/launcher/assets"))
+        jniLibs.srcDir(rootProject.file("../../build/launcher/jniLibs"))
     }
 }
 

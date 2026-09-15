@@ -4,8 +4,12 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
+
+import com.zettabridge.core.ZBridge;
 
 /**
  * Entry point of a plugin (library tap or pinned shortcut), running in :guest. Loads the plugin
@@ -30,9 +34,23 @@ public class GuestLaunchActivity extends Activity {
         try {
             launch(packageName);
         } catch (Throwable t) {
-            Diagnostics.report(this, "cannot launch " + packageName, t, true);
-            Toast.makeText(this, "Cannot launch " + packageName + ": " + t + "\nFull error copied to the clipboard",
+            String bridgeError = null;
+            try {
+                bridgeError = ZBridge.lastLoadError();
+            } catch (Throwable ignored) {
+                // Preserve the original launch failure if the bridge itself cannot be queried.
+            }
+            Throwable report = bridgeError != null ? new IllegalStateException(bridgeError, t) : t;
+            Diagnostics.report(this, "cannot launch " + packageName, report, true);
+            String detail = bridgeError != null ? bridgeError : t.toString();
+            Toast.makeText(this, "Cannot launch " + packageName + ": " + detail
+                            + "\nFull error copied to the clipboard",
                     Toast.LENGTH_LONG).show();
+            if (bridgeError != null) {
+                // A failed proxy path and the process-lifetime guest runtime cannot be retried.
+                new Handler(Looper.getMainLooper()).postDelayed(
+                        () -> android.os.Process.killProcess(android.os.Process.myPid()), 2000);
+            }
         }
         finish();
     }

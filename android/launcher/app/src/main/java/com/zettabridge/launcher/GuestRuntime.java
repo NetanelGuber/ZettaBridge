@@ -14,6 +14,7 @@ import android.view.Window;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -42,6 +43,12 @@ final class GuestRuntime {
 
     void install(Application app) {
         host = app;
+        try {
+            RuntimeBundle.install(app);
+        } catch (IOException e) {
+            Diagnostics.report(app, "cannot install the ZettaBridge runtime bundle", e, false);
+            return;
+        }
         HiddenApi.exemptAll();
         try {
             Class<?> activityThread = Class.forName("android.app.ActivityThread");
