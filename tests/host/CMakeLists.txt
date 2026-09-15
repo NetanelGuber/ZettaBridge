@@ -15,6 +15,10 @@ foreach(test_name ${ZB_HOST_TESTS})
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
 
+# The committed tools/gen_jni.py outputs match jni.h and the generator.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME gen_jni_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gen_jni.py --check)
+
 # Needs build/guest/hello_static from tools/build_guest.sh.
 add_executable(elf_loader_test elf_loader_test.cpp)
 target_link_libraries(elf_loader_test PRIVATE zbcore)

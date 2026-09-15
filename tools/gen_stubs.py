@@ -6,9 +6,10 @@ Every exported function is two ARM-mode instructions:
     bx  lr
 The svc immediate identifies the host call; arguments stay in r0-r3 and on the guest
 stack exactly as the caller placed them (AAPCS softfp), so the host handler can read
-them. Indices 0xFE00-0xFEFF are reserved for the library runtime
+them. Indices 0xFB00-0xFCFF are reserved for the JNI bridge
+(core/include/zb/jni_protocol.h), 0xFE00-0xFEFF for the library runtime
 (core/include/zb/library_protocol.h) and 0xFFFF for returning from host->guest calls, so
-generated indices must stay below 0xFE00.
+generated indices must stay below 0xFB00.
 
 Outputs (committed):
   guest/stubs/gen/<lib>.S        one assembly file per stub library
@@ -25,8 +26,8 @@ INCLUDE = os.path.join(NDK, "toolchains", "llvm", "prebuilt", NDK_HOST, "sysroot
 
 HOST_CALL_BASE = 0x5A0000
 HOST_RETURN_INDEX = 0xFFFF
-# ZB_RUNTIME_HOST_CALL_FIRST..LAST in core/include/zb/library_protocol.h.
-RUNTIME_HOST_CALL_FIRST = 0xFE00
+# ZB_JNI_SLOT_STUB_FIRST in core/include/zb/jni_protocol.h: the first index above the stubs.
+RESERVED_HOST_CALL_FIRST = 0xFB00
 
 
 def gles2_names():
@@ -71,8 +72,8 @@ def main():
             "",
         ]
         for name in names:
-            if index >= RUNTIME_HOST_CALL_FIRST:
-                sys.exit("too many host calls: index 0x%x reaches the runtime range" % index)
+            if index >= RESERVED_HOST_CALL_FIRST:
+                sys.exit("too many host calls: index 0x%x reaches the reserved range" % index)
             lines += [
                 ".global %s" % name,
                 ".type %s, %%function" % name,
