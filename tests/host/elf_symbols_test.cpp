@@ -1,6 +1,7 @@
 #include <elf.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -214,6 +215,37 @@ void check_skips_and_errors() {
     CHECK(zb::scan_elf32_jni_exports(bad_symbol.path).status == zb::ElfSymbolStatus::Error);
 }
 
+// Untrusted APK input: many GNU hash buckets sharing one long chain must not cost
+// buckets * chain steps (about 2^36 here). Any status is fine; the scan must finish quickly.
+void check_gnu_hash_work_is_bounded() {
+    constexpr std::uint32_t kBuckets = 1U << 18;
+    constexpr std::uint32_t kChain = 1U << 18;
+    auto bytes = make_symbols(true);
+    const std::size_t words = 4 + 1 + kBuckets + kChain;
+    bytes.resize(kHashOffset + words * sizeof(std::uint32_t));
+
+    auto eh = get<Elf32_Ehdr>(bytes, 0);
+    auto load = get<Elf32_Phdr>(bytes, eh.e_phoff);
+    load.p_filesz = static_cast<std::uint32_t>(bytes.size());
+    load.p_memsz = load.p_filesz;
+    put(bytes, eh.e_phoff, load);
+
+    const std::uint32_t header[] = {kBuckets, 1, 1, 0, 0};
+    put(bytes, kHashOffset, header);
+    const std::size_t bucket_base = kHashOffset + sizeof header;
+    for (std::uint32_t i = 0; i < kBuckets; ++i) put(bytes, bucket_base + i * sizeof(std::uint32_t), std::uint32_t{1});
+    const std::size_t chain_base = bucket_base + kBuckets * sizeof(std::uint32_t);
+    for (std::uint32_t i = 0; i < kChain; ++i) {
+        put(bytes, chain_base + i * sizeof(std::uint32_t), std::uint32_t{i + 1 == kChain ? 1U : 0U});
+    }
+
+    TempFile file(bytes);
+    const auto begin = std::chrono::steady_clock::now();
+    (void)zb::scan_elf32_jni_exports(file.path);
+    const auto elapsed = std::chrono::steady_clock::now() - begin;
+    CHECK(elapsed < std::chrono::seconds(5));
+}
+
 }  // namespace
 
 int main() {
@@ -221,6 +253,7 @@ int main() {
     check_scan(true);
     check_duplicates();
     check_skips_and_errors();
+    check_gnu_hash_work_is_bounded();
     std::puts("elf_symbols_test PASS");
     return 0;
 }

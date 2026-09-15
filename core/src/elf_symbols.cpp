@@ -142,8 +142,11 @@ bool gnu_symbol_count(const std::vector<std::uint8_t>& bytes, const FileRange& h
         return false;
     }
 
-    bool saw_symbol = false;
-    std::uint32_t maximum = 0;
+    // Validate every bucket, but walk only the chain that starts at the highest symbol index.
+    // Chains are consecutive runs of the symbol table, so that chain ends at the last symbol.
+    // Walking each bucket's chain separately would let a crafted table (many buckets sharing one
+    // long chain) cost buckets * chain steps on untrusted APK input; this is buckets + chain.
+    std::uint32_t start = 0;
     for (std::uint32_t i = 0; i < buckets; ++i) {
         std::uint32_t symbol = 0;
         if (!word_at(bytes, hash, bucket_word + i, &symbol)) {
@@ -155,24 +158,28 @@ bool gnu_symbol_count(const std::vector<std::uint8_t>& bytes, const FileRange& h
             *message = "invalid DT_GNU_HASH bucket";
             return false;
         }
-        for (;;) {
-            const std::uint64_t chain_index = chain_word + (symbol - symbol_offset);
-            std::uint32_t chain = 0;
-            if (!word_at(bytes, hash, chain_index, &chain)) {
-                *message = "unterminated DT_GNU_HASH chain";
-                return false;
-            }
-            saw_symbol = true;
-            maximum = std::max(maximum, symbol);
-            if ((chain & 1U) != 0) break;
-            if (++symbol >= kMaxSymbols) {
-                *message = "DT_GNU_HASH chain exceeds the symbol limit";
-                return false;
-            }
+        start = std::max(start, symbol);
+    }
+    if (start == 0) {
+        *count = symbol_offset;
+        return true;
+    }
+    for (std::uint32_t symbol = start;;) {
+        const std::uint64_t chain_index = chain_word + (symbol - symbol_offset);
+        std::uint32_t chain = 0;
+        if (!word_at(bytes, hash, chain_index, &chain)) {
+            *message = "unterminated DT_GNU_HASH chain";
+            return false;
+        }
+        if ((chain & 1U) != 0) {
+            *count = symbol + 1;
+            return true;
+        }
+        if (++symbol >= kMaxSymbols) {
+            *message = "DT_GNU_HASH chain exceeds the symbol limit";
+            return false;
         }
     }
-    *count = saw_symbol ? maximum + 1 : symbol_offset;
-    return true;
 }
 
 }  // namespace
