@@ -278,7 +278,8 @@ Orange Roulette smoke launch.
 - Task 3 (real ART discovery backend): `JniEnvBackend::find_declared_natives` loads through the
   retained plugin loader, enumerates `getDeclaredMethods`, and builds exact descriptors with
   `zb/jni_descriptor.h`, which is tested on the host by `jni_descriptor_test`.
-  - Seam `zbjni_reflection_compile_test` and `zbridge` link with `--no-undefined`.
+  - Seam `zbjni_reflection_compile_test` links with `--no-undefined`; `zbridge` links in the
+    Android build.
   - `ReflectionSmoke.java` compiles against android-36.
   - Real ART behavior is checked in Task 7.
 - Task 4 (standalone arm64 proxy): `core/android/zbproxy.c` -> `libzbproxy.so` (5.8 KB, NEEDED
@@ -335,10 +336,20 @@ Orange Roulette smoke launch.
 - **Review of Tasks 3-4:** `docs/superpowers/reviews/2026-09-15-phase4d-tasks3-4-review.md` (`61c2361`). Fix its two Important items before Task 8:
   1. `getDeclaredMethods` can fail a whole library: bind long-form exports through `GetMethodID`, and skip-and-log short-form ones.
   2. Add executable host tests for `jni_env_backend.cpp` with a fake reflective `JNIEnv`.
-- **Task 5 has not been reviewed yet;** run a review first.
+- **Task 5 review passed:**
+  `docs/superpowers/reviews/2026-09-15-phase4d-task5-review.md`. No Critical or Important
+  findings. Focused tests passed 3/3 and `proxy_runtime_test` passed 50/50 repeated runs.
 - **Task 6** (launcher extraction, `PluginClassLoader`, runtime bundle) must:
   - call `ZBridge.activatePlugin` before plugin code runs;
   - return proxy paths shaped `plugins/<pkg>/proxy/lib<name>.so`;
   - show `lastLoadError()` through `Diagnostics`;
   - mark import complete only after `fixGuestLibrary` succeeds (ELF fixup writes are not atomic).
 - **Any load failure needs a `:guest` process restart.**
+
+## Codex continuation (2026-09-15)
+
+- Work continues on local branch `codex/phase4d-launcher`, based on `3085daa` from
+  `phase1-zbrun`. Do not push without the user's agreement.
+- Task 5 review is complete and recorded as above. Next is Phase 4d Task 6.
+- Commit every completed task locally and update this file in the same task commit so a fresh
+  Claude or Codex session can resume from the latest `NEXT` section.
