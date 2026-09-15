@@ -272,3 +272,12 @@ Still open, non-blocking Phase 4c review minors:
 
 Next: write the Phase 4d plan, then implement proxy loading, ART binding, T7 and the
 Orange Roulette smoke launch.
+
+## Phase 4d Task 3 done (2026-09-15)
+
+- Task 3 (real ART discovery backend): `JniEnvBackend::find_declared_natives` loads through the
+  retained plugin loader, enumerates `getDeclaredMethods`, and builds exact descriptors with
+  `zb/jni_descriptor.h`, which is tested on the host by `jni_descriptor_test`.
+  - Seam `zbjni_reflection_compile_test` and `zbridge` link with `--no-undefined`.
+  - `ReflectionSmoke.java` compiles against android-36.
+  - Real ART behavior is checked in Task 7.

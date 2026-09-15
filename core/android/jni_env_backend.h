@@ -25,6 +25,8 @@ public:
     Id from_reflected_field(Env env, Ref field) override;
     Ref to_reflected_method(Env env, Ref cls, Id method, bool is_static) override;
     Ref to_reflected_field(Env env, Ref cls, Id field, bool is_static) override;
+    NativeLookupStatus find_declared_natives(Env env, const char* cls, const char* name, Ref& class_ref,
+                                             std::vector<DeclaredNativeMethod>& methods) override;
     Ref alloc_object(Env env, Ref cls) override;
     Ref get_object_class(Env env, Ref obj) override;
     bool is_instance_of(Env env, Ref obj, Ref cls) override;
@@ -75,23 +77,54 @@ public:
     Env attach_current_thread(bool daemon, const char* name, Ref group) override;
     std::int32_t detach_current_thread() override;
 
+    // Retains the one active plugin loader as a global reference. A different loader cannot
+    // replace it in the process-lifetime backend.
+    bool set_class_loader(JNIEnv* env, jobject class_loader);
+
 private:
-    // Reflection ids, looked up once (method ids of boot classes stay valid for the process).
+    // Reflection classes and ids, looked up once. Classes are global references to boot classes,
+    // which are never unloaded, so they and their method ids stay valid for the process.
     struct Reflection {
-        jmethodID class_get_name = nullptr;          // Class.getName()
-        jmethodID class_is_primitive = nullptr;      // Class.isPrimitive()
-        jmethodID method_get_return_type = nullptr;  // Method.getReturnType()
-        jmethodID executable_get_parameter_types = nullptr;
-        jclass constructor_class = nullptr;          // global reference
+        jclass class_class = nullptr;               // java.lang.Class
+        jclass class_loader_class = nullptr;        // java.lang.ClassLoader
+        jclass method_class = nullptr;              // java.lang.reflect.Method
+        jclass executable_class = nullptr;          // java.lang.reflect.Executable
+        jclass modifier_class = nullptr;            // java.lang.reflect.Modifier
+        jclass constructor_class = nullptr;         // java.lang.reflect.Constructor
+        jclass class_not_found_class = nullptr;     // java.lang.ClassNotFoundException
+        jclass no_class_def_found_class = nullptr;  // java.lang.NoClassDefFoundError
+        jmethodID class_get_name = nullptr;               // Class.getName()
+        jmethodID class_is_primitive = nullptr;           // Class.isPrimitive()
+        jmethodID class_get_declared_methods = nullptr;   // Class.getDeclaredMethods()
+        jmethodID class_loader_load_class = nullptr;      // ClassLoader.loadClass(String)
+        jmethodID method_get_name = nullptr;              // Method.getName()
+        jmethodID method_get_modifiers = nullptr;         // Method.getModifiers()
+        jmethodID method_get_return_type = nullptr;       // Method.getReturnType()
+        jmethodID executable_get_parameter_types = nullptr;  // Executable.getParameterTypes()
+        jmethodID modifier_is_native = nullptr;           // static Modifier.isNative(int)
+        jmethodID modifier_is_static = nullptr;           // static Modifier.isStatic(int)
     };
+    // nullptr when the lookup failed or an exception is pending (the lookup is never consumed then).
     const Reflection* reflection(JNIEnv* env);
     // Descriptor letter of a java.lang.Class ('L' for references and arrays); 0 on failure.
     char type_letter(JNIEnv* env, jobject type);
+    // Exact JNI descriptor of a java.lang.Class; false on failure (an exception may be pending).
+    bool type_descriptor(JNIEnv* env, const Reflection& r, jobject type, std::string& out);
+    // Appends `method` when it is native and named `name`. False on failure. Local references it
+    // leaves behind belong to the caller's per-method local frame.
+    bool scan_method(JNIEnv* env, const Reflection& r, jobject method, const char* name,
+                     std::vector<DeclaredNativeMethod>& methods);
+    // Called with the loadClass exception pending: clears it and reports MissingClass only for
+    // ClassNotFoundException / NoClassDefFoundError, otherwise rethrows it and reports Error.
+    NativeLookupStatus class_load_failure(JNIEnv* env, const Reflection& r);
+    jobject class_loader();
 
     JavaVM* vm_;
     std::once_flag reflection_once_;
     Reflection reflection_;
     bool reflection_ok_ = false;
+    std::mutex class_loader_mutex_;
+    jobject class_loader_ = nullptr;  // global reference, retained for the process
 };
 
 }  // namespace zb

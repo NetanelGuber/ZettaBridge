@@ -6,6 +6,7 @@ add_library(zbcore STATIC
     src/guest_memory.cpp
     src/guest_thread.cpp
     src/initial_stack.cpp
+    src/jni/descriptor.cpp
     src/jni/handles.cpp
     src/jni/host_jni.cpp
     src/jni/host_jni_data.cpp
@@ -43,4 +44,15 @@ if (ANDROID)
     # --exclude-libs keeps the statically linked libc++ and friends from being exported, so
     # they cannot clash with the app's own libc++_shared.so in the same process.
     target_link_options(zbridge PRIVATE -Wl,--gc-sections -Wl,--strip-all -Wl,--exclude-libs,ALL)
+
+    # Link-only ART reflection seam; it is never packaged or run. Keeping the calls in one
+    # exported function makes missing JniEnvBackend overrides fail the Android build.
+    add_library(zbjni_reflection_compile_test SHARED
+        android/jni_reflection_compile_test.cpp
+        android/jni_env_backend.cpp
+    )
+    # zbcore supplies the zb/ headers and the portable descriptor helpers.
+    target_link_libraries(zbjni_reflection_compile_test PRIVATE zbcore)
+    target_compile_options(zbjni_reflection_compile_test PRIVATE -Wall -Wextra)
+    target_link_options(zbjni_reflection_compile_test PRIVATE -Wl,--no-undefined)
 endif()

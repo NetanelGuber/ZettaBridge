@@ -4,6 +4,7 @@ set(ZB_HOST_TESTS
     elf_symbols_test
     guest_memory_test
     jni_abi_test
+    jni_descriptor_test
     jni_handles_test
     jni_mangle_test
     jni_shorty_test

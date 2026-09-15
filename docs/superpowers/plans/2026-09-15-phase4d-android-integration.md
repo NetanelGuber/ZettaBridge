@@ -76,10 +76,10 @@
 
 **Produces:** exact descriptor construction and declared-native enumeration through the active plugin class loader on real ART.
 
-- [ ] Add a Java compile fixture with primitive, reference, array, overloaded, static, and instance native methods; first make an Android-side compile/test seam fail for the absent enumeration API.
-- [ ] Cache required `ClassLoader`, `Class`, `Method`, `Modifier`, and `Executable` ids/global refs; build exact descriptors (`.` to `/`, arrays preserved) and filter `Modifier.isNative` plus method name.
-- [ ] Keep pending exceptions for real errors, but clear `ClassNotFoundException` only for the spec's skip case; delete every temporary local reference.
-- [ ] Compile with `javac` against android-36 and link Android `zbridge`; commit `android: discover plugin native methods through ART`.
+- [x] Add a Java compile fixture with primitive, reference, array, overloaded, static, and instance native methods; first make an Android-side compile/test seam fail for the absent enumeration API.
+- [x] Cache required `ClassLoader`, `Class`, `Method`, `Modifier`, and `Executable` ids/global refs; build exact descriptors (`.` to `/`, arrays preserved) and filter `Modifier.isNative` plus method name.
+- [x] Keep pending exceptions for real errors, but clear `ClassNotFoundException` only for the spec's skip case; delete every temporary local reference.
+- [x] Compile with `javac` against android-36 and link Android `zbridge`; commit `android: discover plugin native methods through ART`.
 
 ### Task 4: Standalone arm64 proxy
 

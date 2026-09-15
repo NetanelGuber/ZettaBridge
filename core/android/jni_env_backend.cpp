@@ -3,7 +3,12 @@
 
 #include <cstdint>
 #include <cstring>
+#include <optional>
+#include <string>
+#include <utility>
 #include <vector>
+
+#include "zb/jni_descriptor.h"
 
 namespace zb {
 
@@ -44,30 +49,67 @@ JniBackend::Id I(void* id) {
 JniEnvBackend::JniEnvBackend(JavaVM* vm) : vm_(vm) {}
 
 const JniEnvBackend::Reflection* JniEnvBackend::reflection(JNIEnv* env) {
+    // Never run the one-time lookup with an exception pending (CheckJNI forbids FindClass then, and
+    // a failed lookup would disable reflection for the whole process).
+    if (env->ExceptionCheck()) return nullptr;
     std::call_once(reflection_once_, [&] {
-        jclass class_class = env->FindClass("java/lang/Class");
-        jclass method_class = env->FindClass("java/lang/reflect/Method");
-        jclass executable_class = env->FindClass("java/lang/reflect/Executable");
-        jclass constructor_class = env->FindClass("java/lang/reflect/Constructor");
-        if (class_class == nullptr || method_class == nullptr || executable_class == nullptr ||
-            constructor_class == nullptr) {
+        Reflection r;
+        std::vector<jobject> globals;
+        bool ok = true;
+        // Each step runs only while no earlier step failed, so no JNI call sees a pending exception.
+        const auto global_class = [&](const char* name) -> jclass {
+            if (!ok) return nullptr;
+            jclass local = env->FindClass(name);
+            if (local == nullptr) {
+                ok = false;
+                return nullptr;
+            }
+            jobject global = env->NewGlobalRef(local);
+            env->DeleteLocalRef(local);
+            if (global == nullptr) {
+                ok = false;
+                return nullptr;
+            }
+            globals.push_back(global);
+            return static_cast<jclass>(global);
+        };
+        const auto method_id = [&](jclass cls, const char* name, const char* signature, bool is_static) {
+            if (!ok) return static_cast<jmethodID>(nullptr);
+            const jmethodID id =
+                is_static ? env->GetStaticMethodID(cls, name, signature) : env->GetMethodID(cls, name, signature);
+            if (id == nullptr) ok = false;
+            return id;
+        };
+        r.class_class = global_class("java/lang/Class");
+        r.class_loader_class = global_class("java/lang/ClassLoader");
+        r.method_class = global_class("java/lang/reflect/Method");
+        r.executable_class = global_class("java/lang/reflect/Executable");
+        r.modifier_class = global_class("java/lang/reflect/Modifier");
+        r.constructor_class = global_class("java/lang/reflect/Constructor");
+        r.class_not_found_class = global_class("java/lang/ClassNotFoundException");
+        r.no_class_def_found_class = global_class("java/lang/NoClassDefFoundError");
+        r.class_get_name = method_id(r.class_class, "getName", "()Ljava/lang/String;", false);
+        r.class_is_primitive = method_id(r.class_class, "isPrimitive", "()Z", false);
+        r.class_get_declared_methods =
+            method_id(r.class_class, "getDeclaredMethods", "()[Ljava/lang/reflect/Method;", false);
+        r.class_loader_load_class =
+            method_id(r.class_loader_class, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", false);
+        r.method_get_name = method_id(r.method_class, "getName", "()Ljava/lang/String;", false);
+        r.method_get_modifiers = method_id(r.method_class, "getModifiers", "()I", false);
+        r.method_get_return_type = method_id(r.method_class, "getReturnType", "()Ljava/lang/Class;", false);
+        r.executable_get_parameter_types =
+            method_id(r.executable_class, "getParameterTypes", "()[Ljava/lang/Class;", false);
+        r.modifier_is_native = method_id(r.modifier_class, "isNative", "(I)Z", true);
+        r.modifier_is_static = method_id(r.modifier_class, "isStatic", "(I)Z", true);
+        if (!ok) {
+            // Boot classes always resolve; treat a failure as "no reflection" without leaving
+            // an exception behind for an unrelated caller.
             env->ExceptionClear();
+            for (jobject global : globals) env->DeleteGlobalRef(global);
             return;
         }
-        reflection_.class_get_name = env->GetMethodID(class_class, "getName", "()Ljava/lang/String;");
-        reflection_.class_is_primitive = env->GetMethodID(class_class, "isPrimitive", "()Z");
-        reflection_.method_get_return_type = env->GetMethodID(method_class, "getReturnType", "()Ljava/lang/Class;");
-        reflection_.executable_get_parameter_types =
-            env->GetMethodID(executable_class, "getParameterTypes", "()[Ljava/lang/Class;");
-        reflection_.constructor_class = static_cast<jclass>(env->NewGlobalRef(constructor_class));
-        reflection_ok_ = reflection_.class_get_name != nullptr && reflection_.class_is_primitive != nullptr &&
-                         reflection_.method_get_return_type != nullptr &&
-                         reflection_.executable_get_parameter_types != nullptr;
-        if (!reflection_ok_) env->ExceptionClear();
-        env->DeleteLocalRef(class_class);
-        env->DeleteLocalRef(method_class);
-        env->DeleteLocalRef(executable_class);
-        env->DeleteLocalRef(constructor_class);
+        reflection_ = r;
+        reflection_ok_ = true;
     });
     return reflection_ok_ ? &reflection_ : nullptr;
 }
@@ -75,22 +117,149 @@ const JniEnvBackend::Reflection* JniEnvBackend::reflection(JNIEnv* env) {
 char JniEnvBackend::type_letter(JNIEnv* env, jobject type) {
     const Reflection* r = reflection(env);
     if (r == nullptr || type == nullptr) return 0;
-    if (!env->CallBooleanMethod(type, r->class_is_primitive)) return env->ExceptionCheck() ? 0 : 'L';
-    auto name = static_cast<jstring>(env->CallObjectMethod(type, r->class_get_name));
-    if (name == nullptr) return 0;
-    const char* chars = env->GetStringUTFChars(name, nullptr);
-    const std::string text = chars != nullptr ? chars : "";
-    if (chars != nullptr) env->ReleaseStringUTFChars(name, chars);
-    env->DeleteLocalRef(name);
-    static const struct {
-        const char* name;
-        char letter;
-    } kPrimitives[] = {{"boolean", 'Z'}, {"byte", 'B'}, {"char", 'C'}, {"short", 'S'}, {"int", 'I'},
-                       {"long", 'J'},    {"float", 'F'}, {"double", 'D'}, {"void", 'V'}};
-    for (const auto& primitive : kPrimitives) {
-        if (text == primitive.name) return primitive.letter;
+    std::string descriptor;
+    if (!type_descriptor(env, *r, type, descriptor)) return 0;
+    return descriptor[0] == '[' ? 'L' : descriptor[0];
+}
+
+bool JniEnvBackend::type_descriptor(JNIEnv* env, const Reflection& r, jobject type, std::string& out) {
+    const jboolean primitive = env->CallBooleanMethod(type, r.class_is_primitive);
+    if (env->ExceptionCheck()) return false;
+    auto type_name = static_cast<jstring>(env->CallObjectMethod(type, r.class_get_name));
+    if (env->ExceptionCheck() || type_name == nullptr) return false;
+    const char* chars = env->GetStringUTFChars(type_name, nullptr);
+    if (chars == nullptr) {  // OutOfMemoryError pending
+        env->DeleteLocalRef(type_name);
+        return false;
     }
-    return 0;
+    std::optional<std::string> descriptor = jni_type_descriptor(chars, primitive != JNI_FALSE);
+    env->ReleaseStringUTFChars(type_name, chars);
+    env->DeleteLocalRef(type_name);
+    if (!descriptor) return false;
+    out = std::move(*descriptor);
+    return true;
+}
+
+bool JniEnvBackend::scan_method(JNIEnv* env, const Reflection& r, jobject method, const char* name,
+                                std::vector<DeclaredNativeMethod>& methods) {
+    // Cheap filters first: modifiers need no allocation, and only matching natives resolve their
+    // parameter and return types.
+    const jint modifiers = env->CallIntMethod(method, r.method_get_modifiers);
+    if (env->ExceptionCheck()) return false;
+    const jboolean is_native = env->CallStaticBooleanMethod(r.modifier_class, r.modifier_is_native, modifiers);
+    if (env->ExceptionCheck()) return false;
+    if (is_native == JNI_FALSE) return true;
+
+    auto method_name = static_cast<jstring>(env->CallObjectMethod(method, r.method_get_name));
+    if (env->ExceptionCheck() || method_name == nullptr) return false;
+    const char* chars = env->GetStringUTFChars(method_name, nullptr);
+    if (chars == nullptr) return false;  // OutOfMemoryError pending
+    const bool same_name = std::strcmp(chars, name) == 0;
+    env->ReleaseStringUTFChars(method_name, chars);
+    env->DeleteLocalRef(method_name);
+    if (!same_name) return true;
+
+    const jboolean is_static = env->CallStaticBooleanMethod(r.modifier_class, r.modifier_is_static, modifiers);
+    if (env->ExceptionCheck()) return false;
+    auto parameters = static_cast<jobjectArray>(env->CallObjectMethod(method, r.executable_get_parameter_types));
+    if (env->ExceptionCheck() || parameters == nullptr) return false;
+    const jsize count = env->GetArrayLength(parameters);
+    std::vector<std::string> parameter_descriptors;
+    parameter_descriptors.reserve(static_cast<std::size_t>(count));
+    for (jsize i = 0; i < count; ++i) {
+        jobject type = env->GetObjectArrayElement(parameters, i);
+        if (env->ExceptionCheck() || type == nullptr) return false;
+        std::string descriptor;
+        const bool ok = type_descriptor(env, r, type, descriptor);
+        env->DeleteLocalRef(type);
+        if (!ok) return false;
+        parameter_descriptors.push_back(std::move(descriptor));
+    }
+    env->DeleteLocalRef(parameters);
+
+    jobject return_type = env->CallObjectMethod(method, r.method_get_return_type);
+    if (env->ExceptionCheck() || return_type == nullptr) return false;
+    std::string result;
+    const bool ok = type_descriptor(env, r, return_type, result);
+    env->DeleteLocalRef(return_type);
+    if (!ok) return false;
+    std::optional<std::string> signature = jni_method_descriptor(parameter_descriptors, result);
+    if (!signature) return false;
+    methods.push_back({std::move(*signature), is_static != JNI_FALSE});
+    return true;
+}
+
+NativeLookupStatus JniEnvBackend::class_load_failure(JNIEnv* env, const Reflection& r) {
+    // IsInstanceOf is not allowed with an exception pending: take the throwable out first.
+    jthrowable thrown = env->ExceptionOccurred();
+    env->ExceptionClear();
+    if (thrown == nullptr) return NativeLookupStatus::Error;
+    const bool missing = env->IsInstanceOf(thrown, r.class_not_found_class) != JNI_FALSE ||
+                         env->IsInstanceOf(thrown, r.no_class_def_found_class) != JNI_FALSE;
+    if (!missing) env->Throw(thrown);
+    env->DeleteLocalRef(thrown);
+    return missing ? NativeLookupStatus::MissingClass : NativeLookupStatus::Error;
+}
+
+jobject JniEnvBackend::class_loader() {
+    std::lock_guard<std::mutex> lock(class_loader_mutex_);
+    return class_loader_;
+}
+
+bool JniEnvBackend::set_class_loader(JNIEnv* env, jobject class_loader) {
+    if (env == nullptr || class_loader == nullptr) return false;
+    const Reflection* r = reflection(env);  // nullptr with an exception pending
+    if (r == nullptr) return false;
+    if (env->IsInstanceOf(class_loader, r->class_loader_class) == JNI_FALSE) return false;
+    std::lock_guard<std::mutex> lock(class_loader_mutex_);
+    if (class_loader_ != nullptr) return env->IsSameObject(class_loader_, class_loader) != JNI_FALSE;
+    jobject global = env->NewGlobalRef(class_loader);
+    if (global == nullptr) return false;  // OutOfMemoryError pending
+    class_loader_ = global;
+    return true;
+}
+
+// ClassLoader.loadClass(String) on the retained plugin loader, not FindClass: FindClass from a
+// proxy JNI_OnLoad or a carrier resolves through the wrong (launcher or system) loader.
+NativeLookupStatus JniEnvBackend::find_declared_natives(Env env, const char* cls, const char* name,
+                                                        Ref& class_ref,
+                                                        std::vector<DeclaredNativeMethod>& methods) {
+    class_ref = 0;
+    methods.clear();
+    JNIEnv* e = E(env);
+    if (e == nullptr || cls == nullptr || name == nullptr) return NativeLookupStatus::Error;
+    const Reflection* r = reflection(e);  // nullptr with an exception pending
+    const jobject loader = class_loader();
+    const std::optional<std::string> binary_name = jni_binary_class_name(cls);
+    if (r == nullptr || loader == nullptr || !binary_name) return NativeLookupStatus::Error;
+
+    // Outer frame: the name string, the class and the method array. Each method gets its own frame,
+    // so no local reference of the enumeration outlives its iteration.
+    if (e->PushLocalFrame(8) != JNI_OK) return NativeLookupStatus::Error;  // OutOfMemoryError pending
+    const auto fail = [&](NativeLookupStatus status) {
+        methods.clear();
+        e->PopLocalFrame(nullptr);
+        return status;
+    };
+
+    jstring java_name = e->NewStringUTF(binary_name->c_str());
+    if (java_name == nullptr) return fail(NativeLookupStatus::Error);
+    jobject found = e->CallObjectMethod(loader, r->class_loader_load_class, java_name);
+    if (e->ExceptionCheck()) return fail(class_load_failure(e, *r));
+    if (found == nullptr) return fail(NativeLookupStatus::Error);
+
+    auto declared = static_cast<jobjectArray>(e->CallObjectMethod(found, r->class_get_declared_methods));
+    if (e->ExceptionCheck() || declared == nullptr) return fail(NativeLookupStatus::Error);
+    const jsize count = e->GetArrayLength(declared);
+    for (jsize i = 0; i < count; ++i) {
+        if (e->PushLocalFrame(8) != JNI_OK) return fail(NativeLookupStatus::Error);
+        jobject method = e->GetObjectArrayElement(declared, i);
+        const bool ok = !e->ExceptionCheck() && method != nullptr && scan_method(e, *r, method, name, methods);
+        e->PopLocalFrame(nullptr);
+        if (!ok) return fail(NativeLookupStatus::Error);
+    }
+    class_ref = R(e->PopLocalFrame(found));
+    return class_ref != 0 ? NativeLookupStatus::Found : NativeLookupStatus::Error;
 }
 
 JniBackend::Ref JniEnvBackend::find_class(Env env, const char* name) {
