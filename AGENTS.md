@@ -288,6 +288,26 @@ Orange Roulette smoke launch.
     Android link and as `zbproxy_structure_test` (skipped when not built).
   - ART's `JVM_NativeLoad` clears the pending exception, so Task 5 must record failure detail itself.
 
+## Phase 4d Task 5 done (2026-09-15)
+
+- Portable state machine `zb::ProxyRuntime` + real graph `zb::GuestJniEngine` (LibraryRuntime,
+  HostJni chained before start, JniLoader) in `core/include/zb/proxy_runtime.h`; Android glue
+  `core/android/guest_jni_runtime.*` (JniEnvBackend, never destroyed) and `zbridge_jni.cpp`.
+- Java API (`com.zettabridge.core.ZBridge`, launcher copy): `activatePlugin(String pluginRoot, int
+  targetSdk, ClassLoader)` throws IllegalStateException; `onProxyLoaded(String)`; `loadError(String)`
+  and `lastLoadError()` return the stored message or null; `fixGuestLibrary(String)` returns
+  `unchanged` / `changed: ...` / `skipped: ...` or throws IOException.
+- Decisions:
+  - Class loader comes from an explicit `activatePlugin` call before plugin code runs.
+  - Memoization is keyed by the realpath of the proxy; successes and failures are both final.
+  - One plugin per process; a failed load or start needs a new `:guest` process (ART never reruns
+    `JNI_OnLoad` for a path).
+  - zbhost runs as `<targetSdk> libzbjni.so` with only
+    `LD_LIBRARY_PATH=<files>/zb/guest/lib:<files>/plugins/<pkg>/lib`.
+- Layout: `<files>/zb/{sysroot,guest/zbhost,guest/lib}`, `<files>/plugins/<pkg>/{lib,proxy}`.
+- Tests: `proxy_runtime_test` (fake engine, all eight cases) and `guest_jni_engine_test_{load,
+  preload-failure}` (real guest over MockJvm). Host 27/27, guest 9/9, Android links.
+
 ## Repository (2026-09-15)
 
 - Private GitHub repo: https://github.com/ZailoxTT/ZettaBridge (GPL-3.0, README.md plus

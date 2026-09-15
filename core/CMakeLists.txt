@@ -18,6 +18,7 @@ add_library(zbcore STATIC
     src/jni/mangle.cpp
     src/jni/native_call.cpp
     src/jni/native_thunks.cpp
+    src/jni/proxy_runtime.cpp
     src/jni/shorty.cpp
     src/jni/thunks.S
     src/library_runtime.cpp
@@ -37,7 +38,9 @@ if (ANDROID)
 
     # libzbridge.so: the translator as loaded by the launcher's :guest process (Phase 3).
     # android/jni_env_backend.cpp: the JniBackend over the real JNIEnv, used by the JNI bridge (4d).
-    add_library(zbridge SHARED src/zbridge_c_api.cpp android/zbridge_jni.cpp android/jni_env_backend.cpp)
+    # android/guest_jni_runtime.cpp: the process-lifetime runtime behind ZBridge.onProxyLoaded (4d).
+    add_library(zbridge SHARED src/zbridge_c_api.cpp android/zbridge_jni.cpp android/jni_env_backend.cpp
+        android/guest_jni_runtime.cpp)
     target_link_libraries(zbridge PRIVATE zbcore)
     set_target_properties(zbridge PROPERTIES CXX_VISIBILITY_PRESET hidden)
     target_compile_definitions(zbridge PRIVATE ZB_EXPORT_C_API)

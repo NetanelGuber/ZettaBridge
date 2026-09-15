@@ -1,9 +1,13 @@
 // JNI entry points of libzbridge.so for com.zettabridge.core.ZBridge.
 #include <jni.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "guest_jni_runtime.h"
+#include "zb/elf_fixups.h"
+#include "zb/log.h"
 #include "zb/zbridge.h"
 
 namespace {
@@ -33,6 +37,32 @@ std::vector<const char*> to_pointers(const std::vector<std::string>& strings) {
     for (const auto& s : strings) pointers.push_back(s.c_str());
     pointers.push_back(nullptr);
     return pointers;
+}
+
+// nullopt for a null string or when GetStringUTFChars failed (OutOfMemoryError pending).
+std::optional<std::string> to_string(JNIEnv* env, jstring value) {
+    if (value == nullptr) return std::nullopt;
+    const char* chars = env->GetStringUTFChars(value, nullptr);
+    if (chars == nullptr) return std::nullopt;
+    std::string out(chars);
+    env->ReleaseStringUTFChars(value, chars);
+    return out;
+}
+
+void throw_new(JNIEnv* env, const char* class_name, const std::string& message) {
+    if (env->ExceptionCheck()) return;
+    jclass cls = env->FindClass(class_name);
+    if (cls == nullptr) return;  // NoClassDefFoundError pending
+    env->ThrowNew(cls, message.c_str());
+    env->DeleteLocalRef(cls);
+}
+
+zb::JniBackend::Env to_env(JNIEnv* env) {
+    return static_cast<zb::JniBackend::Env>(reinterpret_cast<std::uintptr_t>(env));
+}
+
+jstring optional_string(JNIEnv* env, const std::optional<std::string>& value) {
+    return value ? env->NewStringUTF(value->c_str()) : nullptr;
 }
 
 }  // namespace
@@ -65,6 +95,91 @@ JNIEXPORT jint JNICALL Java_com_zettabridge_core_ZBridge_runExecutable(JNIEnv* e
 
     return zb_run_executable(sysroot != nullptr ? sysroot_path.c_str() : nullptr, static_cast<int>(args.size()),
                              arg_pointers.data(), envp != nullptr ? env_pointers.data() : nullptr);
+}
+
+// static native void activatePlugin(String pluginRoot, int targetSdk, ClassLoader classLoader)
+// Throws IllegalStateException with the reason.
+JNIEXPORT void JNICALL Java_com_zettabridge_core_ZBridge_activatePlugin(JNIEnv* env, jclass, jstring plugin_root,
+                                                                       jint target_sdk, jobject class_loader) {
+    const std::optional<std::string> root = to_string(env, plugin_root);
+    if (!root) {
+        throw_new(env, "java/lang/NullPointerException", "pluginRoot");
+        return;
+    }
+    if (target_sdk <= 0) {
+        throw_new(env, "java/lang/IllegalStateException", "invalid plugin targetSdk " + std::to_string(target_sdk));
+        return;
+    }
+    std::string error;
+    if (!zb::GuestJniRuntime::get(env).proxies().activate_plugin(
+            to_env(env), *root, static_cast<std::uint32_t>(target_sdk),
+            static_cast<zb::JniBackend::Ref>(reinterpret_cast<std::uintptr_t>(class_loader)), error)) {
+        zb::log("ZBridge.activatePlugin: %s", error.c_str());
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        throw_new(env, "java/lang/IllegalStateException", "ZettaBridge cannot activate plugin: " + error);
+    }
+}
+
+// static native int onProxyLoaded(String proxyPath), called by libzbproxy.so's JNI_OnLoad.
+// Returns the guest JNI version or throws UnsatisfiedLinkError with the full detail, which also
+// stays available through loadError/lastLoadError because ART replaces it.
+JNIEXPORT jint JNICALL Java_com_zettabridge_core_ZBridge_onProxyLoaded(JNIEnv* env, jclass, jstring proxy_path) {
+    const std::optional<std::string> path = to_string(env, proxy_path);
+    if (!path) {
+        throw_new(env, "java/lang/UnsatisfiedLinkError", "ZettaBridge: null proxy path");
+        return JNI_ERR;
+    }
+    const zb::ProxyLoadResult result = zb::GuestJniRuntime::get(env).proxies().on_proxy_loaded(to_env(env), *path);
+    if (result.ok) return result.jni_version;
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    throw_new(env, "java/lang/UnsatisfiedLinkError", result.error);
+    return JNI_ERR;
+}
+
+// static native String loadError(String proxyPath): the stored failure of that proxy, or null.
+JNIEXPORT jstring JNICALL Java_com_zettabridge_core_ZBridge_loadError(JNIEnv* env, jclass, jstring proxy_path) {
+    const std::optional<std::string> path = to_string(env, proxy_path);
+    zb::GuestJniRuntime* runtime = zb::GuestJniRuntime::peek();
+    if (!path || runtime == nullptr) return nullptr;
+    return optional_string(env, runtime->proxies().load_error(*path));
+}
+
+// static native String lastLoadError(): the most recent proxy load failure, or null.
+JNIEXPORT jstring JNICALL Java_com_zettabridge_core_ZBridge_lastLoadError(JNIEnv* env, jclass) {
+    zb::GuestJniRuntime* runtime = zb::GuestJniRuntime::peek();
+    return runtime != nullptr ? optional_string(env, runtime->proxies().last_load_error()) : nullptr;
+}
+
+// static native String fixGuestLibrary(String path) throws IOException
+// Applies the shared import fixups in place. Returns "unchanged", "changed: <c1>; <c2>" or
+// "skipped: <reason>" (not an ARM ELF32 shared library); throws IOException on a malformed file.
+JNIEXPORT jstring JNICALL Java_com_zettabridge_core_ZBridge_fixGuestLibrary(JNIEnv* env, jclass, jstring path) {
+    const std::optional<std::string> file = to_string(env, path);
+    if (!file) {
+        throw_new(env, "java/lang/NullPointerException", "path");
+        return nullptr;
+    }
+    const zb::ElfFixupReport report = zb::fix_guest_library(*file);
+    std::string summary;
+    switch (report.status) {
+    case zb::ElfFixupStatus::Unchanged:
+        summary = "unchanged";
+        break;
+    case zb::ElfFixupStatus::Changed:
+        summary = "changed: ";
+        for (std::size_t i = 0; i < report.changes.size(); ++i) {
+            if (i != 0) summary += "; ";
+            summary += report.changes[i];
+        }
+        break;
+    case zb::ElfFixupStatus::Skipped:
+        summary = "skipped: " + report.message;
+        break;
+    case zb::ElfFixupStatus::Error:
+        throw_new(env, "java/io/IOException", *file + ": " + report.message);
+        return nullptr;
+    }
+    return env->NewStringUTF(summary.c_str());
 }
 
 }  // extern "C"

@@ -9,6 +9,7 @@ set(ZB_HOST_TESTS
     jni_mangle_test
     jni_shorty_test
     native_thunk_test
+    proxy_runtime_test
     t1_blob_test
 )
 
@@ -110,6 +111,18 @@ add_test(NAME jni_loader_test COMMAND jni_loader_test
     ${CMAKE_SOURCE_DIR}/sysroot
     ${CMAKE_SOURCE_DIR}/build/guest/zbhost
     ${CMAKE_SOURCE_DIR}/build/guest/lib)
+
+# Needs tools/build_guest.sh and the extracted sysroot. Each mode needs its own process: the
+# guest runtime is process-lifetime.
+add_executable(guest_jni_engine_test guest_jni_engine_test.cpp)
+target_link_libraries(guest_jni_engine_test PRIVATE zbmockjvm)
+foreach(mode load preload-failure)
+    add_test(NAME guest_jni_engine_test_${mode} COMMAND guest_jni_engine_test
+        ${CMAKE_SOURCE_DIR}/sysroot
+        ${CMAKE_SOURCE_DIR}/build/guest/zbhost
+        ${CMAKE_SOURCE_DIR}/build/guest/lib
+        ${mode})
+endforeach()
 
 # Needs tools/build_guest.sh and the extracted sysroot.
 add_executable(thread_exit_test thread_exit_test.cpp)

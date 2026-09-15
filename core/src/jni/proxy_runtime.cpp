@@ -1,0 +1,339 @@
+#include "zb/proxy_runtime.h"
+
+#include <sys/stat.h>
+
+#include <cerrno>
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string_view>
+#include <vector>
+
+#include "zb/host_jni.h"
+#include "zb/library_protocol.h"
+#include "zb/log.h"
+
+namespace zb {
+
+namespace {
+
+constexpr std::uint32_t kMaxTargetSdk = 10000;
+constexpr const char* kRestartHint = "restart the :guest process to change plugins";
+
+bool supported_art_version(std::int32_t version) {
+    return version == 0x00010002 || version == 0x00010004 || version == 0x00010006;
+}
+
+std::vector<std::string_view> split(std::string_view path) {
+    std::vector<std::string_view> parts;
+    std::size_t start = 1;
+    while (start <= path.size()) {
+        std::size_t end = path.find('/', start);
+        if (end == std::string_view::npos) end = path.size();
+        parts.push_back(path.substr(start, end - start));
+        start = end + 1;
+    }
+    return parts;
+}
+
+std::string join(const std::vector<std::string_view>& parts, std::size_t count) {
+    std::string out;
+    for (std::size_t i = 0; i < count; ++i) {
+        out += '/';
+        out += parts[i];
+    }
+    return out.empty() ? "/" : out;
+}
+
+bool is_regular_file(const std::string& path) {
+    struct stat st;
+    return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+}
+
+bool is_directory(const std::string& path) {
+    struct stat st;
+    return ::stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+std::string hex_version(std::int32_t version) {
+    char text[11];
+    std::snprintf(text, sizeof text, "0x%08x", static_cast<std::uint32_t>(version));
+    return text;
+}
+
+std::string parent_of(const std::string& path) {
+    const std::size_t slash = path.rfind('/');
+    return slash == 0 || slash == std::string::npos ? "/" : path.substr(0, slash);
+}
+
+std::string base_name(const std::string& path) {
+    const std::size_t slash = path.rfind('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+}  // namespace
+
+bool canonical_path(const std::string& path, std::string& out, std::string& error) {
+    char resolved[PATH_MAX];
+    if (::realpath(path.c_str(), resolved) == nullptr) {
+        error = "cannot resolve " + path + ": " + std::strerror(errno);
+        return false;
+    }
+    out = resolved;
+    return true;
+}
+
+bool parse_proxy_path(const std::string& canonical_proxy, ProxyLocation& out, std::string& error) {
+    const auto fail = [&](const char* why) {
+        error = "proxy path " + canonical_proxy + " is not <files>/plugins/<package>/proxy/lib<name>.so: " + why;
+        return false;
+    };
+    if (canonical_proxy.empty() || canonical_proxy[0] != '/') return fail("not absolute");
+    const std::vector<std::string_view> parts = split(canonical_proxy);
+    for (const std::string_view part : parts) {
+        if (part.empty() || part == "." || part == "..") return fail("not canonical");
+    }
+    // .../plugins/<package>/proxy/lib<name>.so
+    if (parts.size() < 5) return fail("too short");
+    const std::size_t n = parts.size();
+    const std::string_view file = parts[n - 1];
+    if (parts[n - 2] != "proxy") return fail("not in a proxy directory");
+    if (parts[n - 4] != "plugins") return fail("not under a plugins directory");
+    if (file.size() <= 6 || file.substr(0, 3) != "lib" || file.substr(file.size() - 3) != ".so") {
+        return fail("file name is not lib<name>.so");
+    }
+    out.proxy = canonical_proxy;
+    out.files_dir = join(parts, n - 4);
+    out.plugin_root = join(parts, n - 2);
+    out.package = std::string(parts[n - 3]);
+    out.library = std::string(file);
+    out.guest_library = out.plugin_root + "/lib/" + out.library;
+    return true;
+}
+
+bool resolve_guest_runtime_layout(const std::string& files_dir, GuestRuntimeLayout& out, std::string& error) {
+    const std::string runtime = files_dir + "/zb";
+    GuestRuntimeLayout layout{runtime + "/sysroot", runtime + "/guest/zbhost", runtime + "/guest/lib"};
+    for (const std::string& required : {layout.zbhost, layout.guest_lib_dir + "/libzbcompat.so",
+                                        layout.guest_lib_dir + "/libzbjni.so",
+                                        layout.sysroot + "/system/bin/linker"}) {
+        if (!is_regular_file(required)) {
+            error = "guest runtime file " + required + " is missing; the launcher runtime assets are not installed";
+            return false;
+        }
+    }
+    out = std::move(layout);
+    return true;
+}
+
+LibraryRuntimeOptions guest_runtime_options(const GuestRuntimeLayout& layout, const std::string& plugin_root,
+                                            std::uint32_t target_sdk) {
+    LibraryRuntimeOptions options;
+    options.zbhost = layout.zbhost;
+    options.sysroot = layout.sysroot;
+    options.target_sdk = target_sdk;
+    options.preload = "libzbjni.so";
+    options.guest_environment = {"LD_LIBRARY_PATH=" + layout.guest_lib_dir + ":" + plugin_root + "/lib"};
+    return options;
+}
+
+ProxyRuntime::ProxyRuntime(ProxyLoadEngine& engine) : engine_(engine) {}
+
+bool ProxyRuntime::activate_plugin(JniBackend::Env env, const std::string& plugin_root, std::uint32_t target_sdk,
+                                   JniBackend::Ref class_loader, std::string& error) {
+    if (target_sdk == 0 || target_sdk > kMaxTargetSdk) {
+        error = "invalid plugin targetSdk " + std::to_string(target_sdk);
+        return false;
+    }
+    if (class_loader == 0) {
+        error = "the plugin class loader is null";
+        return false;
+    }
+    std::string root;
+    if (!canonical_path(plugin_root, root, error)) {
+        error = "plugin root: " + error;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (active_ && (root != plugin_root_ || target_sdk != target_sdk_)) {
+        error = "this :guest process already runs plugin " + plugin_root_ + " (targetSdk " +
+                std::to_string(target_sdk_) + "); cannot activate " + root + " (targetSdk " +
+                std::to_string(target_sdk) + "): " + kRestartHint;
+        return false;
+    }
+    LibraryRuntimeOptions options = options_;
+    if (!active_) {
+        const std::string plugins = parent_of(root);
+        if (base_name(plugins) != "plugins") {
+            error = "plugin root " + root + " is not <files>/plugins/<package>";
+            return false;
+        }
+        if (!is_directory(root + "/lib")) {
+            error = "plugin root " + root + " has no lib directory";
+            return false;
+        }
+        GuestRuntimeLayout layout;
+        if (!resolve_guest_runtime_layout(parent_of(plugins), layout, error)) return false;
+        options = guest_runtime_options(layout, root, target_sdk);
+    }
+    std::string bind_error;
+    if (!engine_.bind_class_loader(env, class_loader, bind_error)) {
+        error = "cannot bind the plugin class loader: " + bind_error;
+        return false;
+    }
+    if (!active_) {
+        active_ = true;
+        plugin_root_ = root;
+        target_sdk_ = target_sdk;
+        options_ = std::move(options);
+        log("guest JNI runtime: plugin %s activated (targetSdk %u)", root.c_str(), target_sdk);
+    }
+    return true;
+}
+
+ProxyLoadResult ProxyRuntime::fail_locked(const std::string& key, const std::string& library, std::string detail) {
+    Entry& entry = entries_[key];
+    entry.state = LoadState::Failed;
+    entry.error = "ZettaBridge cannot load " + library + " (proxy " + key + "): " + detail;
+    last_error_ = entry.error;
+    log("%s", entry.error.c_str());
+    cv_.notify_all();
+    return {false, 0, entry.error};
+}
+
+ProxyLoadResult ProxyRuntime::on_proxy_loaded(JniBackend::Env env, const std::string& proxy_path) {
+    std::string canonical, error;
+    const bool resolved = canonical_path(proxy_path, canonical, error);
+    const std::string key = resolved ? canonical : proxy_path;
+
+    std::unique_lock<std::mutex> lock(mutex_);
+    for (;;) {
+        const auto it = entries_.find(key);
+        if (it == entries_.end()) break;
+        const Entry& entry = it->second;
+        if (entry.state == LoadState::Loaded) return {true, entry.jni_version, {}};
+        if (entry.state == LoadState::Failed) return {false, 0, entry.error};
+        if (entry.owner == std::this_thread::get_id()) {
+            return {false, 0, "ZettaBridge: recursive load of proxy " + key};
+        }
+        cv_.wait(lock);
+    }
+    if (!resolved) return fail_locked(key, base_name(proxy_path), error);
+    entries_[key] = Entry{LoadState::Loading, std::this_thread::get_id(), 0, {}};
+
+    ProxyLocation location;
+    if (!parse_proxy_path(canonical, location, error)) return fail_locked(key, base_name(key), error);
+    if (!active_) {
+        return fail_locked(key, location.library,
+                           "no plugin is active in this process; ZBridge.activatePlugin must run before "
+                           "plugin code loads libraries");
+    }
+    if (location.plugin_root != plugin_root_) {
+        return fail_locked(key, location.library,
+                           "the proxy belongs to plugin " + location.plugin_root + " but this :guest process runs " +
+                               plugin_root_ + ": " + kRestartHint);
+    }
+    if (!is_regular_file(location.guest_library)) {
+        return fail_locked(key, location.library,
+                           "the arm32 library " + location.guest_library + " is missing; reimport the plugin");
+    }
+
+    cv_.wait(lock, [this] { return start_state_ != StartState::Starting; });
+    if (start_state_ == StartState::NotStarted) {
+        start_state_ = StartState::Starting;
+        const LibraryRuntimeOptions options = options_;
+        lock.unlock();
+        std::string start_error;
+        const bool started = engine_.start(options, start_error);
+        lock.lock();
+        start_state_ = started ? StartState::Started : StartState::Failed;
+        start_error_ = started ? std::string() : std::move(start_error);
+        if (started) log("guest JNI runtime started: %s %u %s", options.zbhost.c_str(), options.target_sdk,
+                         options.preload.c_str());
+        cv_.notify_all();
+    }
+    if (start_state_ == StartState::Failed) {
+        return fail_locked(key, location.library, "the guest runtime failed to start: " + start_error_);
+    }
+
+    lock.unlock();
+    const JniLoadReport report = engine_.load(env, location.guest_library);
+    lock.lock();
+    if (!report.ok) return fail_locked(key, location.library, report.error);
+    if (!supported_art_version(report.jni_version)) {
+        return fail_locked(key, location.library,
+                           "guest JNI_OnLoad returned unsupported JNI version " + hex_version(report.jni_version) +
+                               " (ART accepts 1.2, 1.4 and 1.6)");
+    }
+    Entry& entry = entries_[key];
+    entry.state = LoadState::Loaded;
+    entry.jni_version = report.jni_version;
+    log("guest JNI library %s loaded: %zu natives bound, %zu classes skipped, JNI version %s",
+        location.guest_library.c_str(), report.bound_methods, report.skipped_classes,
+        hex_version(report.jni_version).c_str());
+    cv_.notify_all();
+    return {true, report.jni_version, {}};
+}
+
+std::optional<std::string> ProxyRuntime::load_error(const std::string& proxy_path) const {
+    std::string canonical, error;
+    const std::string key = canonical_path(proxy_path, canonical, error) ? canonical : proxy_path;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = entries_.find(key);
+    if (it == entries_.end()) it = entries_.find(proxy_path);
+    if (it == entries_.end() || it->second.state != LoadState::Failed) return std::nullopt;
+    return it->second.error;
+}
+
+std::optional<std::string> ProxyRuntime::last_load_error() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (last_error_.empty()) return std::nullopt;
+    return last_error_;
+}
+
+GuestJniEngine::GuestJniEngine(JniBackend& backend)
+    : backend_(backend),
+      runtime_(new LibraryRuntime()),
+      host_jni_(new HostJni(*runtime_, backend)),
+      loader_(new JniLoader(*host_jni_, backend)) {
+    HostJni* host_jni = host_jni_;
+    runtime_->set_host_call_handler(
+        [host_jni](std::uint32_t index, GuestThread& thread) { return host_jni->handle_host_call(index, thread); });
+}
+
+GuestJniEngine::~GuestJniEngine() {
+    log("GuestJniEngine destroyed; the guest JNI runtime is process-lifetime");
+    std::abort();
+}
+
+bool GuestJniEngine::bind_class_loader(JniBackend::Env, JniBackend::Ref, std::string&) {
+    return true;
+}
+
+bool GuestJniEngine::start(const LibraryRuntimeOptions& options, std::string& error) {
+    if (!runtime_->start(options, error)) return false;
+    if (!host_jni_->ready()) {
+        error = "zbhost reported ready but libzbjni.so did not register the guest JNI API";
+        return false;
+    }
+    return true;
+}
+
+JniLoadReport GuestJniEngine::load(JniBackend::Env env, const std::string& guest_library) {
+    JniLoadReport report = loader_->load(env, guest_library, ZB_GUEST_RTLD_NOW);
+    if (!report.ok) {
+        const std::string pending = take_pending_exception(env);
+        if (!pending.empty()) report.error += " (" + pending + ")";
+    }
+    return report;
+}
+
+std::string GuestJniEngine::take_pending_exception(JniBackend::Env env) {
+    if (!backend_.exception_check(env)) return {};
+    backend_.exception_clear(env);
+    return "a pending Java exception was cleared";
+}
+
+}  // namespace zb

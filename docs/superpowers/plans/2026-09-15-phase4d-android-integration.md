@@ -105,11 +105,11 @@
 
 **Produces:** Java initialization/fixup calls and native `onProxyLoaded`, backed by one configured `LibraryRuntime + JniEnvBackend + HostJni + JniLoader` graph.
 
-- [ ] Add host-testable path/config validation and state-machine cases: first start, repeated same proxy, concurrent different proxies, bad layout, preload failure, second plugin rejection, bind failure, and unsupported JNI version.
-- [ ] Observe RED for the absent runtime state machine.
-- [ ] Start `zbhost <targetSdk> libzbjni.so` with `LD_LIBRARY_PATH` containing runtime guest libs and the active plugin lib dir; chain HostJni before start.
-- [ ] Load `libzbcompat.so` through zbhost's mandatory preload, bind the requested guest library, run `JNI_OnLoad`, memoize success by canonical proxy path, and throw `UnsatisfiedLinkError` with screen-visible detail on failure.
-- [ ] Expose the shared ELF fixer to import code and retain process-lifetime objects intentionally; compile host seams and Android link; commit `android: connect proxy loads to the guest JNI runtime`.
+- [x] Add host-testable path/config validation and state-machine cases: first start, repeated same proxy, concurrent different proxies, bad layout, preload failure, second plugin rejection, bind failure, and unsupported JNI version.
+- [x] Observe RED for the absent runtime state machine.
+- [x] Start `zbhost <targetSdk> libzbjni.so` with `LD_LIBRARY_PATH` containing runtime guest libs and the active plugin lib dir; chain HostJni before start.
+- [x] Load `libzbcompat.so` through zbhost's mandatory preload, bind the requested guest library, run `JNI_OnLoad`, memoize success by canonical proxy path, and throw `UnsatisfiedLinkError` with screen-visible detail on failure.
+- [x] Expose the shared ELF fixer to import code and retain process-lifetime objects intentionally; compile host seams and Android link; commit `android: connect proxy loads to the guest JNI runtime`.
 
 ### Task 6: Launcher ABI extraction, class loading, and bundle
 
