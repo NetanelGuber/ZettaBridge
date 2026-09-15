@@ -78,6 +78,7 @@ struct HostJni::Impl {
     IdTable fields;
     std::mutex shorty_mutex;
     std::vector<std::string> shorties;  // index: guest method id - 1
+    std::atomic<bool> logged_foreign_buffer{false};
 
     // The JniThread of the calling host thread.
     JniThread& thread();
@@ -111,6 +112,7 @@ struct HostJni::Impl {
     // Host-call groups; each returns false for indices it does not serve.
     bool serve_objects(JniCall& call);
     bool serve_values(JniCall& call);
+    bool serve_data(JniCall& call);
 };
 
 const char* jni_host_call_name(std::uint32_t index);

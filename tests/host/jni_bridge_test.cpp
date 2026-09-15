@@ -217,6 +217,14 @@ void check_values(Bridge& bridge) {
     vm.clear_pending_exception(env);
 }
 
+void check_data(Bridge& bridge) {
+    MockJvm& vm = *bridge.vm;
+    CHECK(run_probe(bridge, "zbjniprobe_strings") == 0);
+    CHECK(run_probe(bridge, "zbjniprobe_arrays") == 0);
+    static char foreign[16];
+    CHECK(run_probe(bridge, "zbjniprobe_direct_buffers", vm.new_direct_buffer_object(foreign, sizeof foreign)) == 0);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -225,6 +233,7 @@ int main(int argc, char** argv) {
     Bridge bridge = start_bridge(argv);
     check_objects(bridge);
     check_values(bridge);
+    check_data(bridge);
     const auto errors = bridge.vm->errors();
     for (const auto& error : errors) std::fprintf(stderr, "mock error: %s\n", error.c_str());
     CHECK(errors.empty());

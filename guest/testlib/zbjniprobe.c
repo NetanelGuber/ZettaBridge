@@ -353,3 +353,123 @@ JNIEXPORT jint JNICALL zbjniprobe_exceptions(JNIEnv* env, jobject unused) {
     return 0;
 }
 
+/* ---- Strings, arrays, direct buffers -------------------------------------------------------- */
+
+JNIEXPORT jint JNICALL zbjniprobe_strings(JNIEnv* env, jobject unused) {
+    const jstring hello = (*env)->NewStringUTF(env, "h\xc3\xa9llo");
+    CHECK(hello != NULL);
+    CHECK((*env)->GetStringLength(env, hello) == 5 && (*env)->GetStringUTFLength(env, hello) == 6);
+    jboolean copy = JNI_FALSE;
+    const char* utf = (*env)->GetStringUTFChars(env, hello, &copy);
+    CHECK(utf != NULL && copy == JNI_TRUE && strcmp(utf, "h\xc3\xa9llo") == 0);
+    (*env)->ReleaseStringUTFChars(env, hello, utf);
+
+    /* UTF-16 with an embedded NUL and a surrogate pair. */
+    static const jchar units[4] = {'a', 0, 0xD83D, 0xDE00};
+    const jstring wide = (*env)->NewString(env, units, 4);
+    CHECK(wide != NULL && (*env)->GetStringLength(env, wide) == 4);
+    copy = JNI_FALSE;
+    const jchar* chars = (*env)->GetStringChars(env, wide, &copy);
+    CHECK(chars != NULL && copy == JNI_TRUE && memcmp(chars, units, sizeof units) == 0);
+    (*env)->ReleaseStringChars(env, wide, chars);
+    const char* modified = (*env)->GetStringUTFChars(env, wide, NULL);
+    CHECK(modified != NULL && strcmp(modified, "a\xc0\x80\xed\xa0\xbd\xed\xb8\x80") == 0);
+    (*env)->ReleaseStringUTFChars(env, wide, modified);
+    const jchar* critical = (*env)->GetStringCritical(env, wide, NULL);
+    CHECK(critical != NULL && critical[2] == 0xD83D);
+    (*env)->ReleaseStringCritical(env, wide, critical);
+
+    jchar region[2] = {0, 0};
+    (*env)->GetStringRegion(env, wide, 2, 2, region);
+    CHECK(region[0] == 0xD83D && region[1] == 0xDE00);
+    char utf_region[8];
+    memset(utf_region, 'x', sizeof utf_region);
+    (*env)->GetStringUTFRegion(env, wide, 2, 2, utf_region);
+    CHECK(memcmp(utf_region, "\xed\xa0\xbd\xed\xb8\x80", 7) == 0); /* bytes and NUL, as in ART */
+
+    /* Out of range: a pending exception, cleared here. */
+    (*env)->GetStringRegion(env, wide, 3, 2, region);
+    CHECK((*env)->ExceptionCheck(env) == JNI_TRUE);
+    (*env)->ExceptionClear(env);
+    CHECK((*env)->NewStringUTF(env, NULL) == NULL);
+    CHECK((*env)->GetStringUTFChars(env, NULL, NULL) == NULL);
+    return 0;
+}
+
+#define PROBE_ARRAY(Name, jtype, v0, v1, v2)                                                                \
+    do {                                                                                                    \
+        const jtype##Array array = (*env)->New##Name##Array(env, 3);                                        \
+        CHECK(array != NULL && (*env)->GetArrayLength(env, array) == 3);                                    \
+        const jtype in[3] = {v0, v1, v2};                                                                   \
+        jtype out[3];                                                                                       \
+        (*env)->Set##Name##ArrayRegion(env, array, 0, 3, in);                                               \
+        jboolean copy = JNI_FALSE;                                                                          \
+        jtype* elems = (*env)->Get##Name##ArrayElements(env, array, &copy);                                 \
+        CHECK(elems != NULL && copy == JNI_TRUE && elems[0] == v0 && elems[1] == v1 && elems[2] == v2);     \
+        elems[0] = v2; /* JNI_COMMIT copies back and keeps the buffer */                                    \
+        (*env)->Release##Name##ArrayElements(env, array, elems, JNI_COMMIT);                                \
+        (*env)->Get##Name##ArrayRegion(env, array, 0, 3, out);                                              \
+        CHECK(out[0] == v2 && out[1] == v1);                                                                \
+        elems[1] = v2; /* JNI_ABORT frees without copying */                                                \
+        (*env)->Release##Name##ArrayElements(env, array, elems, JNI_ABORT);                                 \
+        (*env)->Get##Name##ArrayRegion(env, array, 0, 3, out);                                              \
+        CHECK(out[1] == v1);                                                                                \
+        elems = (*env)->Get##Name##ArrayElements(env, array, NULL);                                         \
+        CHECK(elems != NULL && elems[0] == v2);                                                             \
+        elems[2] = v0; /* mode 0 copies back and frees */                                                   \
+        (*env)->Release##Name##ArrayElements(env, array, elems, 0);                                         \
+        (*env)->Get##Name##ArrayRegion(env, array, 0, 3, out);                                              \
+        CHECK(out[0] == v2 && out[1] == v1 && out[2] == v0);                                                \
+    } while (0)
+
+JNIEXPORT jint JNICALL zbjniprobe_arrays(JNIEnv* env, jobject unused) {
+    PROBE_ARRAY(Boolean, jboolean, JNI_TRUE, JNI_FALSE, 2);
+    PROBE_ARRAY(Byte, jbyte, -1, 2, -3);
+    PROBE_ARRAY(Char, jchar, 0xFFFF, 2, 3);
+    PROBE_ARRAY(Short, jshort, -1000, 2000, -3000);
+    PROBE_ARRAY(Int, jint, -100000, 200000, -300000);
+    PROBE_ARRAY(Long, jlong, INT64_C(-1), INT64_C(0x100000000), INT64_C(-0x100000000));
+    PROBE_ARRAY(Float, jfloat, 0.5f, -1.5f, 2.5f);
+    PROBE_ARRAY(Double, jdouble, 0.25, -1.25, 1e300);
+
+    const jdoubleArray doubles = (*env)->NewDoubleArray(env, 2);
+    jboolean copy = JNI_FALSE;
+    jdouble* critical = (*env)->GetPrimitiveArrayCritical(env, doubles, &copy);
+    CHECK(critical != NULL && copy == JNI_TRUE && critical[0] == 0.0);
+    critical[1] = 7.5;
+    (*env)->ReleasePrimitiveArrayCritical(env, doubles, critical, 0);
+    jdouble back[2];
+    (*env)->GetDoubleArrayRegion(env, doubles, 0, 2, back);
+    CHECK(back[1] == 7.5);
+
+    const jclass string_class = (*env)->FindClass(env, "java/lang/String");
+    const jstring first = (*env)->NewStringUTF(env, "first");
+    const jstring second = (*env)->NewStringUTF(env, "second");
+    const jobjectArray strings = (*env)->NewObjectArray(env, 3, string_class, first);
+    CHECK(strings != NULL && (*env)->GetArrayLength(env, strings) == 3);
+    CHECK((*env)->GetPrimitiveArrayCritical(env, strings, NULL) == NULL); /* not a primitive array */
+    CHECK(SAME_REF((*env)->GetObjectArrayElement(env, strings, 1), first));
+    (*env)->SetObjectArrayElement(env, strings, 2, second);
+    CHECK(SAME_REF((*env)->GetObjectArrayElement(env, strings, 2), second));
+
+    const jintArray ints = (*env)->NewIntArray(env, 2);
+    jint two[2];
+    (*env)->GetIntArrayRegion(env, ints, 1, 2, two);
+    CHECK((*env)->ExceptionCheck(env) == JNI_TRUE);
+    (*env)->ExceptionClear(env);
+    return 0;
+}
+
+static char direct_storage[64];
+
+/* foreign: a direct buffer (capacity 16) whose memory is outside the guest reservation. */
+JNIEXPORT jint JNICALL zbjniprobe_direct_buffers(JNIEnv* env, jobject foreign) {
+    const jobject buffer = (*env)->NewDirectByteBuffer(env, direct_storage, sizeof direct_storage);
+    CHECK(buffer != NULL);
+    CHECK((*env)->GetDirectBufferAddress(env, buffer) == direct_storage);
+    CHECK((*env)->GetDirectBufferCapacity(env, buffer) == (jlong)sizeof direct_storage);
+    CHECK((*env)->GetDirectBufferAddress(env, foreign) == NULL);
+    CHECK((*env)->GetDirectBufferCapacity(env, foreign) == 16);
+    return 0;
+}
+
