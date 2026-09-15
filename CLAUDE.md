@@ -36,7 +36,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   The `codex/phase4a-jni-host-units` and
   `codex/phase4b-library-runtime` branches are merged into it.
 
-Local git repo (no remote yet; pushing to GitHub is done together with the user).
+Private GitHub repo `ZailoxTT/ZettaBridge` (remote `origin`). Local `phase1-zbrun` tracks
+`origin/main`. Push only when the user asks or agrees.
 Commit locally after each finished task.
 
 ## Build and test

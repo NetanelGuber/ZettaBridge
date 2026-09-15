@@ -287,3 +287,12 @@ Orange Roulette smoke launch.
   - `zbproxy_fake_jni_test` drives it on the host; `tools/check_zbproxy.py` runs after every
     Android link and as `zbproxy_structure_test` (skipped when not built).
   - ART's `JVM_NativeLoad` clears the pending exception, so Task 5 must record failure detail itself.
+
+## Repository (2026-09-15)
+
+- Private GitHub repo: https://github.com/ZailoxTT/ZettaBridge (GPL-3.0, README.md plus
+  README.ru.md).
+- Local `phase1-zbrun` tracks `origin/main`.
+- Do not push without the user's agreement.
+- Never commit `cc`, `cod`, screenshots or APKs; they are in `.gitignore`.
+- Before the repo goes public, check `CLAUDE.md`/`AGENTS.md` for anything private.
