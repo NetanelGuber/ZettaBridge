@@ -237,6 +237,20 @@ void check_buffer_overflow(char** argv) {
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
+void check_bad_direct_capacity(char** argv) {
+    std::fflush(stdout);
+    const pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        Bridge bridge = start_bridge(argv);
+        run_probe(bridge, "zbjniprobe_bad_direct_capacity");
+        std::_Exit(10);
+    }
+    int status = 0;
+    CHECK(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == zb::mock::kFatalExitStatus);
+}
+
 void check_objects(Bridge& bridge) {
     MockJvm& vm = *bridge.vm;
     const auto held = vm.new_object("zb/Probe");
@@ -363,6 +377,7 @@ int main(int argc, char** argv) {
     CHECK(argc == 4);
     check_invalid_handle(argv);
     check_buffer_overflow(argv);
+    check_bad_direct_capacity(argv);
     Bridge bridge = start_bridge(argv);
     check_objects(bridge);
     check_values(bridge);

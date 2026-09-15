@@ -480,6 +480,11 @@ JNIEXPORT jint JNICALL zbjniprobe_direct_buffers(JNIEnv* env, jobject foreign) {
     return 0;
 }
 
+JNIEXPORT jint JNICALL zbjniprobe_bad_direct_capacity(JNIEnv* env, jobject unused) {
+    (void)(*env)->NewDirectByteBuffer(env, NULL, (jlong)INT32_MAX + 1);
+    return __LINE__;
+}
+
 /* ---- Native registration and Java -> guest calls -------------------------------------------- */
 
 static jint native_add(JNIEnv* env, jclass cls, jint a, jfloat b, jfloat c, jint d, jfloat e, jfloat f) {

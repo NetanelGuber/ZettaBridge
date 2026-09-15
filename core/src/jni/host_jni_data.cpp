@@ -2,6 +2,7 @@
 #include "host_jni_internal.h"
 
 #include <cstring>
+#include <limits>
 
 #include "zb/log.h"
 
@@ -119,6 +120,10 @@ bool HostJni::Impl::serve_data(JniCall& call) {
         const JniBackend::Env env = call.env();
         const std::uint32_t address = call.arg(0);
         const auto capacity = static_cast<std::int64_t>(call.arg(1) | (static_cast<std::uint64_t>(call.arg(2)) << 32));
+        if (capacity < 0 || capacity > std::numeric_limits<std::int32_t>::max()) {
+            fatal(env, "NewDirectByteBuffer: capacity %lld is outside the 32-bit guest range",
+                  static_cast<long long>(capacity));
+        }
         if (capacity > 0 && static_cast<std::uint64_t>(address) + static_cast<std::uint64_t>(capacity) > kGuestSpaceSize) {
             fatal(env, "NewDirectByteBuffer: 0x%08x + %lld leaves the guest address space", address,
                   static_cast<long long>(capacity));
