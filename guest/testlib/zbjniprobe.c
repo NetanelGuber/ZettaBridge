@@ -460,6 +460,13 @@ JNIEXPORT jint JNICALL zbjniprobe_arrays(JNIEnv* env, jobject unused) {
     return 0;
 }
 
+/* A long array this large cannot have a copied elements buffer in an arm32 process. */
+JNIEXPORT jint JNICALL zbjniprobe_buffer_overflow(JNIEnv* env, jobject array) {
+    jlong* elements = (*env)->GetLongArrayElements(env, (jlongArray)array, NULL);
+    if (elements != NULL) (*env)->ReleaseLongArrayElements(env, (jlongArray)array, elements, JNI_ABORT);
+    return elements == NULL ? 0 : __LINE__;
+}
+
 static char direct_storage[64];
 
 /* foreign: a direct buffer (capacity 16) whose memory is outside the guest reservation. */

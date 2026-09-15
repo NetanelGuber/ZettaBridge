@@ -893,6 +893,15 @@ MockJvm::Ref MockJvm::new_primitive_array(Env env, char type, std::int32_t lengt
     return new_local_locked(env, id);
 }
 
+MockJvm::ObjectId MockJvm::new_sparse_primitive_array(char type, std::int32_t length) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (element_size(type) == 0 || length < 0) return 0;
+    const ObjectId id = new_object_locked(std::string("[") + type);
+    objects_[id - 1].element = type;
+    objects_[id - 1].length = length;
+    return id;
+}
+
 void MockJvm::get_primitive_array_region(Env env, char type, Ref array, std::int32_t start, std::int32_t length,
                                          void* out) {
     std::lock_guard<std::mutex> lock(mutex_);

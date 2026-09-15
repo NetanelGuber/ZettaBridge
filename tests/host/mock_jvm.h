@@ -55,6 +55,8 @@ public:
     ObjectId new_object(const std::string& cls);
     ObjectId new_string_object(const std::u16string& text);
     ObjectId new_direct_buffer_object(void* address, std::int64_t capacity);
+    // Test-only array metadata without a potentially enormous backing allocation.
+    ObjectId new_sparse_primitive_array(char type, std::int32_t length);
     std::u16string string_value(ObjectId string);
     std::string class_name_of(ObjectId obj);
     // Instance field of obj, or static field when obj is a class object.

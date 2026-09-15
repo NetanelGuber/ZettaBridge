@@ -486,13 +486,17 @@ static size_t zbjni_element_size(char type) {
 static void* zbjni_buffer_new(char type, jsize length) {
     const size_t size = zbjni_element_size(type);
     if (length < 0 || size == 0) return NULL;
-    struct zbjni_buffer* header = malloc(sizeof *header + ((size_t)length + 1) * size);
+    const uint64_t payload64 = ((uint64_t)length + 1) * (uint64_t)size;
+    const uint64_t total64 = (uint64_t)sizeof(struct zbjni_buffer) + payload64;
+    if (total64 > SIZE_MAX) return NULL;
+    const size_t payload = (size_t)payload64;
+    struct zbjni_buffer* header = malloc((size_t)total64);
     if (header == NULL) return NULL;
     header->magic = ZBJNI_BUFFER_MAGIC;
     header->length = length;
     header->type = (uint32_t)type;
     header->reserved = 0;
-    memset(header + 1, 0, ((size_t)length + 1) * size);
+    memset(header + 1, 0, payload);
     return header + 1;
 }
 
