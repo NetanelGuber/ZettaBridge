@@ -473,3 +473,56 @@ JNIEXPORT jint JNICALL zbjniprobe_direct_buffers(JNIEnv* env, jobject foreign) {
     return 0;
 }
 
+/* ---- Native registration and Java -> guest calls -------------------------------------------- */
+
+static jint native_add(JNIEnv* env, jclass cls, jint a, jfloat b, jfloat c, jint d, jfloat e, jfloat f) {
+    return (jint)(a + 2 * d + 4 * b + 8 * c + 16 * e + 32 * f);
+}
+
+static void native_wide(JNIEnv* env, jclass cls, jlong value) {
+    const jfieldID field = (*env)->GetStaticFieldID(env, cls, "wide", "J");
+    (*env)->SetStaticLongField(env, cls, field, value);
+}
+
+/* nest(0) = 1000; nest(n) = callback(n - 1) + 1, where Java's callback(n) = nest(n) + 10. */
+static jint native_nest(JNIEnv* env, jclass cls, jint depth) {
+    if (depth == 0) return 1000;
+    const jmethodID callback = (*env)->GetStaticMethodID(env, cls, "callback", "(I)I");
+    return (*env)->CallStaticIntMethod(env, cls, callback, depth - 1) + 1;
+}
+
+static jstring native_echo(JNIEnv* env, jobject self, jstring text) {
+    const char* chars = (*env)->GetStringUTFChars(env, text, NULL);
+    char buffer[128];
+    snprintf(buffer, sizeof buffer, "%s!", chars != NULL ? chars : "");
+    (*env)->ReleaseStringUTFChars(env, text, chars);
+    return (*env)->NewStringUTF(env, buffer);
+}
+
+static jint native_tid(JNIEnv* env, jclass cls) {
+    return gettid();
+}
+
+JNIEXPORT jint JNICALL zbjniprobe_register(JNIEnv* env, jobject unused) {
+    const jclass natives = (*env)->FindClass(env, "zb/Natives");
+    CHECK(natives != NULL);
+    const JNINativeMethod good[] = {
+        {"add", "(IFFIFF)I", (void*)native_add},
+        {"wide", "!(J)V", (void*)native_wide}, /* pre-O fast JNI marker */
+        {"nest", "(I)I", (void*)native_nest},
+        {"echo", "(Ljava/lang/String;)Ljava/lang/String;", (void*)native_echo},
+    };
+    CHECK((*env)->RegisterNatives(env, natives, good, 4) == JNI_OK);
+    /* Stops at the missing method: tid is not bound, and the missing method's slot is released. */
+    const JNINativeMethod bad[] = {
+        {"missing", "(I)I", (void*)native_nest},
+        {"tid", "()I", (void*)native_tid},
+    };
+    CHECK((*env)->RegisterNatives(env, natives, bad, 2) == JNI_ERR);
+    CHECK((*env)->ExceptionCheck(env) == JNI_TRUE);
+    (*env)->ExceptionClear(env);
+    const JNINativeMethod tid[] = {{"tid", "()I", (void*)native_tid}};
+    CHECK((*env)->RegisterNatives(env, natives, tid, 1) == JNI_OK);
+    return 0;
+}
+

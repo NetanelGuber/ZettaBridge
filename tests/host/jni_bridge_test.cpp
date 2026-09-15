@@ -103,6 +103,31 @@ void define_probe_model(MockJvm& vm) {
     });
 }
 
+// Host AAPCS64 signatures of the registered natives, called through their thunks.
+using AddFn = std::int32_t (*)(std::uint64_t, std::uint64_t, std::int32_t, float, float, std::int32_t, float, float);
+using WideFn = void (*)(std::uint64_t, std::uint64_t, std::int64_t);
+using NestFn = std::int32_t (*)(std::uint64_t, std::uint64_t, std::int32_t);
+using EchoFn = std::uint64_t (*)(std::uint64_t, std::uint64_t, std::uint64_t);
+using TidFn = std::int32_t (*)(std::uint64_t, std::uint64_t);
+
+// zb/Natives: native methods bound by the guest, and callback(n) = nest(n) + 10 calling back in.
+void define_native_model(MockJvm& vm) {
+    vm.define_class("zb/Natives");
+    vm.add_native("zb/Natives", "add", "(IFFIFF)I", true);
+    vm.add_native("zb/Natives", "wide", "(J)V", true);
+    vm.add_native("zb/Natives", "nest", "(I)I", true);
+    vm.add_native("zb/Natives", "echo", "(Ljava/lang/String;)Ljava/lang/String;", false);
+    vm.add_native("zb/Natives", "tid", "()I", true);
+    vm.add_field("zb/Natives", "wide", "J", true);
+    vm.add_method("zb/Natives", "callback", "(I)I", true, [](MockCall& call) {
+        const auto nest = reinterpret_cast<NestFn>(call.vm.native_function("zb/Natives", "nest", "(I)I"));
+        MockJvm::NativeFrame frame(call.vm, call.env);
+        const std::int32_t result = nest(call.env, frame.local(call.self), call.args[0].i) + 10;
+        CHECK(frame.close() == 1);  // the class argument
+        return value_i(result);
+    });
+}
+
 zb::LibraryRuntimeOptions options(char** argv) {
     zb::LibraryRuntimeOptions result;
     result.sysroot = argv[1];
@@ -125,8 +150,9 @@ Bridge start_bridge(char** argv) {
     Bridge bridge{};
     bridge.vm = new MockJvm();
     define_probe_model(*bridge.vm);
+    define_native_model(*bridge.vm);
     bridge.runtime = new zb::LibraryRuntime();
-    bridge.jni = new zb::HostJni(*bridge.runtime, *bridge.vm);
+    bridge.jni = new zb::HostJni(*bridge.runtime, *bridge.vm, 64);
     zb::HostJni* jni = bridge.jni;
     bridge.runtime->set_host_call_handler(
         [jni](std::uint32_t index, zb::GuestThread& thread) { return jni->handle_host_call(index, thread); });
@@ -225,6 +251,76 @@ void check_data(Bridge& bridge) {
     CHECK(run_probe(bridge, "zbjniprobe_direct_buffers", vm.new_direct_buffer_object(foreign, sizeof foreign)) == 0);
 }
 
+bool wait_thread_count(zb::LibraryRuntime& runtime, std::size_t expected) {
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (runtime.guest_thread_count() != expected) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::sleep_for(5ms);
+    }
+    return true;
+}
+
+void check_natives(Bridge& bridge) {
+    MockJvm& vm = *bridge.vm;
+    CHECK(run_probe(bridge, "zbjniprobe_register") == 0);
+    const auto add = reinterpret_cast<AddFn>(vm.native_function("zb/Natives", "add", "(IFFIFF)I"));
+    const auto wide = reinterpret_cast<WideFn>(vm.native_function("zb/Natives", "wide", "(J)V"));
+    const auto nest = reinterpret_cast<NestFn>(vm.native_function("zb/Natives", "nest", "(I)I"));
+    const auto echo =
+        reinterpret_cast<EchoFn>(vm.native_function("zb/Natives", "echo", "(Ljava/lang/String;)Ljava/lang/String;"));
+    const auto tid = reinterpret_cast<TidFn>(vm.native_function("zb/Natives", "tid", "()I"));
+    CHECK(add != nullptr && wide != nullptr && nest != nullptr && echo != nullptr && tid != nullptr);
+    // Slots 0-3 are bound; the failed registration's slot 4 was released and reused by tid.
+    CHECK(reinterpret_cast<void*>(add) == zb::native_thunk_address(0));
+    CHECK(reinterpret_cast<void*>(tid) == zb::native_thunk_address(4));
+
+    const auto natives = vm.class_object("zb/Natives");
+    const auto java_env = vm.thread_env();
+    {
+        MockJvm::NativeFrame frame(vm, java_env);
+        const auto cls = frame.local(natives);
+        CHECK(add(java_env, cls, 1, 0.5f, 0.25f, 3, 1.5f, -2.0f) == 1 + 6 + 2 + 2 + 24 - 64);
+        wide(java_env, cls, -0x0102030405060708LL);
+        CHECK(vm.field_value(natives, "wide").j == -0x0102030405060708LL);
+        CHECK(nest(java_env, cls, 3) == 1033);  // Java -> guest -> Java -> guest, three levels deep
+        CHECK(tid(java_env, cls) > 0);
+        CHECK(frame.close() == 1);
+    }
+
+    // Two Java threads at once, each on its own carrier, with nesting and a reference result.
+    const std::size_t baseline = bridge.runtime->guest_thread_count();
+    std::barrier rendezvous(2);
+    std::array<std::int32_t, 2> tids{};
+    constexpr int kIterations = 200;
+    const auto java_thread = [&](int index) {
+        const auto env = vm.thread_env();
+        rendezvous.arrive_and_wait();
+        for (int i = 0; i < kIterations; ++i) {
+            MockJvm::NativeFrame frame(vm, env);
+            const auto cls = frame.local(natives);
+            CHECK(add(env, cls, index, 1.0f, 0.5f, i, 0.25f, 0.125f) == index + 2 * i + 4 + 4 + 4 + 4);
+            CHECK(nest(env, cls, 2 + index) == 1000 + 11 * (2 + index));
+            const auto self = frame.local(vm.new_object("zb/Natives"));
+            const std::string text = "t" + std::to_string(index) + "-" + std::to_string(i);
+            const auto argument = frame.local(vm.new_string_object(to_u16(text)));
+            const auto echoed = frame.result(echo(env, self, argument));
+            CHECK(vm.string_value(echoed) == to_u16(text + "!"));
+            const std::int32_t current = tid(env, cls);
+            CHECK(current > 0 && (tids[index] == 0 || tids[index] == current));
+            tids[index] = current;
+            CHECK(frame.close() == 3);  // cls, self, argument
+            CHECK(vm.live_local_refs(env) == 0);
+        }
+    };
+    std::thread first(java_thread, 0);
+    std::thread second(java_thread, 1);
+    first.join();
+    second.join();
+    CHECK(tids[0] != tids[1]);
+    // Each Java thread leased one carrier; the leases ended with their threads.
+    CHECK(wait_thread_count(*bridge.runtime, baseline));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -234,6 +330,7 @@ int main(int argc, char** argv) {
     check_objects(bridge);
     check_values(bridge);
     check_data(bridge);
+    check_natives(bridge);
     const auto errors = bridge.vm->errors();
     for (const auto& error : errors) std::fprintf(stderr, "mock error: %s\n", error.c_str());
     CHECK(errors.empty());

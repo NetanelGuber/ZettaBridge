@@ -205,9 +205,10 @@ bool HostJni::Impl::ensure_guest_env(JniThread& state) {
     return true;
 }
 
-HostJni::HostJni(LibraryRuntime& runtime, JniBackend& backend)
-    : impl_(std::make_unique<Impl>(runtime, backend)) {
+HostJni::HostJni(LibraryRuntime& runtime, JniBackend& backend, std::size_t slot_capacity)
+    : impl_(std::make_unique<Impl>(runtime, backend, slot_capacity)) {
     impl_->owner = this;
+    install_native_dispatcher(impl_.get());
 }
 
 HostJni::~HostJni() {
@@ -246,7 +247,7 @@ bool HostJni::handle_host_call(std::uint32_t index, GuestThread& thread) {
         std::abort();
     }
     JniCall call(jni, thread, jni.thread(), index);
-    if (jni.serve_objects(call) || jni.serve_values(call) || jni.serve_data(call)) {
+    if (jni.serve_objects(call) || jni.serve_values(call) || jni.serve_data(call) || jni.serve_natives(call)) {
         return true;
     }
     log("JNI host call 0x%x (%s) is not implemented", index, jni_host_call_name(index));

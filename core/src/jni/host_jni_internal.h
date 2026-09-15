@@ -63,8 +63,8 @@ private:
 };
 
 struct HostJni::Impl {
-    Impl(LibraryRuntime& runtime, JniBackend& backend)
-        : runtime(runtime), backend(backend) {}
+    Impl(LibraryRuntime& runtime, JniBackend& backend, std::size_t slot_capacity)
+        : runtime(runtime), backend(backend), slots(slot_capacity) {}
 
     HostJni* owner = nullptr;
     LibraryRuntime& runtime;
@@ -78,6 +78,7 @@ struct HostJni::Impl {
     IdTable fields;
     std::mutex shorty_mutex;
     std::vector<std::string> shorties;  // index: guest method id - 1
+    NativeSlots slots;
     std::atomic<bool> logged_foreign_buffer{false};
 
     // The JniThread of the calling host thread.
@@ -113,8 +114,11 @@ struct HostJni::Impl {
     bool serve_objects(JniCall& call);
     bool serve_values(JniCall& call);
     bool serve_data(JniCall& call);
+    bool serve_natives(JniCall& call);
 };
 
 const char* jni_host_call_name(std::uint32_t index);
+// Makes jni the target of the process-wide native thunk dispatcher (host_jni_natives.cpp).
+void install_native_dispatcher(HostJni::Impl* jni);
 
 }  // namespace zb
