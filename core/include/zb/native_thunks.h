@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "zb/native_call.h"
 
@@ -33,14 +34,17 @@ void* native_thunk_address(std::uint32_t slot);
 // for sanity-checking that the pool matches kNativeThunkCount.
 std::size_t native_thunk_pool_bytes();
 
-// Assigns thunk slots to native methods. Slots are never freed (UnregisterNatives keeps them),
-// so target() needs no lock.
+// Assigns thunk slots to native methods. A slot the backend has bound is never freed
+// (UnregisterNatives keeps it), so target() needs no lock; only a slot whose registration failed
+// is released for reuse, and Java can never have reached it.
 class NativeSlots {
 public:
     // capacity is capped at kNativeThunkCount.
     explicit NativeSlots(std::size_t capacity = kNativeThunkCount);
     // The slot number, or -1 when every slot is taken.
     std::int32_t allocate(NativeTarget target);
+    // Returns a slot whose registration failed (never bound by the backend) for reuse.
+    void release(std::uint32_t slot);
     // The target of an allocated slot, or nullptr.
     const NativeTarget* target(std::uint32_t slot) const;
 
@@ -49,6 +53,7 @@ private:
     std::mutex mutex_;
     std::unique_ptr<NativeTarget[]> targets_;
     std::atomic<std::uint32_t> count_{0};
+    std::vector<std::uint32_t> released_;
 };
 
 }  // namespace zb

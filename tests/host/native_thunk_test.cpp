@@ -176,6 +176,15 @@ int main() {
     CHECK(slots.allocate({0x30000, "V", true}) == -1);  // exhausted
     CHECK(slots.target(1) != nullptr && slots.target(1)->shorty == "IIFFIFF" && !slots.target(1)->is_static);
     CHECK(slots.target(2) == nullptr);
+    // Only a slot whose registration failed is released; it is handed out again before new slots.
+    slots.release(1);
+    CHECK(slots.allocate({0x40000, "J", false}) == 1);
+    CHECK(slots.target(1) != nullptr && slots.target(1)->guest_function == 0x40000 && slots.target(1)->shorty == "J");
+    CHECK(slots.allocate({0x50000, "V", true}) == -1);
+    CHECK(child_aborts([] {
+        zb::NativeSlots fresh(2);
+        fresh.release(0);  // never allocated
+    }));
 
     // Multi-thread stress: 4 threads x 5000 calls each, disjoint slot ranges, both int and FP
     // arguments overflowing onto the host stack.

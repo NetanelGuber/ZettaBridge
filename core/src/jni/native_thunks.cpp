@@ -46,11 +46,26 @@ NativeSlots::NativeSlots(std::size_t capacity)
 
 std::int32_t NativeSlots::allocate(NativeTarget target) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!released_.empty()) {
+        const std::uint32_t reused = released_.back();
+        released_.pop_back();
+        targets_[reused] = std::move(target);
+        return static_cast<std::int32_t>(reused);
+    }
     const std::uint32_t slot = count_.load();
     if (slot >= capacity_) return -1;
     targets_[slot] = std::move(target);
     count_.store(slot + 1);  // published only after the entry is complete
     return static_cast<std::int32_t>(slot);
+}
+
+void NativeSlots::release(std::uint32_t slot) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (slot >= count_.load()) {
+        log("NativeSlots::release: slot %u was never allocated", slot);
+        std::abort();
+    }
+    released_.push_back(slot);
 }
 
 const NativeTarget* NativeSlots::target(std::uint32_t slot) const {
