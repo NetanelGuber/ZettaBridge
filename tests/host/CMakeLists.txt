@@ -63,6 +63,14 @@ add_test(NAME library_runtime_test COMMAND library_runtime_test
     ${CMAKE_SOURCE_DIR}/build/guest/lib/libzbcallprobe.so)
 
 # Needs tools/build_guest.sh and the extracted sysroot.
+add_executable(jni_bridge_test jni_bridge_test.cpp)
+target_link_libraries(jni_bridge_test PRIVATE zbmockjvm)
+add_test(NAME jni_bridge_test COMMAND jni_bridge_test
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/zbhost
+    ${CMAKE_SOURCE_DIR}/build/guest/lib)
+
+# Needs tools/build_guest.sh and the extracted sysroot.
 add_executable(thread_exit_test thread_exit_test.cpp)
 target_link_libraries(thread_exit_test PRIVATE zbcore)
 # Observe thread retirement at clear_process_signal_target. The wrap relies on no LTO for this

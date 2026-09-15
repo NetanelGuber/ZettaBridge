@@ -5,7 +5,9 @@
 #   guest/tests/*_dynamic.cpp   -> dynamic C++ executables linked with libzbthrow + libc++_shared
 #   guest/testlib/zbthrow.cpp   -> build/guest/lib/libzbthrow.so
 #   guest/testlib/zbcallprobe.c -> build/guest/lib/libzbcallprobe.so
+#   guest/testlib/zbjniprobe.c  -> build/guest/lib/libzbjniprobe.so
 #   guest/zbhost/zbhost.c       -> build/guest/zbhost
+#   guest/zbjni/zbjni.c         -> build/guest/lib/libzbjni.so (guest JNIEnv/JavaVM)
 #   guest/stubs/gen/*.S         -> build/guest/lib/<lib>.so host-call stub libraries
 #   guest/compat/zbcompat.c     -> build/guest/lib/libzbcompat.so
 set -eu
@@ -40,6 +42,11 @@ cp "$TOOLCHAIN/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" "$OUT/lib
 # Base AAPCS probe library for library_runtime_test.
 "$CC" -shared -fPIC -O2 -Wall -Wl,-soname,libzbcallprobe.so -o "$OUT/lib/libzbcallprobe.so" \
     "$ROOT/guest/testlib/zbcallprobe.c"
+# Guest JNIEnv and JavaVM, preloaded by zbhost; its probe for jni_bridge_test.
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wno-unused-parameter -I"$ROOT/core/include" -Wl,-soname,libzbjni.so \
+    -o "$OUT/lib/libzbjni.so" "$ROOT/guest/zbjni/zbjni.c" "$ROOT/guest/zbjni/gen/hostcalls.S"
+"$CC" -shared -fPIC -O2 -Wall -I"$ROOT/core/include" -Wl,-soname,libzbjniprobe.so -o "$OUT/lib/libzbjniprobe.so" \
+    "$ROOT/guest/testlib/zbjniprobe.c"
 for src in "$ROOT"/guest/tests/*_dynamic.cpp; do
     name=$(basename "$src" .cpp)
     "$CXX" -O2 -Wall -nostdlib++ -o "$OUT/$name" "$src" -L"$OUT/lib" -lzbthrow -lc++_shared
