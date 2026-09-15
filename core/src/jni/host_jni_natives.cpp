@@ -54,7 +54,7 @@ void install_native_dispatcher(HostJni::Impl* jni) {
 }
 
 std::int32_t HostJni::register_native(JniBackend::Env env, JniBackend::Ref cls, const char* name,
-                                      const char* signature, std::uint32_t guest_function) {
+                                      const char* signature, std::uint32_t guest_function, bool is_static) {
     Impl& jni = *impl_;
     std::string_view stripped = signature;
     if (!stripped.empty() && stripped.front() == '!') stripped.remove_prefix(1);  // pre-O fast JNI marker
@@ -66,7 +66,7 @@ std::int32_t HostJni::register_native(JniBackend::Env env, JniBackend::Ref cls, 
         if (error != 0) jni.backend.throw_new(env, error, (std::string(name) + signature).c_str());
         return -1;
     }
-    const std::int32_t slot = jni.slots.allocate(NativeTarget{guest_function, *shorty, false});
+    const std::int32_t slot = jni.slots.allocate(NativeTarget{guest_function, *shorty, is_static});
     if (slot < 0) {
         log("RegisterNatives: the native thunk pool is exhausted (%s%s)", name, signature);
         return -1;

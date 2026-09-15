@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 
 #include "zb/guest_thread.h"
 #include "zb/jni_backend.h"
@@ -57,7 +58,15 @@ public:
     // '!' from the signature, allocates a slot, and calls the backend once. Returns 0, or a
     // negative JNI error with the slot released.
     std::int32_t register_native(JniBackend::Env env, JniBackend::Ref cls, const char* name, const char* signature,
-                                 std::uint32_t guest_function);
+                                 std::uint32_t guest_function, bool is_static = false);
+
+    // Guest loader operations bound to the calling host thread. All calls use its cached carrier,
+    // or the currently running guest thread for a nested Java -> load transition. A failed loader
+    // lookup reads dlerror on that same guest thread.
+    std::uint32_t load_library_on_current(JniBackend::Env env, const std::string& path,
+                                          std::uint32_t guest_flags, std::string& error);
+    std::uint32_t find_symbol_on_current(JniBackend::Env env, std::uint32_t handle,
+                                         const std::string& name, std::string& error);
 
     struct Impl;
 

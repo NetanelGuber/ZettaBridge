@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace zb {
 
@@ -22,6 +23,17 @@ union JValue {
 };
 
 enum class JniCallKind : std::uint32_t { Virtual = 0, Nonvirtual = 1, Static = 2, NewObject = 3 };
+
+struct DeclaredNativeMethod {
+    std::string signature;
+    bool is_static = false;
+};
+
+enum class NativeLookupStatus {
+    Found,
+    MissingClass,
+    Error,
+};
 
 // The Java side of the JNI bridge. HostJni translates guest handles and guest memory and calls
 // exactly one backend function per guest JNI operation. Implementations: the real JNIEnv (Android
@@ -49,6 +61,15 @@ public:
     virtual Id from_reflected_field(Env env, Ref field) = 0;
     virtual Ref to_reflected_method(Env env, Ref cls, Id method, bool is_static) = 0;
     virtual Ref to_reflected_field(Env env, Ref cls, Id field, bool is_static) = 0;
+    // Loader-only reflection seam. Found returns a local class reference and every declared
+    // native with the requested name. MissingClass must clear only the expected class-not-found
+    // exception. Android supplies the plugin-scoped implementation in Phase 4d Task 3.
+    virtual NativeLookupStatus find_declared_natives(Env, const char*, const char*, Ref& cls,
+                                                     std::vector<DeclaredNativeMethod>& methods) {
+        cls = 0;
+        methods.clear();
+        return NativeLookupStatus::Error;
+    }
 
     // Objects.
     virtual Ref alloc_object(Env env, Ref cls) = 0;

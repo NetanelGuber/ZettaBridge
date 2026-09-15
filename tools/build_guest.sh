@@ -6,6 +6,7 @@
 #   guest/testlib/zbthrow.cpp   -> build/guest/lib/libzbthrow.so
 #   guest/testlib/zbcallprobe.c -> build/guest/lib/libzbcallprobe.so
 #   guest/testlib/zbjniprobe.c  -> build/guest/lib/libzbjniprobe.so
+#   guest/testlib/zbloadprobe.c -> build/guest/lib/libzbload*.so
 #   guest/zbhost/zbhost.c       -> build/guest/zbhost
 #   guest/zbjni/zbjni.c         -> build/guest/lib/libzbjni.so (guest JNIEnv/JavaVM)
 #   guest/stubs/gen/*.S         -> build/guest/lib/<lib>.so host-call stub libraries
@@ -47,6 +48,14 @@ cp "$TOOLCHAIN/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" "$OUT/lib
     -o "$OUT/lib/libzbjni.so" "$ROOT/guest/zbjni/zbjni.c" "$ROOT/guest/zbjni/gen/hostcalls.S"
 "$CC" -shared -fPIC -O2 -Wall -I"$ROOT/core/include" -Wl,-soname,libzbjniprobe.so -o "$OUT/lib/libzbjniprobe.so" \
     "$ROOT/guest/testlib/zbjniprobe.c"
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wno-unused-parameter -Wl,-soname,libzbloadprobe.so \
+    -o "$OUT/lib/libzbloadprobe.so" "$ROOT/guest/testlib/zbloadprobe.c"
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wno-unused-parameter -DZB_LOAD_VERSION=0x00010008 \
+    -Wl,-soname,libzbloadbad.so -o "$OUT/lib/libzbloadbad.so" "$ROOT/guest/testlib/zbloadprobe.c"
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wno-unused-parameter -DZB_LOAD_NO_ONLOAD \
+    -Wl,-soname,libzbloadnoonload.so -o "$OUT/lib/libzbloadnoonload.so" "$ROOT/guest/testlib/zbloadprobe.c"
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wno-unused-parameter -DZB_LOAD_UNKNOWN_EXPORT \
+    -Wl,-soname,libzbloadunknown.so -o "$OUT/lib/libzbloadunknown.so" "$ROOT/guest/testlib/zbloadprobe.c"
 for src in "$ROOT"/guest/tests/*_dynamic.cpp; do
     name=$(basename "$src" .cpp)
     "$CXX" -O2 -Wall -nostdlib++ -o "$OUT/$name" "$src" -L"$OUT/lib" -lzbthrow -lc++_shared

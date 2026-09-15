@@ -12,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -49,6 +50,8 @@ public:
                     Body body);
     void add_native(const std::string& cls, const std::string& name, const std::string& signature, bool is_static);
     void add_field(const std::string& cls, const std::string& name, const std::string& signature, bool is_static);
+    // Makes the next RegisterNatives call for signature fail with NoSuchMethodError.
+    void fail_native_registration(const std::string& signature);
 
     // Direct object access for tests and method bodies.
     ObjectId class_object(const std::string& name);
@@ -115,6 +118,8 @@ public:
     Id from_reflected_field(Env env, Ref field) override;
     Ref to_reflected_method(Env env, Ref cls, Id method, bool is_static) override;
     Ref to_reflected_field(Env env, Ref cls, Id field, bool is_static) override;
+    NativeLookupStatus find_declared_natives(Env env, const char* cls, const char* name, Ref& class_ref,
+                                             std::vector<DeclaredNativeMethod>& methods) override;
     Ref alloc_object(Env env, Ref cls) override;
     Ref get_object_class(Env env, Ref obj) override;
     bool is_instance_of(Env env, Ref obj, Ref cls) override;
@@ -243,6 +248,7 @@ private:
     std::unordered_map<std::uint64_t, Env> thread_envs_;
     Env next_env_ = 0xE000;
     std::vector<std::string> errors_;
+    std::optional<std::string> failed_registration_;
 };
 
 }  // namespace zb::mock

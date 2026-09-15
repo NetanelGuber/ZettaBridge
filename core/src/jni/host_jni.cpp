@@ -2,10 +2,12 @@
 // access, native calls, and the host-call switch.
 #include "host_jni_internal.h"
 
+#include <array>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "zb/log.h"
 #include "zb/process.h"
@@ -27,6 +29,101 @@ constexpr JniHostCallName kJniHostCallNames[] = {
 constexpr std::uint64_t kMaxGuestString = 64u << 20;
 
 thread_local JniThread t_thread;
+
+class ThreadEnvScope {
+public:
+    ThreadEnvScope(JniThread& state, JniBackend::Env env, std::string& error)
+        : state_(state), previous_(state.env) {
+        if (env == 0) {
+            error = "JNI loader received a null JNIEnv";
+            return;
+        }
+        if (previous_ != 0 && previous_ != env) {
+            error = "JNI loader received a JNIEnv from another call";
+            return;
+        }
+        state_.env = env;
+        active_ = true;
+    }
+
+    ~ThreadEnvScope() {
+        if (active_) state_.env = previous_;
+    }
+
+    bool active() const { return active_; }
+
+private:
+    JniThread& state_;
+    JniBackend::Env previous_;
+    bool active_ = false;
+};
+
+std::string loader_error(HostJni::Impl& jni, JniThread& state) {
+    const auto result = jni.invoke(state, jni.runtime.service_api().dlerror_fn, GuestCall{});
+    if (!result || result->r0 == 0) return "guest dlerror returned no message";
+    std::string text;
+    for (std::uint64_t i = 0; i < ZB_SERVICE_SCRATCH_SIZE; ++i) {
+        const std::uint64_t address = static_cast<std::uint64_t>(result->r0) + i;
+        if (address >= kGuestSpaceSize) return "guest dlerror returned an unreadable string";
+        const std::uint8_t* byte =
+            jni.runtime.memory().host_ptr(static_cast<std::uint32_t>(address), 1, kPageRead);
+        if (byte == nullptr) return "guest dlerror returned an unreadable string";
+        if (*byte == 0) return text;
+        text.push_back(static_cast<char>(*byte));
+    }
+    return "guest dlerror string is not terminated";
+}
+
+std::uint32_t loader_operation(HostJni::Impl& jni, JniBackend::Env env, bool symbol,
+                               std::uint32_t value, const std::string& text, std::string& error) {
+    error.clear();
+    if (!jni.ready.load()) {
+        error = "JNI bridge is not ready";
+        return 0;
+    }
+    if (text.find('\0') != std::string::npos || text.size() >= ZB_SERVICE_SCRATCH_SIZE) {
+        error = "guest loader string does not fit the bounded buffer";
+        return 0;
+    }
+    JniThread& state = jni.thread();
+    ThreadEnvScope env_scope(state, env, error);
+    if (!env_scope.active()) return 0;
+
+    GuestCall allocate;
+    allocate.regs = {static_cast<std::uint32_t>(text.size() + 1), 0, 0, 0};
+    const auto allocated = jni.invoke(state, jni.runtime.service_api().malloc_fn, allocate);
+    if (!allocated || allocated->r0 == 0) {
+        error = "guest malloc for the loader string failed";
+        return 0;
+    }
+    const std::uint32_t scratch = allocated->r0;
+    std::uint8_t* destination = jni.runtime.memory().host_ptr(scratch, text.size() + 1, kPageWrite);
+    if (destination == nullptr) {
+        error = "guest loader string buffer is not writable";
+    } else {
+        std::memcpy(destination, text.c_str(), text.size() + 1);
+    }
+
+    std::optional<GuestResult> result;
+    if (destination != nullptr) {
+        GuestCall call;
+        call.regs = symbol ? std::array<std::uint32_t, 4>{value, scratch, 0, 0}
+                           : std::array<std::uint32_t, 4>{scratch, value, 0, 0};
+        const std::uint32_t function = symbol ? jni.runtime.service_api().dlsym_fn
+                                              : jni.runtime.service_api().dlopen_fn;
+        result = jni.invoke(state, function, call);
+        if (!result) {
+            error = symbol ? "guest dlsym call failed" : "guest dlopen call failed";
+        } else if (result->r0 == 0) {
+            error = loader_error(jni, state);
+        }
+    }
+
+    GuestCall release;
+    release.regs = {scratch, 0, 0, 0};
+    (void)jni.invoke(state, jni.runtime.service_api().free_fn, release);
+    return result ? result->r0 : 0;
+}
 
 }  // namespace
 
@@ -222,6 +319,16 @@ bool HostJni::ready() const {
 
 std::uint32_t HostJni::guest_java_vm() const {
     return impl_->api.java_vm;
+}
+
+std::uint32_t HostJni::load_library_on_current(JniBackend::Env env, const std::string& path,
+                                               std::uint32_t guest_flags, std::string& error) {
+    return loader_operation(*impl_, env, false, guest_flags, path, error);
+}
+
+std::uint32_t HostJni::find_symbol_on_current(JniBackend::Env env, std::uint32_t handle,
+                                              const std::string& name, std::string& error) {
+    return loader_operation(*impl_, env, true, handle, name, error);
 }
 
 bool HostJni::handle_host_call(std::uint32_t index, GuestThread& thread) {

@@ -60,12 +60,12 @@
 
 **Produces:** validated `Java_*`/`JNI_OnLoad` export names from ELF32 and a platform-neutral loader that matches declared native methods, registers one method at a time, and invokes guest `JNI_OnLoad`.
 
-- [ ] Add host fixtures for SysV/GNU-hash dynamic symbols, stripped sections, malformed tables, duplicate exports, short/long JNI names, overload suffixes, a missing class, registration failure, supported/unsupported `JNI_OnLoad`, and no `JNI_OnLoad`.
-- [ ] Observe RED for the absent scanner/loader APIs.
-- [ ] Parse only bounded file-backed dynamic data; return names, never trust guest `st_value` as the runtime address. Resolve each selected name through guest `dlsym` to retain the Thumb bit.
-- [ ] Extend the backend with declared-native discovery returning exact descriptors and staticness. Short exports bind every matching declared native; long exports match the decoded argument descriptor. Missing classes are cleared/logged once; other binding failures abort that library load.
-- [ ] Add a HostJni current-thread loader surface so successful `dlopen`, per-thread `dlerror`, binding, and guest `JNI_OnLoad(JavaVM*, NULL)` share the caller's current/nested carrier.
-- [ ] Run `jni_loader_test`, `jni_bridge_test`, generator check, and the full host suite; commit `jni: load and bind guest JNI libraries`.
+- [x] Add host fixtures for SysV/GNU-hash dynamic symbols, stripped sections, malformed tables, duplicate exports, short/long JNI names, overload suffixes, a missing class, registration failure, supported/unsupported `JNI_OnLoad`, and no `JNI_OnLoad`.
+- [x] Observe RED for the absent scanner/loader APIs.
+- [x] Parse only bounded file-backed dynamic data; return names, never trust guest `st_value` as the runtime address. Resolve each selected name through guest `dlsym` to retain the Thumb bit.
+- [x] Extend the backend with declared-native discovery returning exact descriptors and staticness. Short exports bind every matching declared native; long exports match the decoded argument descriptor. Missing classes are cleared/logged once; other binding failures abort that library load.
+- [x] Add a HostJni current-thread loader surface so successful `dlopen`, per-thread `dlerror`, binding, and guest `JNI_OnLoad(JavaVM*, NULL)` share the caller's current/nested carrier.
+- [x] Run `jni_loader_test`, `jni_bridge_test`, generator check, and the full host suite; commit `jni: load and bind guest JNI libraries`.
 
 ### Task 3: Real ART discovery backend
 

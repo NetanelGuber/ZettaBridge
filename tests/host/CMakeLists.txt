@@ -1,6 +1,7 @@
 set(ZB_HOST_TESTS
     fault_pc_test
     elf_fixups_test
+    elf_symbols_test
     guest_memory_test
     jni_abi_test
     jni_handles_test
@@ -67,6 +68,14 @@ add_test(NAME library_runtime_test COMMAND library_runtime_test
 add_executable(jni_bridge_test jni_bridge_test.cpp)
 target_link_libraries(jni_bridge_test PRIVATE zbmockjvm)
 add_test(NAME jni_bridge_test COMMAND jni_bridge_test
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/zbhost
+    ${CMAKE_SOURCE_DIR}/build/guest/lib)
+
+# Needs tools/build_guest.sh and the extracted sysroot.
+add_executable(jni_loader_test jni_loader_test.cpp)
+target_link_libraries(jni_loader_test PRIVATE zbmockjvm)
+add_test(NAME jni_loader_test COMMAND jni_loader_test
     ${CMAKE_SOURCE_DIR}/sysroot
     ${CMAKE_SOURCE_DIR}/build/guest/zbhost
     ${CMAKE_SOURCE_DIR}/build/guest/lib)

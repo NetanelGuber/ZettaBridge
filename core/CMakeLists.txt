@@ -1,6 +1,7 @@
 add_library(zbcore STATIC
     src/cp15.cpp
     src/elf_fixups.cpp
+    src/elf_symbols.cpp
     src/elf_loader.cpp
     src/guest_memory.cpp
     src/guest_thread.cpp
@@ -12,6 +13,7 @@ add_library(zbcore STATIC
     src/jni/host_jni_objects.cpp
     src/jni/host_jni_values.cpp
     src/jni/host_jni_vm.cpp
+    src/jni/loader.cpp
     src/jni/mangle.cpp
     src/jni/native_call.cpp
     src/jni/native_thunks.cpp

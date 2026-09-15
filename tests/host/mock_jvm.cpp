@@ -181,6 +181,11 @@ void MockJvm::add_field(const std::string& cls, const std::string& name, const s
     fields_.push_back(field);
 }
 
+void MockJvm::fail_native_registration(const std::string& signature) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    failed_registration_ = signature;
+}
+
 MockJvm::Class* MockJvm::class_locked(const std::string& name) {
     auto it = classes_.find(name);
     if (it != classes_.end()) return &it->second;
@@ -620,6 +625,25 @@ MockJvm::Ref MockJvm::to_reflected_field(Env env, Ref cls, Id field, bool is_sta
     objects_[id - 1].reflected = static_cast<std::size_t>((field - kFieldBase) / 8) + 1;
     objects_[id - 1].reflected_field = true;
     return new_local_locked(env, id);
+}
+
+NativeLookupStatus MockJvm::find_declared_natives(Env env, const char* cls, const char* name,
+                                                  Ref& class_ref,
+                                                  std::vector<DeclaredNativeMethod>& methods) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    class_ref = 0;
+    methods.clear();
+    if (thread_locked(env, "find declared natives") == nullptr) return NativeLookupStatus::Error;
+    Class* found = class_locked(cls);
+    if (found == nullptr) return NativeLookupStatus::MissingClass;
+    class_ref = new_local_locked(env, found->object);
+    if (class_ref == 0) return NativeLookupStatus::Error;
+    for (const Method& method : methods_) {
+        if (method.cls == found->name && method.name == name && method.is_native) {
+            methods.push_back({method.signature, method.is_static});
+        }
+    }
+    return NativeLookupStatus::Found;
 }
 
 MockJvm::Ref MockJvm::alloc_object(Env env, Ref cls) {
@@ -1109,6 +1133,11 @@ std::int32_t MockJvm::register_native(Env env, Ref cls, const char* name, const 
     std::lock_guard<std::mutex> lock(mutex_);
     Class* c = class_ref_locked(env, cls, "RegisterNatives");
     if (c == nullptr) return -1;
+    if (failed_registration_ && *failed_registration_ == signature) {
+        failed_registration_.reset();
+        throw_locked(env, "java/lang/NoSuchMethodError", std::string("rejected native method ") + name + signature);
+        return -1;
+    }
     for (Method& method : methods_) {
         if (method.is_native && method.cls == c->name && method.name == name && method.signature == signature) {
             method.function = function;
