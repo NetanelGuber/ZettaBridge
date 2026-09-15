@@ -296,3 +296,13 @@ Orange Roulette smoke launch.
 - Do not push without the user's agreement.
 - Never commit `cc`, `cod`, screenshots or APKs; they are in `.gitignore`.
 - Before the repo goes public, check `CLAUDE.md`/`AGENTS.md` for anything private.
+
+## HANDOFF 2026-09-15 late (Claude at 85% limit)
+
+- **Task 5** (Android guest runtime) was being implemented by a Claude Opus agent.
+  - If there is no `android: connect proxy loads to the guest JNI runtime` commit, inspect the uncommitted changes and the plan's Task 5 checkboxes before continuing.
+  - Keep its risk list: ART clears the `JNI_OnLoad` exception, so preserve the detailed error yourself; a failed path cannot be retried; canonicalize paths; `set_class_loader` before loads; reject a second plugin.
+- **Review of Tasks 3-4** (`fcbd609`, `70989eb`, `299dd7f`) was running.
+  - If its findings are not recorded here, review again. Main open question: `getDeclaredMethods` resolves the types of every method, so one missing type fails a whole library load. Consider a fallback.
+- **Direction changed (user decision):** 3D games and performance work are goals after 2D (see CLAUDE.md Non-goals). The user will provide the Portal (NVIDIA Shield) APK as a future 3D target; it may need Tegra-specific GLES extensions.
+- **Remote:** `origin/main` = pushed `phase1-zbrun`. Push only with the user's agreement.
