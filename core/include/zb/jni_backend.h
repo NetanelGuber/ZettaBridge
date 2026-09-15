@@ -16,7 +16,9 @@ union JValue {
     std::int64_t j;
     float f;
     double d;
-    std::uint64_t l;
+    // Keep every byte deterministic for Java's zero-initialized fields and for
+    // narrow values later read through another JNI union member.
+    std::uint64_t l = 0;
 };
 
 enum class JniCallKind : std::uint32_t { Virtual = 0, Nonvirtual = 1, Static = 2, NewObject = 3 };

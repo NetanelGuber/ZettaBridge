@@ -41,6 +41,8 @@ int main() {
     });
     vm.add_field("zb/Base", "name", "Ljava/lang/String;", false);
     vm.add_field("zb/Base", "count", "J", true);
+    vm.add_field("zb/Base", "zeroStatic", "I", true);
+    vm.add_field("zb/Base", "zeroInstance", "I", false);
     vm.add_native("zb/Base", "run", "(IFFIFF)I", true);
 
     const auto env = vm.thread_env();
@@ -73,6 +75,10 @@ int main() {
     const auto got = vm.get_field(env, false, 'L', made, name_field).l;
     CHECK(vm.get_string_length(env, got) == 2 && vm.get_string_utf_length(env, got) == 3);
     const auto count = vm.get_field_id(env, base, "count", "J", true);
+    const auto zero_static = vm.get_field_id(env, base, "zeroStatic", "I", true);
+    const auto zero_instance = vm.get_field_id(env, base, "zeroInstance", "I", false);
+    CHECK(vm.get_field(env, true, 'I', base, zero_static).i == 0);
+    CHECK(vm.get_field(env, false, 'I', made, zero_instance).i == 0);
     JValue wide{};
     wide.j = -7;
     vm.set_field(env, true, 'J', base, count, wide);

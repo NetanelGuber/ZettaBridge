@@ -258,7 +258,11 @@ JNIEXPORT jint JNICALL zbjniprobe_calls(JNIEnv* env, jobject text) {
     (*env)->CallStaticVoidMethod(env, probe, secho_v);
     static_v_Void(env, probe, secho_v);
     (*env)->CallStaticVoidMethodA(env, probe, secho_v, NULL);
-    CHECK((*env)->GetStaticIntField(env, probe, calls) == 3 * 2 + 3 * 1 + 3 * 4);
+    const jint call_count = (*env)->GetStaticIntField(env, probe, calls);
+    if (call_count != 3 * 2 + 3 * 1 + 3 * 4) {
+        fprintf(stderr, "zbjniprobe_calls: void call count=%d, expected=21\n", call_count);
+        return __LINE__;
+    }
 
     /* Every argument type through ..., va_list and jvalue[]: mix returns 42 when all match. */
     const jmethodID mix = (*env)->GetStaticMethodID(env, probe, "mix", "(ZBCSIJFDLjava/lang/String;)I");
