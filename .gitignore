@@ -15,3 +15,8 @@ sysroot
 # local scratch
 .cache/
 .worktrees/
+
+# local session helpers and screenshots (never commit)
+cc
+cod
+Screenshot_*.jpg
