@@ -218,3 +218,24 @@ the host suite):
   - Treat `phase1-zbrun` as the source of truth.
   - Before deleting the worktree, check `git -C .worktrees/proto-4c diff 30c811c` for any fix that is not yet committed. Port such fixes on purpose.
 - **Next after the review: write plan 4d** (inputs above). Use the lean style of the 4c record: task list, decisions, tests, acceptance. Do not reproduce full code per task. Implement it task by task with a commit per task.
+
+## Phase 4c review result (Sonnet, reviewed committed 30c811c) - fix these first, then plan 4d
+
+**Verdict:** With fixes. Everything else matches the amended spec, and all earlier review decisions hold.
+
+1. **[Important] Reused native slot is published without synchronization.**
+   - Where: `core/src/jni/native_thunks.cpp`.
+   - `NativeSlots::allocate` writes `targets_[reused]` under the mutex but never touches `count_`, which is what lock-free `target()` relies on.
+   - Fix: add a per-slot atomic ready/generation flag. `allocate` stores it after the write; `target()` loads it before reading.
+2. **[Important] 32-bit size overflow in the guest buffer allocator.**
+   - Where: `guest/zbjni/zbjni.c` `zbjni_buffer_new`.
+   - `((size_t)length + 1) * size` wraps on arm32 for J/D arrays (length around 2^29). The host is then told a small allocation is several GB.
+   - Fix: compute the size in 64-bit and return NULL if it does not fit.
+3. **[Important] `NewDirectByteBuffer` capacity is not checked against `INT32_MAX`.**
+   - Where: `core/src/jni/host_jni_data.cpp`, and `core/android/jni_env_backend.cpp` passes it through unchanged.
+   - Fix: validate `[0, INT32_MAX]` in `host_jni_data.cpp` before calling the backend.
+4. **[Minor] Leaked guest env.** `JniThread` destructor (`core/src/jni/host_jni.cpp`) never frees the guest env of a guest pthread that attached without detaching.
+5. **[Minor] Misleading abort message.** `dispatch_native` (`core/src/jni/host_jni_natives.cpp`) says "has no target" when HostJni itself is missing.
+6. **[Housekeeping] Delete the prototype worktree.** `.worktrees/proto-4c` is stale, superseded prototype code. Delete it with `git worktree remove --force .worktrees/proto-4c` (it has nothing uncommitted of value).
+
+After fixing items 1-3 (with tests), run the full suite, `tools/gen_jni.py --check` and the Android link, then write plan 4d.
