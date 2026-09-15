@@ -42,11 +42,11 @@
 
 **Produces:** a bounded in-place ARM ELF32 fixer with structured status for absolute `DT_NEEDED`, `DT_TEXTREL`, and `DF_TEXTREL`, plus `zbfix` for developer scripts.
 
-- [ ] Create fixture copies covering unchanged ELF, slash and backslash `DT_NEEDED`, marker conversion, flags-only marker insertion, no spare dynamic slot, malformed/truncated headers, wrong class/endian/machine, and idempotence.
-- [ ] Run the new host test and record RED because the mutation API/CLI does not exist.
-- [ ] Port the Python algorithm with overflow/range checks before every file offset and preserve file bytes except dynamic words.
-- [ ] Switch the guest preparation path to `zbfix`; compare its outputs byte-for-byte with the Python implementation on all six Orange Roulette libraries.
-- [ ] Run `elf_fixups_test`, `elf_loader_test`, and all guest cases; commit `core: share guest ELF import fixups`.
+- [x] Create fixture copies covering unchanged ELF, slash and backslash `DT_NEEDED`, marker conversion, flags-only marker insertion, no spare dynamic slot, malformed/truncated headers, wrong class/endian/machine, and idempotence.
+- [x] Run the new host test and record RED because the mutation API/CLI does not exist.
+- [x] Port the Python algorithm with overflow/range checks before every file offset and preserve file bytes except dynamic words.
+- [x] Switch the guest preparation path to `zbfix`; compare its outputs byte-for-byte with the Python implementation on all six Orange Roulette libraries.
+- [x] Run `elf_fixups_test`, `elf_loader_test`, and all guest cases; commit `core: share guest ELF import fixups`.
 
 ### Task 2: Dynamic export discovery and binding model
 

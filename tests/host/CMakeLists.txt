@@ -1,5 +1,6 @@
 set(ZB_HOST_TESTS
     fault_pc_test
+    elf_fixups_test
     guest_memory_test
     jni_abi_test
     jni_handles_test

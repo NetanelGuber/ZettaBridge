@@ -25,6 +25,7 @@ set(DYNARMIC_USE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/dynarmic EXCLUDE_FROM_ALL)
 
 add_subdirectory(core)
+add_subdirectory(cli/zbfix)
 add_subdirectory(cli/zbrun)
 
 option(ZB_BUILD_TESTS "Build host tests" ON)

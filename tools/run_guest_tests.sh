@@ -4,6 +4,7 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ZBRUN=${ZBRUN:-$ROOT/build/host/cli/zbrun/zbrun}
+ZBFIX=${ZBFIX:-$ROOT/build/host/cli/zbfix/zbfix}
 SYSROOT=${ZB_SYSROOT:-$ROOT/sysroot}
 GUEST="$ROOT/build/guest"
 EXPECTED="$ROOT/guest/tests/expected"
@@ -46,7 +47,7 @@ CASE_ARGS=""
 if [ -f "$APK" ]; then
     mkdir -p "$OR_LIBS"
     unzip -ojq "$APK" 'lib/armeabi/*' -d "$OR_LIBS"
-    python3 "$ROOT/tools/fix_guest_lib.py" "$OR_LIBS"/*.so >"$GUEST/or_fixups.log"
+    "$ZBFIX" "$OR_LIBS"/*.so >"$GUEST/or_fixups.log"
     CASE_ARGS="--env LD_LIBRARY_PATH=$GUEST/lib"
     run_case or_dlopen_dynamic 0 "$OR_LIBS"
     CASE_ARGS=""
