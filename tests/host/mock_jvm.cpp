@@ -1,5 +1,6 @@
 #include "mock_jvm.h"
 
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -15,6 +16,12 @@ namespace {
 constexpr std::uint64_t kRefBase = 0x100000000000ull;
 constexpr std::uint64_t kMethodBase = 0x200000000000ull;
 constexpr std::uint64_t kFieldBase = 0x300000000000ull;
+
+std::uint64_t current_thread_token() {
+    static std::atomic<std::uint64_t> next{1};
+    thread_local const std::uint64_t token = next.fetch_add(1, std::memory_order_relaxed);
+    return token;
+}
 
 std::u16string decode_utf(const char* utf) {
     std::u16string out;
@@ -224,7 +231,7 @@ MockJvm::RefEntry* MockJvm::entry_locked(Ref ref) {
 }
 
 MockJvm::Thread* MockJvm::thread_locked(Env env, const char* function) {
-    const auto current = thread_envs_.find(std::this_thread::get_id());
+    const auto current = thread_envs_.find(current_thread_token());
     if (current == thread_envs_.end() || current->second != env) {
         error_locked("%s: JNIEnv 0x%llx is not the JNIEnv of the calling thread", function,
                      static_cast<unsigned long long>(env));
@@ -405,11 +412,12 @@ void* MockJvm::native_function(const std::string& cls, const std::string& name, 
 }
 
 MockJvm::Env MockJvm::attach_locked(bool daemon, const std::string& name) {
-    const auto it = thread_envs_.find(std::this_thread::get_id());
+    const std::uint64_t token = current_thread_token();
+    const auto it = thread_envs_.find(token);
     if (it != thread_envs_.end()) return it->second;
     const Env env = next_env_;
     next_env_ += 0x100;
-    thread_envs_[std::this_thread::get_id()] = env;
+    thread_envs_[token] = env;
     Thread& thread = threads_[env];
     thread.name = name;
     thread.daemon = daemon;
@@ -1161,7 +1169,7 @@ MockJvm::Env MockJvm::attach_current_thread(bool daemon, const char* name, Ref g
 
 std::int32_t MockJvm::detach_current_thread() {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = thread_envs_.find(std::this_thread::get_id());
+    const auto it = thread_envs_.find(current_thread_token());
     if (it == thread_envs_.end()) return -1;
     Thread& thread = threads_[it->second];
     while (!thread.frames.empty()) pop_frame_locked(thread);

@@ -240,7 +240,7 @@ private:
     std::deque<Object> objects_;
     std::deque<RefEntry> refs_;
     std::unordered_map<Env, Thread> threads_;
-    std::unordered_map<std::thread::id, Env> thread_envs_;
+    std::unordered_map<std::uint64_t, Env> thread_envs_;
     Env next_env_ = 0xE000;
     std::vector<std::string> errors_;
 };

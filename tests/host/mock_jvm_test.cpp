@@ -177,6 +177,26 @@ int main() {
     }).join();
     CHECK(vm.errors().size() == 5);
 
+    // A completed Java thread must not make a later thread with the same recycled std::thread::id
+    // look attached under the old environment.
+    std::thread::id retired_id;
+    std::thread([&] {
+        retired_id = std::this_thread::get_id();
+        CHECK(vm.thread_env() != 0);
+    }).join();
+    bool reused_id = false;
+    bool fresh_attachment = false;
+    for (int attempt = 0; attempt < 64 && !reused_id; ++attempt) {
+        std::thread([&] {
+            if (std::this_thread::get_id() != retired_id) return;
+            reused_id = true;
+            const auto attached = vm.attach_current_thread(true, "reused-worker", 0);
+            fresh_attachment = vm.thread_name(attached) == "reused-worker";
+            CHECK(vm.detach_current_thread() == 0);
+        }).join();
+    }
+    CHECK(reused_id && fresh_attachment);
+
     // Closing a native frame frees what it created and reports it.
     CHECK(frame.close() > 0 && vm.live_local_refs(env) == 0);
     MockJvm::NativeFrame call(vm, env);
