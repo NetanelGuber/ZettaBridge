@@ -16,8 +16,10 @@ English and ASCII only.
 - **Phase 4a (JNI host units) done.** All 10 host tests and all 9 guest tests pass.
 - **Phase 4b done.** All six tasks (nested call frame, stop dispatch, `zbhost`
   protocol, service-thread runtime, carriers, regression/docs) are committed and
-  reviewed. Host tests are 15/15. Next is plan 4c (generated guest `JNIEnv`, host JNI
-  backend, mock JNI test).
+  reviewed. Host tests are 15/15. Phase 4c followed.
+- **Phase 4c done (2026-09-15).** Guest `JNIEnv`/`JavaVM`, host JNI calls against
+  `JniBackend`, Java -> guest dispatch, `RegisterNatives`, attach/detach; committed directly
+  to `phase1-zbrun` (see "Phase 4c done" below). Host tests are 18/18. Next is plan 4d.
 - Work continues on branch `codex/phase4b-library-runtime` in worktree
   `.worktrees/phase4b-library-runtime`. The parent branch is
   `codex/phase4a-jni-host-units`.
@@ -146,3 +148,21 @@ obsolete: the Task 4-5 work it described as a prototype is committed at `d3b7119
 - **Fix.** `PluginContext` wraps every derived context (configuration, display, window,
   attribution, `createContext`, device-protected storage) and package contexts for its own
   package in a `PluginContext` with plugin resources.
+
+## Phase 4c done
+
+Record: `docs/superpowers/plans/2026-09-15-phase4c-guest-jnienv.md`. Prototyped and verified in
+`.worktrees/proto-4c`, then committed along these boundaries (each commit builds and passes
+the host suite):
+
+| Task | Commit |
+|---|---|
+| 4c-1.1 JNI protocol and `tools/gen_jni.py` generated tables | `2fb99a9` |
+| 4c-1.2 `JniBackend` interface and mock JVM | `e9d2731` |
+| 4c-1.3 `HostJni` core, object host calls, guest `libzbjni.so`, `jni_bridge_test` | `81887b9` |
+| 4c-1.4 `Call*Method` and field host calls | `dbc6c2e` |
+| 4c-1.5 string, array, direct buffer host calls | `608a21d` |
+| 4c-2.1 `NativeSlots::release` | `48a774f` |
+| 4c-2.2 Java -> guest dispatcher and `RegisterNatives` | `6b607b2` |
+| 4c-2.3 `GetEnv`, `AttachCurrentThread`, `DetachCurrentThread` | `c567611` |
+| 4c-2.4 `JniEnvBackend` over the real `JNIEnv` (compile-only) | `43ec3e2` |

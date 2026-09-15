@@ -1,6 +1,7 @@
 # Part 1: Java <-> native JNI bridge (Phase 4)
 
-Status: design approved 2026-09-14. Builds on
+Status: design approved 2026-09-14; amended 2026-09-15 by Phase 4c
+(`docs/superpowers/plans/2026-09-15-phase4c-guest-jnienv.md`, "Spec amendments"). Builds on
 `2026-09-13-guest-system-boundary-design.md` (part 3): guest process, host calls,
 nested host->guest calls, carrier threads.
 
@@ -25,7 +26,7 @@ Measured surface of `jni.h` (NDK r29):
 - `JNINativeInterface` has 229 functions:
   - 93 `Call*Method`: 31 each with `...`, `va_list` and `const jvalue*`;
   - 34 buffer get/release functions.
-- `JNIInvokeInterface` has 6 functions.
+- `JNIInvokeInterface` has 5 functions (plus 3 reserved slots).
 
 Orange Roulette needs:
 - 20 Java `native` methods (19 in `org.haxe.lime.Lime`, 1 in `org.haxe.HXCPP`);
@@ -162,15 +163,21 @@ builds. The dispatcher builds the guest call:
   called native, or a borrower inside a host call): nested host->guest call on its own
   JIT (part 3, "Host-to-guest call"; `LibraryRuntime::call_on_current`).
 - **Any other Java thread** (UI thread, `GLThread`, binder threads): borrow a carrier
-  (part 3, "Threads"). The binding lasts for the host thread's lifetime and is released
-  by a host `pthread_key` destructor.
+  (part 3, "Threads"). The binding lasts for the host thread's lifetime. It is kept in a
+  host `thread_local` (`JniThread`) whose destructor frees the thread's guest `JNIEnv` on
+  the carrier and then releases the lease.
 
 ### Frame, exceptions, crashes
 
-- **Handle frame.** Every Java -> guest call opens a local handle frame. Handles the
-  guest created during the call are released when it returns.
+- **Handle frame.** Every Java -> guest call opens a local handle frame: a backend
+  `PushLocalFrame`/`PopLocalFrame` pair plus a guest handle frame. Handles and host
+  references the guest created during the call are released when it returns; an `L` result
+  passes through `PopLocalFrame`. Argument references are never deleted (ART warns and
+  dumps the stack on `DeleteLocalRef` of a JNI transition reference).
 - **Java exceptions** raised during the call stay pending in the real `JNIEnv`. ART
   throws them after the native method returns, exactly as for normal native code.
+- **A guest call that fails** without a pending Java exception cannot be reported to Java
+  and is a fatal error.
 - **Fatal guest signals** produce the translator crash report and end the `:guest`
   process. The launcher process is unaffected.
 
@@ -190,7 +197,8 @@ builds. The dispatcher builds the guest call:
 - **Shorty cache.** The `GetMethodID` / `GetStaticMethodID` host calls return the shorty
   together with the id, computed on the host from the signature ART accepted. The guest
   caches id -> shorty, so there is no second descriptor parser. Ids obtained otherwise
-  (`FromReflectedMethod`) ask the host once.
+  (`FromReflectedMethod`) ask the host once. The cache is a lock-free two-level table over
+  the dense guest ids (4,194,304 entries); beyond it `GetMethodShorty` asks the host.
 - **Buffers.** These functions allocate with guest `malloc`, fill through a host
   `Get*Region` call, and set `*isCopy = JNI_TRUE`:
   - `Get<Prim>ArrayElements`, `GetPrimitiveArrayCritical`;
@@ -206,18 +214,25 @@ builds. The dispatcher builds the guest call:
 
   Copying is allowed by the JNI specification.
 
+  Every buffer starts with a header (magic, length, type); a release with a pointer no Get
+  function returned is a `FatalError`. `GetStringUTFRegion` writes a NUL terminator, as
+  ART does.
+
 ### Host side
 
-About 70 flat host calls. Grouped:
+About 60 flat host calls at indices `0xFC00-0xFCFF` (`core/include/zb/jni_protocol.h`,
+generated list in `tools/gen_jni.py`); `0xFB00 + slot` is reserved for slots served by host
+stubs. `HostJni` serves them against an abstract `JniBackend` (opaque 64-bit env, refs and
+ids; the mock JVM in tests, the real `JNIEnv` on Android). Grouped:
 
 | Group | Host calls |
 |---|---|
 | classes, methods, fields | `FindClass`, `GetSuperclass`, `IsAssignableFrom`, `GetMethodID`/static, `GetFieldID`/static, reflection conversions, `GetMethodShorty` |
 | objects | `AllocObject`, `NewObjectA`, `GetObjectClass`, `IsInstanceOf`, `IsSameObject`, `GetObjectRefType` |
-| calls | one `CallMethodA(kind, return type, obj/class, methodID, jvalue*)`; kind is virtual, nonvirtual or static |
+| calls | one `CallMethodA(kind, return type, obj, class, methodID, jvalue*)`; kind is virtual, nonvirtual, static or new-object (all `NewObject*`); the return type is checked against the method shorty |
 | fields | `GetField` / `SetField`, instance and static, with a type code |
 | strings | `NewString`, `NewStringUTF`, `GetStringLength`, `GetStringUTFLength`, `GetStringRegion`, `GetStringUTFRegion` |
-| arrays | `GetArrayLength`, `NewObjectArray`, `Get/SetObjectArrayElement`, `NewPrimArray(type)`, `Get/SetPrimArrayRegion(type)` |
+| arrays | `GetArrayLength`, `GetArrayElementType`, `NewObjectArray`, `Get/SetObjectArrayElement`, `NewPrimArray(type)`, `Get/SetPrimArrayRegion(type)` |
 | references | `NewGlobalRef`, `DeleteGlobalRef`, `NewLocalRef`, `DeleteLocalRef`, `NewWeakGlobalRef`, `DeleteWeakGlobalRef`, `EnsureLocalCapacity`, `PushLocalFrame`, `PopLocalFrame` |
 | exceptions | `Throw`, `ThrowNew`, `ExceptionOccurred`, `ExceptionDescribe`, `ExceptionClear`, `ExceptionCheck`, `FatalError` |
 | other | `MonitorEnter`/`Exit`, `RegisterNatives`, `UnregisterNatives`, direct buffers, `GetJavaVM`, JavaVM operations |
@@ -241,11 +256,13 @@ About 70 flat host calls. Grouped:
   `base + addr`.
 - **`GetDirectBufferAddress`** returns the guest address when the buffer lies inside the
   guest reservation. Otherwise it returns `NULL` and logs once (see Limits).
-- **`GetEnv`** returns this thread's guest `JNIEnv` if attached, else `JNI_EDETACHED`.
+- **`GetEnv`** returns this thread's guest `JNIEnv` if attached, else `JNI_EDETACHED`; an
+  unknown version returns `JNI_EVERSION`.
 - **`AttachCurrentThread` / `AttachCurrentThreadAsDaemon` from a guest thread.** Guest
   threads are real host threads, so the host calls the real function on itself and
-  allocates the guest `JNIEnv`.
-- **`DetachCurrentThread`** detaches on the host and frees the guest `JNIEnv`.
+  allocates the guest `JNIEnv`. A thread that already has a `JNIEnv` gets it back.
+- **`DetachCurrentThread`** detaches on the host and frees the guest `JNIEnv`. It returns
+  `JNI_ERR` on a thread that was not attached through the guest or still has Java frames.
 - **`DestroyJavaVM`** returns `JNI_ERR`.
 
 ### Performance fallback ("all on host")
@@ -256,6 +273,7 @@ About 70 flat host calls. Grouped:
 - **Moving a hot slot to the host is a config change.** Guests and other slots are
   unaffected.
 - **`ZB_JNI_STATS=1`** counts calls and time per slot and prints the top entries at exit.
+  (Deferred: Phase 4c generates the slot stubs but implements no host stub and no stats.)
 - **First candidates:** `Call*MethodV`, `Get/Set<Float|Int>ArrayRegion`,
   `GetPrimitiveArrayCritical`. For 3D titles the bigger costs are expected in GLES
   (part 4) and Dynarmic floating point (`docs/perf-notes.md`). Measure before moving
@@ -296,11 +314,14 @@ About 70 flat host calls. Grouped:
 - **`jni_handles_test`**: encode/decode, frames and `PushLocalFrame`/`PopLocalFrame`,
   global/weak lifetimes, invalid-handle detection.
 - **`jni_mangle_test`**: `Java_*` name decoding, including escapes and the `__sig` form.
-- **Mock JNI under `zbrun`.** A toy host Java model (a few classes, strings, arrays,
-  exceptions) behind the same host-call interface, so `libzbjni.so` runs end to end
-  without ART.
-  - The guest test `jni_mock_dynamic` covers every `Call*` form and the buffer release
-    modes.
+- **`mock_jvm_test`**: the mock JVM behind `JniBackend` (classes, dispatch, strings,
+  arrays, frames, references, exceptions, discipline errors).
+- **`jni_bridge_test`**: `libzbjni.so` preloaded into the `LibraryRuntime`, host calls served
+  against the mock, and the guest probe `libzbjniprobe.so`: every `Call*` form and return
+  type, fields, strings, arrays with all release modes, references, exceptions, direct
+  buffers, `RegisterNatives`, thunk dispatch from two Java threads with nesting, and
+  `AttachCurrentThread` from a guest pthread. It replaces the planned `jni_mock_dynamic`
+  guest test under `zbrun`.
 
 ### Device test T7 (extends the T6 app)
 
@@ -340,7 +361,10 @@ About 70 flat host calls. Grouped:
 | `core/src/jni/mangle.cpp` | C++ | `Java_*` name decoding |
 | `core/src/jni/thunks.S`, `native_call.cpp` | asm, C++ | thunk pool, common entry, AAPCS32 marshaling |
 | `core/src/jni/handles.cpp` | C++ | handle tables |
-| `core/src/jni/host_jni.cpp` | C++ | host side of the flat JNI host calls |
+| `core/src/jni/host_jni.cpp`, `host_jni_{objects,values,data,natives,vm}.cpp` | C++ | `HostJni`: flat JNI host calls by group, native call frames, thunk dispatcher, `RegisterNatives`, `JavaVM` |
+| `core/include/zb/jni_protocol.h`, `core/include/zb/jni_backend.h` | C, C++ | host-call ranges and guest handshake; the abstract Java side |
+| `core/android/jni_env_backend.cpp` | C++ | `JniBackend` over the real `JNIEnv` (Android build) |
+| `tests/host/mock_jvm.*`, `guest/testlib/zbjniprobe.c` | C++, C arm32 | mock JVM and guest probe for `jni_bridge_test` |
 | `guest/zbjni/zbjni.c` -> `libzbjni.so` | C, arm32 | guest `JNIEnv`/`JavaVM` tables |
 | `tools/gen_jni.py` | Python | slot table and host-call list from `jni.h` plus the host-fallback config |
 | `guest/zbhost/zbhost.c` | C, arm32 | library-mode service executable (part 3) |

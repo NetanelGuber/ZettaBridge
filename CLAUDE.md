@@ -25,7 +25,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   service thread that loads arm32 libraries and serves host->guest calls; other host
   threads borrow leased carrier threads that inherit signal mask, altstack and FPSCR;
   futex parking is signal-interruptible.
-- Next: plan 4c (synthesized 32-bit guest `JNIEnv`).
+- Phase 4c (guest `JNIEnv`/`JavaVM`, Java -> guest native calls, `RegisterNatives`) is done:
+  `docs/superpowers/plans/2026-09-15-phase4c-guest-jnienv.md`. `jni_bridge_test` runs
+  `libzbjni.so` against a mock JVM; the real `JNIEnv` backend is compile-only so far.
+- Next: plan 4d (proxy library, `onProxyLoaded`, `Java_*` binding, T7, Orange Roulette
+  smoke test).
 - Work is on branch `phase1-zbrun` (local only). The `codex/phase4a-jni-host-units` and
   `codex/phase4b-library-runtime` branches are merged into it.
 
@@ -75,9 +79,15 @@ Code map. `core/` is C++20 with no Android dependency:
   constants (Phase 4b).
 - `library_runtime`: the process-lifetime library-mode runtime: the service queue on
   `zbhost`, the guest loader, and carrier leases (Phase 4b).
+- `jni_protocol`, `jni_backend`, `host_jni` (`core/src/jni/host_jni*.cpp`): the JNI bridge
+  (Phase 4c): the host-call ABI, the abstract Java side (`JniBackend`; the real one is
+  `core/android/jni_env_backend.cpp`), and `HostJni`, which serves the guest `JNIEnv` host
+  calls, runs Java -> guest native calls, and binds natives to thunk slots.
 
 Elsewhere: `guest/tests/` holds arm32 test programs, with expected stdout in
-`guest/tests/expected/`. Plans are in `docs/superpowers/plans/`.
+`guest/tests/expected/`. `guest/zbjni/zbjni.c` is the guest `JNIEnv`/`JavaVM`
+(`libzbjni.so`, preloaded by `zbhost`); `tools/gen_jni.py` generates its tables and the JNI
+host-call list. `tests/host/mock_jvm.*` is the mock JVM. Plans are in `docs/superpowers/plans/`.
 
 Run 32-bit (armeabi / armeabi-v7a) Android apps on 64-bit-only ARM devices.
 
@@ -292,7 +302,16 @@ functions. Accept: the game is playable start to finish.
   PI futex commands for every thread.
 - **Host-call indices `0xFE00-0xFEFF` are reserved for the library runtime**
   (`READY` = `0xFE00`, carrier `PARK` = `0xFE01`). Generated stub indices
-  (`tools/gen_stubs.py`) stay below `0xFE00`.
+  (`tools/gen_stubs.py`) stay below `0xFB00`.
+- **Host-call indices `0xFB00-0xFCFF` belong to the JNI bridge** (`jni_protocol.h`): flat
+  JNI calls at `0xFC00+`, host-stub slots at `0xFB00 + slot`.
+- **Never delete the argument references of a JNI native call.** ART logs "failed to find
+  entry" and dumps the stack on `DeleteLocalRef` of a transition reference. `HostJni` brackets
+  native calls with `PushLocalFrame`/`PopLocalFrame` instead; the mock JVM reports such
+  deletions as errors.
+- **JNI tables and host-call lists are generated.** `tools/gen_jni.py` writes
+  `core/include/zb/jni_hostcalls.h`, `core/src/gen/jni_hostcalls.inc` and `guest/zbjni/gen/*`;
+  never edit them by hand. `gen_jni_check` (ctest) fails when they are stale.
 
 ## First test case (not the end goal)
 
