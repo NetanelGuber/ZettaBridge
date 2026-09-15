@@ -19,6 +19,15 @@ endforeach()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME gen_jni_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gen_jni.py --check)
 
+# Mock JVM behind JniBackend, shared by the JNI tests.
+add_library(zbmockjvm STATIC mock_jvm.cpp)
+target_link_libraries(zbmockjvm PUBLIC zbcore)
+target_compile_options(zbmockjvm PRIVATE -Wall -Wextra)
+
+add_executable(mock_jvm_test mock_jvm_test.cpp)
+target_link_libraries(mock_jvm_test PRIVATE zbmockjvm)
+add_test(NAME mock_jvm_test COMMAND mock_jvm_test)
+
 # Needs build/guest/hello_static from tools/build_guest.sh.
 add_executable(elf_loader_test elf_loader_test.cpp)
 target_link_libraries(elf_loader_test PRIVATE zbcore)
