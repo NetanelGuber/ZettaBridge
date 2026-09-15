@@ -247,7 +247,8 @@ bool HostJni::handle_host_call(std::uint32_t index, GuestThread& thread) {
         std::abort();
     }
     JniCall call(jni, thread, jni.thread(), index);
-    if (jni.serve_objects(call) || jni.serve_values(call) || jni.serve_data(call) || jni.serve_natives(call)) {
+    if (jni.serve_vm(call) || jni.serve_objects(call) || jni.serve_values(call) || jni.serve_data(call) ||
+        jni.serve_natives(call)) {
         return true;
     }
     log("JNI host call 0x%x (%s) is not implemented", index, jni_host_call_name(index));

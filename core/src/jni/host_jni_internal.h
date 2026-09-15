@@ -24,6 +24,7 @@ struct JniThread {
     HostJni::Impl* owner = nullptr;
     JniBackend::Env env = 0;      // host JNIEnv of this thread while it has one
     std::uint32_t guest_env = 0;  // guest JNIEnv*, allocated on first use
+    bool attached = false;        // attached through the guest AttachCurrentThread
     int native_depth = 0;         // open call_native frames
     int user_frames = 0;          // guest PushLocalFrame frames of the innermost native call
     LocalHandles locals;
@@ -115,6 +116,7 @@ struct HostJni::Impl {
     bool serve_values(JniCall& call);
     bool serve_data(JniCall& call);
     bool serve_natives(JniCall& call);
+    bool serve_vm(JniCall& call);
 };
 
 const char* jni_host_call_name(std::uint32_t index);

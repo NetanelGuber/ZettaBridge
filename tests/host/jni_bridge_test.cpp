@@ -128,6 +128,20 @@ void define_native_model(MockJvm& vm) {
     });
 }
 
+// Java methods that report the calling Java thread.
+void define_thread_model(MockJvm& vm) {
+    vm.add_method("zb/Probe", "threadName", "()Ljava/lang/String;", true, [](MockCall& call) {
+        JValue out{};
+        out.l = call.vm.new_string_object(to_u16(call.vm.thread_name(call.env)));
+        return out;
+    });
+    vm.add_method("zb/Probe", "threadDaemon", "()Z", true, [](MockCall& call) {
+        JValue out{};
+        out.z = call.vm.thread_daemon(call.env) ? 1 : 0;
+        return out;
+    });
+}
+
 zb::LibraryRuntimeOptions options(char** argv) {
     zb::LibraryRuntimeOptions result;
     result.sysroot = argv[1];
@@ -151,6 +165,7 @@ Bridge start_bridge(char** argv) {
     bridge.vm = new MockJvm();
     define_probe_model(*bridge.vm);
     define_native_model(*bridge.vm);
+    define_thread_model(*bridge.vm);
     bridge.runtime = new zb::LibraryRuntime();
     bridge.jni = new zb::HostJni(*bridge.runtime, *bridge.vm, 64);
     zb::HostJni* jni = bridge.jni;
@@ -321,6 +336,13 @@ void check_natives(Bridge& bridge) {
     CHECK(wait_thread_count(*bridge.runtime, baseline));
 }
 
+void check_vm(Bridge& bridge) {
+    CHECK(run_probe(bridge, "zbjniprobe_vm") == 0);
+    const std::size_t attached = bridge.vm->attached_threads();
+    CHECK(run_probe(bridge, "zbjniprobe_attach") == 0);
+    CHECK(bridge.vm->attached_threads() == attached);  // the guest worker attached and detached
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -331,6 +353,7 @@ int main(int argc, char** argv) {
     check_values(bridge);
     check_data(bridge);
     check_natives(bridge);
+    check_vm(bridge);
     const auto errors = bridge.vm->errors();
     for (const auto& error : errors) std::fprintf(stderr, "mock error: %s\n", error.c_str());
     CHECK(errors.empty());

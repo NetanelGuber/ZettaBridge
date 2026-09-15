@@ -526,3 +526,66 @@ JNIEXPORT jint JNICALL zbjniprobe_register(JNIEnv* env, jobject unused) {
     return 0;
 }
 
+/* ---- JavaVM ----------------------------------------------------------------------------- */
+
+JNIEXPORT jint JNICALL zbjniprobe_vm(JNIEnv* env, jobject unused) {
+    JavaVM* vm = NULL;
+    CHECK((*env)->GetJavaVM(env, &vm) == JNI_OK && vm != NULL);
+    JNIEnv* current = NULL;
+    CHECK((*vm)->GetEnv(vm, (void**)&current, JNI_VERSION_1_6) == JNI_OK && current == env);
+    CHECK((*vm)->GetEnv(vm, (void**)&current, 0x7fff) == JNI_EVERSION && current == NULL);
+    JNIEnv* attached = NULL;
+    CHECK((*vm)->AttachCurrentThread(vm, &attached, NULL) == JNI_OK && attached == env);
+    CHECK((*vm)->DetachCurrentThread(vm) == JNI_ERR); /* Java frames are on this thread */
+    CHECK((*vm)->DestroyJavaVM(vm) == JNI_ERR);
+    return 0;
+}
+
+struct attach_job {
+    JavaVM* vm;
+    int line;
+    int32_t tid;
+};
+
+static int attach_worker(struct attach_job* job) {
+    JavaVM* vm = job->vm;
+    JNIEnv* env = NULL;
+    job->tid = gettid();
+    CHECK((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) == JNI_EDETACHED && env == NULL);
+    JavaVMAttachArgs args = {JNI_VERSION_1_6, "zbjni-worker", NULL};
+    CHECK((*vm)->AttachCurrentThreadAsDaemon(vm, &env, &args) == JNI_OK && env != NULL);
+    JNIEnv* again = NULL;
+    CHECK((*vm)->GetEnv(vm, (void**)&again, JNI_VERSION_1_6) == JNI_OK && again == env);
+    const jclass probe = (*env)->FindClass(env, "zb/Probe");
+    const jmethodID thread_name = (*env)->GetStaticMethodID(env, probe, "threadName", "()Ljava/lang/String;");
+    const jmethodID thread_daemon = (*env)->GetStaticMethodID(env, probe, "threadDaemon", "()Z");
+    CHECK(thread_name != NULL && thread_daemon != NULL);
+    const jstring name = (*env)->CallStaticObjectMethod(env, probe, thread_name);
+    const char* chars = (*env)->GetStringUTFChars(env, name, NULL);
+    CHECK(chars != NULL && strcmp(chars, "zbjni-worker") == 0);
+    (*env)->ReleaseStringUTFChars(env, name, chars);
+    CHECK((*env)->CallStaticBooleanMethod(env, probe, thread_daemon) == JNI_TRUE);
+    (*env)->DeleteLocalRef(env, name);
+    (*env)->DeleteLocalRef(env, probe);
+    CHECK((*vm)->DetachCurrentThread(vm) == JNI_OK);
+    CHECK((*vm)->GetEnv(vm, (void**)&again, JNI_VERSION_1_6) == JNI_EDETACHED);
+    CHECK((*vm)->DetachCurrentThread(vm) == JNI_ERR);
+    return 0;
+}
+
+static void* attach_main(void* arg) {
+    struct attach_job* job = arg;
+    job->line = attach_worker(job);
+    return NULL;
+}
+
+/* A guest pthread attaches, calls Java, and detaches. */
+JNIEXPORT jint JNICALL zbjniprobe_attach(JNIEnv* env, jobject unused) {
+    struct attach_job job = {NULL, -1, 0};
+    CHECK((*env)->GetJavaVM(env, &job.vm) == JNI_OK);
+    pthread_t thread;
+    CHECK(pthread_create(&thread, NULL, attach_main, &job) == 0);
+    CHECK(pthread_join(thread, NULL) == 0);
+    CHECK(job.tid != 0 && job.tid != gettid());
+    return job.line;
+}
