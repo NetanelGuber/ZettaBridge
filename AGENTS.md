@@ -166,3 +166,47 @@ the host suite):
 | 4c-2.2 Java -> guest dispatcher and `RegisterNatives` | `6b607b2` |
 | 4c-2.3 `GetEnv`, `AttachCurrentThread`, `DetachCurrentThread` | `c567611` |
 | 4c-2.4 `JniEnvBackend` over the real `JNIEnv` (compile-only) | `43ec3e2` |
+
+## HANDOFF 2026-09-15 (after Phase 4c)
+
+- **Phase 4c is committed** on `phase1-zbrun` (`2fb99a9`..`30c811c`, 10 commits). Last verified
+  results:
+  - host tests 18/18;
+  - guest tests 9/9, including Orange Roulette `or_dlopen_dynamic`;
+  - `jni_bridge_test` passed 20 of 20 repeated runs;
+  - `tools/gen_jni.py --check` passes;
+  - the Android build links.
+- **Code review of 4c:** a Sonnet review of `2141dc6..30c811c` was running when this note was
+  written. If its findings are not recorded below, run a new review before building 4d on top.
+  Focus on:
+  - the dispatcher thread choice and `thread_local` cleanup at thread exit;
+  - `JniCall` argument capture and guest pointer bounds;
+  - integer overflow in buffer sizes;
+  - `NativeSlots::release`;
+  - JNI misuse in the real backend (`core/android/jni_env_backend.*`, compile-only).
+- **Prototype worktree:** `.worktrees/proto-4c` is detached, and its contents are already
+  committed. It can be removed.
+- **Next: plan 4d (Android integration).** Inputs gathered:
+  - The arm32 sysroot is 10 files / 4 MB. `zbhost`, `libzbjni.so` and `libzbcompat.so` are under
+    50 KB. Bundle all of them in the launcher APK; no download step is needed.
+  - Port `tools/fix_guest_lib.py` (120 lines) to C++ in `core`, so the launcher (through JNI),
+    zbrun and the tests share it. It handles absolute `DT_NEEDED` -> basename and `DT_TEXTREL`
+    -> the `DT_ZB_TEXTREL` marker.
+  - Orange Roulette libs:
+    - TEXTREL in `libApplicationMain`, `liblime`, `libopenal`;
+    - absolute `DT_NEEDED` in `libApplicationMain`, `liblime`;
+    - `libregexp`, `libstd`, `libzlib` need no fixups.
+  - 4d scope (spec part 1, section 1):
+    - `libzbproxy.so`;
+    - `ZBridge.onProxyLoaded`;
+    - binding `Java_*` exports through the real `RegisterNatives`;
+    - guest `JNI_OnLoad`;
+    - launcher class loader: delegate `com.zettabridge.core.*` to the launcher, and
+      `findLibrary` returns proxies for armeabi libs;
+    - extracting and fixing armeabi libs at import;
+    - device test T7 and the Orange Roulette smoke test.
+- **Open risks from 4c:**
+  - carrier cost: 2 processor ids + ~34 MiB JIT per Java thread calling natives, so a pool may be
+    needed;
+  - `thread_local` destructor ordering against ART detach, untested on device;
+  - buffers are always copied.
