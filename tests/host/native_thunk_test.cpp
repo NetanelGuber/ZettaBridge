@@ -178,7 +178,21 @@ int main() {
     CHECK(slots.target(2) == nullptr);
     // Only a slot whose registration failed is released; it is handed out again before new slots.
     slots.release(1);
+    CHECK(slots.target(1) == nullptr);
+    std::atomic<bool> start_reuse{false};
+    std::atomic<bool> bad_reuse{false};
+    std::thread reuse_reader([&] {
+        while (!start_reuse.load()) std::this_thread::yield();
+        const zb::NativeTarget* reused = nullptr;
+        while ((reused = slots.target(1)) == nullptr) std::this_thread::yield();
+        if (reused->guest_function != 0x40000 || reused->shorty != "J" || reused->is_static) {
+            bad_reuse = true;
+        }
+    });
+    start_reuse = true;
     CHECK(slots.allocate({0x40000, "J", false}) == 1);
+    reuse_reader.join();
+    CHECK(!bad_reuse.load());
     CHECK(slots.target(1) != nullptr && slots.target(1)->guest_function == 0x40000 && slots.target(1)->shorty == "J");
     CHECK(slots.allocate({0x50000, "V", true}) == -1);
     CHECK(child_aborts([] {

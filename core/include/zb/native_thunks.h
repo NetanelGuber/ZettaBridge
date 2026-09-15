@@ -52,6 +52,7 @@ private:
     std::size_t capacity_;
     std::mutex mutex_;
     std::unique_ptr<NativeTarget[]> targets_;
+    std::unique_ptr<std::atomic<bool>[]> ready_;
     std::atomic<std::uint32_t> count_{0};
     std::vector<std::uint32_t> released_;
 };
