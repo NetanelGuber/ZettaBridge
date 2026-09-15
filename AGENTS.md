@@ -326,3 +326,19 @@ Orange Roulette smoke launch.
   - If its findings are not recorded here, review again. Main open question: `getDeclaredMethods` resolves the types of every method, so one missing type fails a whole library load. Consider a fallback.
 - **Direction changed (user decision):** 3D games and performance work are goals after 2D (see CLAUDE.md Non-goals). The user will provide the Portal (NVIDIA Shield) APK as a future 3D target; it may need Tegra-specific GLES extensions.
 - **Remote:** `origin/main` = pushed `phase1-zbrun`. Push only with the user's agreement.
+
+## NEXT (after Task 5, 2026-09-15)
+
+- **Done:**
+  - Task 5 (`f90638b`); the Java API for Task 6 is in `android/launcher/.../core/ZBridge.java` (`activatePlugin`, `onProxyLoaded`, `loadError`, `lastLoadError`, `fixGuestLibrary`);
+  - host tests 27/27.
+- **Review of Tasks 3-4:** `docs/superpowers/reviews/2026-09-15-phase4d-tasks3-4-review.md` (`61c2361`). Fix its two Important items before Task 8:
+  1. `getDeclaredMethods` can fail a whole library: bind long-form exports through `GetMethodID`, and skip-and-log short-form ones.
+  2. Add executable host tests for `jni_env_backend.cpp` with a fake reflective `JNIEnv`.
+- **Task 5 has not been reviewed yet;** run a review first.
+- **Task 6** (launcher extraction, `PluginClassLoader`, runtime bundle) must:
+  - call `ZBridge.activatePlugin` before plugin code runs;
+  - return proxy paths shaped `plugins/<pkg>/proxy/lib<name>.so`;
+  - show `lastLoadError()` through `Diagnostics`;
+  - mark import complete only after `fixGuestLibrary` succeeds (ELF fixup writes are not atomic).
+- **Any load failure needs a `:guest` process restart.**
