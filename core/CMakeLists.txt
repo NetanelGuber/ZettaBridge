@@ -33,7 +33,8 @@ if (ANDROID)
     target_link_libraries(zbcore PUBLIC log)
 
     # libzbridge.so: the translator as loaded by the launcher's :guest process (Phase 3).
-    add_library(zbridge SHARED src/zbridge_c_api.cpp android/zbridge_jni.cpp)
+    # android/jni_env_backend.cpp: the JniBackend over the real JNIEnv, used by the JNI bridge (4d).
+    add_library(zbridge SHARED src/zbridge_c_api.cpp android/zbridge_jni.cpp android/jni_env_backend.cpp)
     target_link_libraries(zbridge PRIVATE zbcore)
     set_target_properties(zbridge PROPERTIES CXX_VISIBILITY_PRESET hidden)
     target_compile_definitions(zbridge PRIVATE ZB_EXPORT_C_API)
