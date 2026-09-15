@@ -200,6 +200,23 @@ void check_objects(Bridge& bridge) {
     vm.clear_pending_exception(env);
 }
 
+void check_values(Bridge& bridge) {
+    MockJvm& vm = *bridge.vm;
+    CHECK(run_probe(bridge, "zbjniprobe_calls", vm.new_string_object(u"text")) == 0);
+    CHECK(run_probe(bridge, "zbjniprobe_fields", vm.new_string_object(u"field")) == 0);
+    const auto probe = vm.class_object("zb/Probe");
+    CHECK(vm.field_value(probe, "sz").z == 1 && vm.field_value(probe, "sc").c == 0xBEEF);
+    CHECK(vm.field_value(probe, "sj").j == -0x0123456789abcdefLL && vm.field_value(probe, "sf").f == -0.375f);
+    CHECK(vm.field_value(probe, "sd").d == 6.02214076e23 && vm.string_value(vm.field_value(probe, "sl").l) == u"field");
+
+    const auto env = vm.thread_env();
+    CHECK(run_probe(bridge, "zbjniprobe_exceptions") == 0);
+    const auto pending = vm.pending_exception(env);
+    CHECK(pending != 0 && vm.class_name_of(pending) == "java/lang/IllegalStateException");
+    CHECK(vm.string_value(pending) == u"boom");
+    vm.clear_pending_exception(env);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -207,6 +224,7 @@ int main(int argc, char** argv) {
     check_invalid_handle(argv);
     Bridge bridge = start_bridge(argv);
     check_objects(bridge);
+    check_values(bridge);
     const auto errors = bridge.vm->errors();
     for (const auto& error : errors) std::fprintf(stderr, "mock error: %s\n", error.c_str());
     CHECK(errors.empty());

@@ -126,3 +126,230 @@ JNIEXPORT jint JNICALL zbjniprobe_bad_handle(JNIEnv* env, jobject unused) {
     return __LINE__;
 }
 
+/* ---- Calls: every return type, every call form -------------------------------------------- */
+
+/* The mock's echo<T> returns arg+1 (Z: !arg, F/D: arg*2, L: arg) in zb/Probe and arg+2 (Z: arg,
+ * F/D: arg*4, L: null) in zb/ProbeChild; the static secho<T> behaves like zb/Probe. */
+#define PROBE_CALLS(Name, jtype, letter, desc, member, same, value, base_result, child_result)               \
+    static jtype virtual_v_##Name(JNIEnv* env, jobject obj, jmethodID method, ...) {                         \
+        va_list ap;                                                                                         \
+        va_start(ap, method);                                                                               \
+        const jtype result = (*env)->Call##Name##MethodV(env, obj, method, ap);                             \
+        va_end(ap);                                                                                         \
+        return result;                                                                                      \
+    }                                                                                                       \
+    static jtype nonvirtual_v_##Name(JNIEnv* env, jobject obj, jclass cls, jmethodID method, ...) {         \
+        va_list ap;                                                                                         \
+        va_start(ap, method);                                                                               \
+        const jtype result = (*env)->CallNonvirtual##Name##MethodV(env, obj, cls, method, ap);              \
+        va_end(ap);                                                                                         \
+        return result;                                                                                      \
+    }                                                                                                       \
+    static jtype static_v_##Name(JNIEnv* env, jclass cls, jmethodID method, ...) {                          \
+        va_list ap;                                                                                         \
+        va_start(ap, method);                                                                               \
+        const jtype result = (*env)->CallStatic##Name##MethodV(env, cls, method, ap);                       \
+        va_end(ap);                                                                                         \
+        return result;                                                                                      \
+    }                                                                                                       \
+    static int calls_##Name(JNIEnv* env, jclass probe, jobject child, jstring text) {                       \
+        const jmethodID method = (*env)->GetMethodID(env, probe, "echo" #letter, "(" desc ")" desc);         \
+        const jmethodID smethod = (*env)->GetStaticMethodID(env, probe, "secho" #letter, "(" desc ")" desc); \
+        CHECK(method != NULL && smethod != NULL);                                                           \
+        const jtype arg = value;                                                                            \
+        jvalue args[1];                                                                                     \
+        args[0].member = arg;                                                                               \
+        CHECK(same((*env)->Call##Name##Method(env, child, method, arg), child_result));                     \
+        CHECK(same(virtual_v_##Name(env, child, method, arg), child_result));                               \
+        CHECK(same((*env)->Call##Name##MethodA(env, child, method, args), child_result));                   \
+        CHECK(same((*env)->CallNonvirtual##Name##Method(env, child, probe, method, arg), base_result));      \
+        CHECK(same(nonvirtual_v_##Name(env, child, probe, method, arg), base_result));                      \
+        CHECK(same((*env)->CallNonvirtual##Name##MethodA(env, child, probe, method, args), base_result));    \
+        CHECK(same((*env)->CallStatic##Name##Method(env, probe, smethod, arg), base_result));               \
+        CHECK(same(static_v_##Name(env, probe, smethod, arg), base_result));                                \
+        CHECK(same((*env)->CallStatic##Name##MethodA(env, probe, smethod, args), base_result));             \
+        return 0;                                                                                           \
+    }
+
+PROBE_CALLS(Boolean, jboolean, Z, "Z", z, SAME, JNI_TRUE, JNI_FALSE, JNI_TRUE)
+PROBE_CALLS(Byte, jbyte, B, "B", b, SAME, -5, -4, -3)
+PROBE_CALLS(Char, jchar, C, "C", c, SAME, 0x1234, 0x1235, 0x1236)
+PROBE_CALLS(Short, jshort, S, "S", s, SAME, -300, -299, -298)
+PROBE_CALLS(Int, jint, I, "I", i, SAME, 41, 42, 43)
+PROBE_CALLS(Long, jlong, J, "J", j, SAME, INT64_C(0x1122334455667788), INT64_C(0x1122334455667789),
+            INT64_C(0x112233445566778a))
+PROBE_CALLS(Float, jfloat, F, "F", f, SAME, 1.5f, 3.0f, 6.0f)
+PROBE_CALLS(Double, jdouble, D, "D", d, SAME, -2.25, -4.5, -9.0)
+PROBE_CALLS(Object, jobject, L, "Ljava/lang/String;", l, SAME_REF, text, text, NULL)
+
+static void virtual_v_Void(JNIEnv* env, jobject obj, jmethodID method, ...) {
+    va_list ap;
+    va_start(ap, method);
+    (*env)->CallVoidMethodV(env, obj, method, ap);
+    va_end(ap);
+}
+
+static void nonvirtual_v_Void(JNIEnv* env, jobject obj, jclass cls, jmethodID method, ...) {
+    va_list ap;
+    va_start(ap, method);
+    (*env)->CallNonvirtualVoidMethodV(env, obj, cls, method, ap);
+    va_end(ap);
+}
+
+static void static_v_Void(JNIEnv* env, jclass cls, jmethodID method, ...) {
+    va_list ap;
+    va_start(ap, method);
+    (*env)->CallStaticVoidMethodV(env, cls, method, ap);
+    va_end(ap);
+}
+
+static jobject new_object_v(JNIEnv* env, jclass cls, jmethodID method, ...) {
+    va_list ap;
+    va_start(ap, method);
+    const jobject result = (*env)->NewObjectV(env, cls, method, ap);
+    va_end(ap);
+    return result;
+}
+
+static jint mix_v(JNIEnv* env, jclass cls, jmethodID method, ...) {
+    va_list ap;
+    va_start(ap, method);
+    const jint result = (*env)->CallStaticIntMethodV(env, cls, method, ap);
+    va_end(ap);
+    return result;
+}
+
+/* uint32_t raw_get_method_shorty(uint32_t id, char* out): the GetMethodShorty host call, which
+ * libzbjni.so only makes when its shorty cache cannot hold an id. */
+_Static_assert(ZB_JNI_HC_GetMethodShorty == 0xfc06u, "GetMethodShorty index");
+__asm__(".text\n.arm\n.p2align 2\n.global raw_get_method_shorty\n.hidden raw_get_method_shorty\n"
+        ".type raw_get_method_shorty, %function\nraw_get_method_shorty:\n    svc #0x5afc06\n    bx lr\n");
+uint32_t raw_get_method_shorty(uint32_t id, char* out) __attribute__((visibility("hidden")));
+
+/* text: a java/lang/String "text" from Java. */
+JNIEXPORT jint JNICALL zbjniprobe_calls(JNIEnv* env, jobject text) {
+    const jclass probe = (*env)->FindClass(env, "zb/Probe");
+    const jclass child_class = (*env)->FindClass(env, "zb/ProbeChild");
+    CHECK(probe != NULL && child_class != NULL && text != NULL);
+    const jobject child = (*env)->AllocObject(env, child_class);
+    CHECK(child != NULL);
+    int line;
+    if ((line = calls_Boolean(env, probe, child, text)) != 0) return line;
+    if ((line = calls_Byte(env, probe, child, text)) != 0) return line;
+    if ((line = calls_Char(env, probe, child, text)) != 0) return line;
+    if ((line = calls_Short(env, probe, child, text)) != 0) return line;
+    if ((line = calls_Int(env, probe, child, text)) != 0) return line;
+    if ((line = calls_Long(env, probe, child, text)) != 0) return line;
+    if ((line = calls_Float(env, probe, child, text)) != 0) return line;
+    if ((line = calls_Double(env, probe, child, text)) != 0) return line;
+    if ((line = calls_Object(env, probe, child, text)) != 0) return line;
+
+    /* Void: echoV adds 1 (zb/Probe) or 2 (zb/ProbeChild) to the static "calls"; sechoV adds 4. */
+    const jmethodID echo_v = (*env)->GetMethodID(env, probe, "echoV", "()V");
+    const jmethodID secho_v = (*env)->GetStaticMethodID(env, probe, "sechoV", "()V");
+    const jfieldID calls = (*env)->GetStaticFieldID(env, probe, "calls", "I");
+    CHECK(echo_v != NULL && secho_v != NULL && calls != NULL);
+    (*env)->CallVoidMethod(env, child, echo_v);
+    virtual_v_Void(env, child, echo_v);
+    (*env)->CallVoidMethodA(env, child, echo_v, NULL);
+    (*env)->CallNonvirtualVoidMethod(env, child, probe, echo_v);
+    nonvirtual_v_Void(env, child, probe, echo_v);
+    (*env)->CallNonvirtualVoidMethodA(env, child, probe, echo_v, NULL);
+    (*env)->CallStaticVoidMethod(env, probe, secho_v);
+    static_v_Void(env, probe, secho_v);
+    (*env)->CallStaticVoidMethodA(env, probe, secho_v, NULL);
+    CHECK((*env)->GetStaticIntField(env, probe, calls) == 3 * 2 + 3 * 1 + 3 * 4);
+
+    /* Every argument type through ..., va_list and jvalue[]: mix returns 42 when all match. */
+    const jmethodID mix = (*env)->GetStaticMethodID(env, probe, "mix", "(ZBCSIJFDLjava/lang/String;)I");
+    CHECK(mix != NULL);
+    CHECK((*env)->CallStaticIntMethod(env, probe, mix, JNI_TRUE, (jbyte)-2, (jchar)0x1234, (jshort)-3, 4,
+                                      INT64_C(0x1122334455667788), 1.5f, -2.25, text) == 42);
+    CHECK(mix_v(env, probe, mix, JNI_TRUE, (jbyte)-2, (jchar)0x1234, (jshort)-3, 4, INT64_C(0x1122334455667788),
+                1.5f, -2.25, text) == 42);
+    jvalue mix_args[9];
+    mix_args[0].z = JNI_TRUE;
+    mix_args[1].b = -2;
+    mix_args[2].c = 0x1234;
+    mix_args[3].s = -3;
+    mix_args[4].i = 4;
+    mix_args[5].j = INT64_C(0x1122334455667788);
+    mix_args[6].f = 1.5f;
+    mix_args[7].d = -2.25;
+    mix_args[8].l = text;
+    CHECK((*env)->CallStaticIntMethodA(env, probe, mix, mix_args) == 42);
+
+    /* Constructors: <init>(ILjava/lang/String;)V stores its arguments in i and l. */
+    const jmethodID init = (*env)->GetMethodID(env, probe, "<init>", "(ILjava/lang/String;)V");
+    const jfieldID field_i = (*env)->GetFieldID(env, probe, "i", "I");
+    const jfieldID field_l = (*env)->GetFieldID(env, probe, "l", "Ljava/lang/String;");
+    CHECK(init != NULL && field_i != NULL && field_l != NULL);
+    jvalue init_args[2];
+    init_args[0].i = 3;
+    init_args[1].l = text;
+    const jobject made[3] = {
+        (*env)->NewObject(env, probe, init, 1, text),
+        new_object_v(env, probe, init, 2, text),
+        (*env)->NewObjectA(env, probe, init, init_args),
+    };
+    for (int i = 0; i < 3; ++i) {
+        CHECK(made[i] != NULL && (*env)->IsInstanceOf(env, made[i], probe));
+        CHECK((*env)->GetIntField(env, made[i], field_i) == i + 1);
+        CHECK(SAME_REF((*env)->GetObjectField(env, made[i], field_l), text));
+    }
+
+    /* An id from reflection calls like the original; the host keeps every id's shorty. */
+    const jmethodID secho_j = (*env)->GetStaticMethodID(env, probe, "sechoJ", "(J)J");
+    const jobject reflected = (*env)->ToReflectedMethod(env, probe, secho_j, JNI_TRUE);
+    const jmethodID back = (*env)->FromReflectedMethod(env, reflected);
+    CHECK(back == secho_j && (*env)->CallStaticLongMethod(env, probe, back, INT64_C(-8)) == INT64_C(-7));
+    char shorty[257];
+    CHECK(raw_get_method_shorty((uint32_t)(uintptr_t)mix, shorty) == 1 && strcmp(shorty, "IZBCSIJFDL") == 0);
+    return 0;
+}
+
+#define PROBE_FIELD(Name, jtype, name, desc, same, value)                             \
+    do {                                                                              \
+        const jfieldID field = (*env)->GetFieldID(env, probe, name, desc);            \
+        const jfieldID sfield = (*env)->GetStaticFieldID(env, probe, "s" name, desc); \
+        CHECK(field != NULL && sfield != NULL);                                       \
+        const jtype v = value;                                                        \
+        (*env)->Set##Name##Field(env, object, field, v);                              \
+        CHECK(same((*env)->Get##Name##Field(env, object, field), v));                 \
+        (*env)->SetStatic##Name##Field(env, probe, sfield, v);                        \
+        CHECK(same((*env)->GetStatic##Name##Field(env, probe, sfield), v));           \
+    } while (0)
+
+/* text: a java/lang/String "field" from Java. */
+JNIEXPORT jint JNICALL zbjniprobe_fields(JNIEnv* env, jobject text) {
+    const jclass probe = (*env)->FindClass(env, "zb/Probe");
+    CHECK(probe != NULL);
+    const jobject object = (*env)->AllocObject(env, probe);
+    CHECK(object != NULL && text != NULL);
+    PROBE_FIELD(Boolean, jboolean, "z", "Z", SAME, JNI_TRUE);
+    PROBE_FIELD(Byte, jbyte, "b", "B", SAME, -7);
+    PROBE_FIELD(Char, jchar, "c", "C", SAME, 0xBEEF);
+    PROBE_FIELD(Short, jshort, "s", "S", SAME, -1234);
+    PROBE_FIELD(Int, jint, "i", "I", SAME, -123456789);
+    PROBE_FIELD(Long, jlong, "j", "J", SAME, INT64_C(-0x0123456789abcdef));
+    PROBE_FIELD(Float, jfloat, "f", "F", SAME, -0.375f);
+    PROBE_FIELD(Double, jdouble, "d", "D", SAME, 6.02214076e23);
+    PROBE_FIELD(Object, jobject, "l", "Ljava/lang/String;", SAME_REF, text);
+    return 0;
+}
+
+/* Java -> guest -> Java (throws) -> guest (inspects, clears, rethrows) -> Java sees it pending. */
+JNIEXPORT jint JNICALL zbjniprobe_exceptions(JNIEnv* env, jobject unused) {
+    const jclass probe = (*env)->FindClass(env, "zb/Probe");
+    const jmethodID fail = (*env)->GetStaticMethodID(env, probe, "fail", "()V");
+    CHECK(fail != NULL);
+    (*env)->CallStaticVoidMethod(env, probe, fail);
+    CHECK((*env)->ExceptionCheck(env) == JNI_TRUE);
+    const jthrowable thrown = (*env)->ExceptionOccurred(env);
+    (*env)->ExceptionClear(env);
+    const jclass illegal_state = (*env)->FindClass(env, "java/lang/IllegalStateException");
+    CHECK(thrown != NULL && (*env)->IsInstanceOf(env, thrown, illegal_state));
+    CHECK((*env)->Throw(env, thrown) == 0);
+    return 0;
+}
+

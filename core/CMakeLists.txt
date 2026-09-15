@@ -8,6 +8,7 @@ add_library(zbcore STATIC
     src/jni/handles.cpp
     src/jni/host_jni.cpp
     src/jni/host_jni_objects.cpp
+    src/jni/host_jni_values.cpp
     src/jni/mangle.cpp
     src/jni/native_call.cpp
     src/jni/native_thunks.cpp

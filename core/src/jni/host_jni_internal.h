@@ -110,6 +110,7 @@ struct HostJni::Impl {
 
     // Host-call groups; each returns false for indices it does not serve.
     bool serve_objects(JniCall& call);
+    bool serve_values(JniCall& call);
 };
 
 const char* jni_host_call_name(std::uint32_t index);
