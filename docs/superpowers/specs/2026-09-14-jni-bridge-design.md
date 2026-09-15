@@ -120,7 +120,9 @@ class loaders).
   `adr x16, .; b zb_native_common`. The common entry derives the slot from the thunk address.
   No code is generated at run time, so there is no W^X or `execmem` dependency.
 - **Slot `i`** holds the guest function address (with Thumb bit), the method shorty and
-  the static flag.
+  the static flag. A per-slot atomic ready flag publishes the target after it is fully
+  written; this also makes a released, never-bound slot invisible until its replacement
+  target is ready.
 - **Exhaustion.** Slots are allocated by `RegisterNatives`. If the pool runs out,
   `RegisterNatives` returns `JNI_ERR` and logs.
 
@@ -216,7 +218,8 @@ builds. The dispatcher builds the guest call:
 
   Every buffer starts with a header (magic, length, type); a release with a pointer no Get
   function returned is a `FatalError`. `GetStringUTFRegion` writes a NUL terminator, as
-  ART does.
+  ART does. Header plus payload size is computed in 64 bits and allocation returns `NULL`
+  when the result does not fit the arm32 guest `size_t`.
 
 ### Host side
 
@@ -253,7 +256,8 @@ ids; the mock JVM in tests, the real `JNIEnv` on Android). Grouped:
 ### Direct buffers and JavaVM
 
 - **`NewDirectByteBuffer(guest addr, len)`** creates a real direct buffer at
-  `base + addr`.
+  `base + addr`. The capacity must be in `[0, INT32_MAX]`; larger or negative values are
+  rejected before the real JNI backend is called.
 - **`GetDirectBufferAddress`** returns the guest address when the buffer lies inside the
   guest reservation. Otherwise it returns `NULL` and logs once (see Limits).
 - **`GetEnv`** returns this thread's guest `JNIEnv` if attached, else `JNI_EDETACHED`; an

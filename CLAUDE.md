@@ -28,9 +28,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Phase 4c (guest `JNIEnv`/`JavaVM`, Java -> guest native calls, `RegisterNatives`) is done:
   `docs/superpowers/plans/2026-09-15-phase4c-guest-jnienv.md`. `jni_bridge_test` runs
   `libzbjni.so` against a mock JVM; the real `JNIEnv` backend is compile-only so far.
+  The three Important post-review findings are fixed on
+  `codex/phase4c-review-fixes` (slot publication and two buffer bounds checks).
 - Next: plan 4d (proxy library, `onProxyLoaded`, `Java_*` binding, T7, Orange Roulette
   smoke test).
-- Work is on branch `phase1-zbrun` (local only). The `codex/phase4a-jni-host-units` and
+- Work is on branch `codex/phase4c-review-fixes` (local only), based on `phase1-zbrun`.
+  The `codex/phase4a-jni-host-units` and
   `codex/phase4b-library-runtime` branches are merged into it.
 
 Local git repo (no remote yet; pushing to GitHub is done together with the user).

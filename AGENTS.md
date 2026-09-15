@@ -20,9 +20,8 @@ English and ASCII only.
 - **Phase 4c done (2026-09-15).** Guest `JNIEnv`/`JavaVM`, host JNI calls against
   `JniBackend`, Java -> guest dispatch, `RegisterNatives`, attach/detach; committed directly
   to `phase1-zbrun` (see "Phase 4c done" below). Host tests are 18/18. Next is plan 4d.
-- Work continues on branch `codex/phase4b-library-runtime` in worktree
-  `.worktrees/phase4b-library-runtime`. The parent branch is
-  `codex/phase4a-jni-host-units`.
+- Phase 4c review fixes continue on branch `codex/phase4c-review-fixes`, based on
+  `phase1-zbrun`.
 - Commit locally; pushing is done together with the user (no Git remote is configured).
 
 ## Phase 4a completed (JNI host units)
@@ -239,3 +238,37 @@ the host suite):
 6. **[Housekeeping] Delete the prototype worktree.** `.worktrees/proto-4c` is stale, superseded prototype code. Delete it with `git worktree remove --force .worktrees/proto-4c` (it has nothing uncommitted of value).
 
 After fixing items 1-3 (with tests), run the full suite, `tools/gen_jni.py --check` and the Android link, then write plan 4d.
+
+## Phase 4c review fixes done (2026-09-15)
+
+Implemented on `codex/phase4c-review-fixes` with an observed RED test before each
+production change:
+
+| Finding | Commit | Result |
+|---|---|---|
+| Reused native-slot publication | `9647ea8` | per-slot release/acquire ready flag; released slots are hidden until republished |
+| arm32 JNI buffer size overflow | `007f582` | 64-bit checked total; oversized copied arrays return `NULL` |
+| direct-buffer capacity bound | `76e00be` | values outside `[0, INT32_MAX]` fail before backend dispatch |
+| Recycled mock thread ids (found by stress verification) | `67285cb` | mock JNIEnv ownership uses a unique thread-lifetime token |
+
+The stale `.worktrees/proto-4c` worktree was compared file-by-file with `30c811c`;
+all project files matched, so it was removed as instructed.
+
+Fresh verification after all fixes:
+
+```text
+tools/build_guest.sh                         PASS
+ctest --test-dir build/host                  18/18 PASS
+jni_bridge_test, 20-run loop                 20/20 PASS
+tools/run_guest_tests.sh                     all 9 PASS, including Orange Roulette
+tools/gen_jni.py --check                     PASS
+Android arm64 zbridge + zbrun                link OK
+```
+
+Still open, non-blocking Phase 4c review minors:
+
+- a guest pthread that attaches and exits without `DetachCurrentThread` leaks its guest env;
+- `dispatch_native` says "has no target" when the process-wide `HostJni` pointer is missing.
+
+Next: write the Phase 4d plan, then implement proxy loading, ART binding, T7 and the
+Orange Roulette smoke launch.
