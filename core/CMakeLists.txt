@@ -45,6 +45,18 @@ if (ANDROID)
     # they cannot clash with the app's own libc++_shared.so in the same process.
     target_link_options(zbridge PRIVATE -Wl,--gc-sections -Wl,--strip-all -Wl,--exclude-libs,ALL)
 
+    # libzbproxy.so: the arm64 proxy ART loads for each arm32 plugin library (Phase 4d). Plain C
+    # linked against nothing of ours; every link is checked by tools/check_zbproxy.py.
+    add_library(zbproxy SHARED android/zbproxy.c)
+    target_compile_options(zbproxy PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(zbproxy PRIVATE log)
+    target_link_options(zbproxy PRIVATE -Wl,--as-needed -Wl,--no-undefined -Wl,--gc-sections
+        -Wl,--strip-all -Wl,--exclude-libs,ALL)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_custom_command(TARGET zbproxy POST_BUILD
+        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/check_zbproxy.py $<TARGET_FILE:zbproxy>
+        VERBATIM)
+
     # Link-only ART reflection seam; it is never packaged or run. Keeping the calls in one
     # exported function makes missing JniEnvBackend overrides fail the Android build.
     add_library(zbjni_reflection_compile_test SHARED

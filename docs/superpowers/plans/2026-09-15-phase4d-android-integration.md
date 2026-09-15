@@ -90,10 +90,10 @@
 
 **Produces:** `libzbproxy.so` with no dependency on `libzbridge.so`; its only job is `dladdr` self-identification and `ZBridge.onProxyLoaded(String)` delegation.
 
-- [ ] Add a fake-JNI unit for failure/version behavior and a structural checker for exported `JNI_OnLoad`, allowed `DT_NEEDED`, and required ZBridge class/method strings.
-- [ ] Observe RED before adding the target.
-- [ ] Implement the proxy with complete JNI exception/local-reference handling; return `JNI_ERR` on failure and guest version (default `JNI_VERSION_1_6`) on success.
-- [ ] Link the Android proxy and inspect it with `readelf -dWs`; commit `android: add the arm32 library proxy`.
+- [x] Add a fake-JNI unit for failure/version behavior and a structural checker for exported `JNI_OnLoad`, allowed `DT_NEEDED`, and required ZBridge class/method strings.
+- [x] Observe RED before adding the target.
+- [x] Implement the proxy with complete JNI exception/local-reference handling; return `JNI_ERR` on failure and guest version (default `JNI_VERSION_1_6`) on success.
+- [x] Link the Android proxy and inspect it with `readelf -dWs`; commit `android: add the arm32 library proxy`.
 
 ### Task 5: Process-lifetime Android guest runtime
 

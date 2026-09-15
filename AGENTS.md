@@ -281,3 +281,9 @@ Orange Roulette smoke launch.
   - Seam `zbjni_reflection_compile_test` and `zbridge` link with `--no-undefined`.
   - `ReflectionSmoke.java` compiles against android-36.
   - Real ART behavior is checked in Task 7.
+- Task 4 (standalone arm64 proxy): `core/android/zbproxy.c` -> `libzbproxy.so` (5.8 KB, NEEDED
+  liblog/libdl/libc, exports only `JNI_OnLoad`) calls `static int ZBridge.onProxyLoaded(String)`;
+  0 means `JNI_VERSION_1_6`, 1.2/1.4/1.6 pass, anything else or an exception gives `JNI_ERR`.
+  - `zbproxy_fake_jni_test` drives it on the host; `tools/check_zbproxy.py` runs after every
+    Android link and as `zbproxy_structure_test` (skipped when not built).
+  - ART's `JVM_NativeLoad` clears the pending exception, so Task 5 must record failure detail itself.

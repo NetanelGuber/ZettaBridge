@@ -22,6 +22,36 @@ endforeach()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME gen_jni_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gen_jni.py --check)
 
+# libzbproxy.so (core/android/zbproxy.c) built for the host against the JDK jni.h, then driven
+# by a fake JavaVM/JNIEnv that loads it by absolute path so dladdr runs for real.
+find_path(ZB_JDK_JNI_INCLUDE jni.h
+    HINTS $ENV{JAVA_HOME}/include
+    PATHS /usr/lib/jvm/default-java/include /usr/lib/jvm/java-17-openjdk-arm64/include
+    NO_CMAKE_FIND_ROOT_PATH)
+if (ZB_JDK_JNI_INCLUDE AND EXISTS ${ZB_JDK_JNI_INCLUDE}/linux/jni_md.h)
+    add_library(zbproxy_host SHARED ${CMAKE_SOURCE_DIR}/core/android/zbproxy.c)
+    target_include_directories(zbproxy_host PRIVATE ${ZB_JDK_JNI_INCLUDE} ${ZB_JDK_JNI_INCLUDE}/linux)
+    set_target_properties(zbproxy_host PROPERTIES C_VISIBILITY_PRESET hidden)
+    target_compile_options(zbproxy_host PRIVATE -Wall -Wextra -Werror)
+    target_link_options(zbproxy_host PRIVATE -Wl,--no-undefined)
+
+    add_executable(zbproxy_fake_jni_test ${CMAKE_SOURCE_DIR}/tests/proxy/fake_jni.c)
+    target_include_directories(zbproxy_fake_jni_test PRIVATE ${ZB_JDK_JNI_INCLUDE} ${ZB_JDK_JNI_INCLUDE}/linux)
+    target_compile_options(zbproxy_fake_jni_test PRIVATE -Wall -Wextra)
+    target_link_libraries(zbproxy_fake_jni_test PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(zbproxy_fake_jni_test zbproxy_host)
+    add_test(NAME zbproxy_fake_jni_test COMMAND zbproxy_fake_jni_test $<TARGET_FILE:zbproxy_host>)
+else()
+    message(STATUS "JDK jni.h not found: zbproxy_fake_jni_test is not built")
+endif()
+
+# Structure of the Android arm64 proxy from build/android-arm64; skipped when not built there.
+set(ZB_ANDROID_PROXY ${CMAKE_SOURCE_DIR}/build/android-arm64/core/libzbproxy.so
+    CACHE FILEPATH "Android arm64 libzbproxy.so checked by zbproxy_structure_test")
+add_test(NAME zbproxy_structure_test
+    COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/check_zbproxy.py --skip-missing ${ZB_ANDROID_PROXY})
+set_tests_properties(zbproxy_structure_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # Mock JVM behind JniBackend, shared by the JNI tests.
 add_library(zbmockjvm STATIC mock_jvm.cpp)
 target_link_libraries(zbmockjvm PUBLIC zbcore)
