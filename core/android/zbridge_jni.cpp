@@ -8,6 +8,7 @@
 #include "guest_jni_runtime.h"
 #include "zb/elf_fixups.h"
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 #include "zb/zbridge.h"
 
 namespace {
@@ -148,6 +149,24 @@ JNIEXPORT jstring JNICALL Java_com_zettabridge_core_ZBridge_loadError(JNIEnv* en
 JNIEXPORT jstring JNICALL Java_com_zettabridge_core_ZBridge_lastLoadError(JNIEnv* env, jclass) {
     zb::GuestJniRuntime* runtime = zb::GuestJniRuntime::peek();
     return runtime != nullptr ? optional_string(env, runtime->proxies().last_load_error()) : nullptr;
+}
+
+// static native boolean setReportFile(String path)
+// Starts persisting the runtime report to `path`, rewriting it atomically whenever the report
+// changes. Called once per :guest process, before plugin code runs, so a process that dies
+// silently still leaves its last state on disk (OxygenOS drops our logcat output).
+JNIEXPORT jboolean JNICALL Java_com_zettabridge_core_ZBridge_setReportFile(JNIEnv* env, jclass, jstring path) {
+    const std::optional<std::string> file = to_string(env, path);
+    if (!file) {
+        throw_new(env, "java/lang/NullPointerException", "path");
+        return JNI_FALSE;
+    }
+    return zb::write_runtime_report_to(zb::runtime_report(), *file) ? JNI_TRUE : JNI_FALSE;
+}
+
+// static native String runtimeReport(): the same text that setReportFile persists.
+JNIEXPORT jstring JNICALL Java_com_zettabridge_core_ZBridge_runtimeReport(JNIEnv* env, jclass) {
+    return env->NewStringUTF(zb::runtime_report().text().c_str());
 }
 
 // static native String fixGuestLibrary(String path) throws IOException

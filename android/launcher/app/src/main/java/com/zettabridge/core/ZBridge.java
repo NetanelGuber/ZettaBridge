@@ -71,6 +71,25 @@ public final class ZBridge {
     public static native String lastLoadError();
 
     /**
+     * Starts persisting the runtime report (see {@link #runtimeReport}) to a file, rewritten
+     * atomically whenever the report changes. Call once per :guest process, before plugin code
+     * runs: the report then survives a :guest process that dies without a Java or JNI error.
+     *
+     * @param path absolute file path; its directory must already exist
+     * @return true when the first write succeeded and persisting is on
+     */
+    public static native boolean setReportFile(String path);
+
+    /**
+     * What this process recorded about the guest run, as short plain text: the active plugin,
+     * proxy loads, guest JNI_OnLoad calls, registered natives, unimplemented host calls (with the
+     * first one by name, for example "libGLESv2.so glCreateProgram") and how the guest ended.
+     *
+     * <p>ROMs that drop third-party logcat output make this the only way to see what happened.
+     */
+    public static native String runtimeReport();
+
+    /**
      * Applies the arm32 import fixups (absolute DT_NEEDED to basename, DT_TEXTREL marker) in place.
      *
      * @return "unchanged", "changed: ..." or "skipped: reason" for a file that is not an ARM ELF32

@@ -445,9 +445,91 @@ Orange Roulette smoke launch.
   diagnostic (or begin the Phase 5 host dispatcher with equivalent tracing), rerun Orange Roulette,
   and record the exact call plus load/registration counts. Then perform the final Phase 4 regression
   and documentation commit. Do not claim Phase 4 complete from the visual symptom alone.
+  The diagnostic half of this is done: see "Phase 4d Task 8 runtime report" at the end of this file
+  for the report, the device file and the exact phone steps. The device rerun is still open.
 - The Tasks 3-4 review hardening remains open. Note that the suggested long-form-export shortcut is
   underspecified: JNI long names encode parameter types but not the return type, while
   `GetMethodID` needs the complete descriptor. A robust targeted implementation can use
   `MethodType.fromMethodDescriptorString(arguments + "V", pluginLoader).parameterArray()` followed
   by `Class.getDeclaredMethod`, then derive the actual return descriptor; short-form reflection
   resolution failures should skip-and-log. Do not blindly append a guessed return type.
+
+## Phase 4d Task 8 runtime report (2026-09-16)
+
+The Task 8 device run now records what it did. OxygenOS drops third-party logcat output, so the
+report is written to a file and read back from the launcher UI; nothing needs a shell or adb.
+
+**What it records** (`core/include/zb/runtime_report.h`, `core/src/runtime_report.cpp`). One
+process-wide `zb::RuntimeReport`, `zb::runtime_report()`, fed from the places that already see the
+events and bounded so a hot guest loop cannot grow it:
+
+| Fact | Recorded in |
+|---|---|
+| unimplemented (non-JNI) host calls: first one, total, first 16 distinct with counts | `Process::dispatch_stop` (`core/src/process.cpp`) |
+| active plugin, proxy loads and failures | `ProxyRuntime` (`core/src/jni/proxy_runtime.cpp`) |
+| guest `JNI_OnLoad` calls and their results | `JniLoader::load` (`core/src/jni/loader.cpp`) |
+| registered natives (`Java_*` binding and guest `RegisterNatives`) | `HostJni::register_native` (`core/src/jni/host_jni_natives.cpp`) |
+| how the guest ended | `Process::crash_report`, `Process::request_exit`, the `LibraryRuntime` runner |
+
+Guest semantics are unchanged: an unimplemented host call is still logged once, still returns
+`r0 = 0`, and the guest still continues.
+
+**Report format.** One `key: value` line per fact, fixed order, ASCII, diff-friendly. A filled
+example:
+
+```text
+zettabridge-runtime-report 1
+plugin: /data/user/0/com.zettabridge.launcher/files/plugins/com.heyhouser.OrangeRoulette targetSdk 16
+proxy-loads: 6
+proxy-failures: 0
+proxy-loaded: libstd.so jni=0x00010006
+proxy-loaded: libregexp.so jni=0x00010006
+proxy-loaded: libzlib.so jni=0x00010006
+proxy-loaded: libopenal.so jni=0x00010006
+proxy-loaded: liblime.so jni=0x00010006
+proxy-loaded: libApplicationMain.so jni=0x00010006
+jni-onload-calls: 2
+jni-onload: liblime.so ok jni=0x00010006
+jni-onload: libopenal.so ok jni=0x00010006
+registered-natives: 21
+unimplemented-host-calls: 42
+unimplemented-distinct: 3
+first-unimplemented: libGLESv2.so glCreateProgram
+unimplemented: libGLESv2.so glCreateProgram x37
+unimplemented: libGLESv2.so glCreateShader x4
+unimplemented: libandroid.so AAssetManager_fromJava x1
+guest-exit: guest SIGSEGV: read of 0x00000000, pc 0xf3a12345 in libApplicationMain.so offset 0x2345
+```
+
+`proxy-failed:`, `proxy-more:`, `jni-onload-more:` and `unimplemented-more:` lines appear only when
+there is something to report. `(none)` marks a fact nothing was recorded for.
+
+**Where it lands on the device.**
+`/sdcard/Android/data/com.zettabridge.launcher/files/zb-runtime-report.txt`, next to the existing
+`zb-errors.txt`. The `:guest` process starts persisting it in `ZbApplication.onCreate` before any
+plugin code runs (`Diagnostics.startRuntimeReport` -> `ZBridge.setReportFile`). The file is
+rewritten atomically (temp file, `fsync`, `rename`) on every structural change - a new distinct
+host call, a load, a `JNI_OnLoad`, the exit reason - and at most once a second for counter-only
+changes, so a `:guest` process that dies silently still leaves its last state on disk. The same
+text is available in-process as `ZBridge.runtimeReport()`.
+
+**How the user opens it.** Library screen -> long-press the app -> **Last run report**. The dialog
+shows the text and copies it, plus the file path, to the clipboard.
+
+### Exact phone steps for the next Task 8 run
+
+1. Rebuild the launcher project (`android/launcher/`, AndroidIDE, NDK r29) so it picks up the new
+   `libzbridge.so` and launcher Java, and install the resulting APK over the old one.
+2. Open ZettaBridge, long-press Orange Roulette, and choose **Delete**, then import
+   `orange-roulette-1-0-0.apk` again (a fresh import also force-stops the `:guest` process). If the
+   app is already imported and was never launched since the update, importing again is enough.
+3. Tap Orange Roulette and let it run until it returns to the launcher by itself, or wait about ten
+   seconds if it stays on a black screen.
+4. Back in the library screen, long-press Orange Roulette and choose **Last run report**. The report
+   is now on the clipboard.
+5. Paste that text back into the chat. If the entry says there is no report yet, send
+   `/sdcard/Android/data/com.zettabridge.launcher/files/zb-errors.txt` instead.
+
+The run answers Task 8 when the report shows six `proxy-loaded:` lines, the guest `JNI_OnLoad`
+results, a non-zero `registered-natives:`, and a `first-unimplemented:` naming a generated GLES or
+`AAsset*` function with no JNI failure before it.

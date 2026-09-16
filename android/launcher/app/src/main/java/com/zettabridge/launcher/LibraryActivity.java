@@ -21,9 +21,11 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -182,11 +184,45 @@ public class LibraryActivity extends Activity {
     private void showActions(PluginRecord r) {
         new AlertDialog.Builder(this)
                 .setTitle(r.label)
-                .setItems(new String[] {"Launch", "Pin shortcut", "Delete"}, (dialog, which) -> {
-                    if (which == 0) launch(r);
-                    if (which == 1) pinShortcut(r);
-                    if (which == 2) confirmDelete(r);
-                })
+                .setItems(new String[] {"Launch", "Last run report", "Pin shortcut", "Delete"},
+                        (dialog, which) -> {
+                            if (which == 0) launch(r);
+                            if (which == 1) showRuntimeReport(r);
+                            if (which == 2) pinShortcut(r);
+                            if (which == 3) confirmDelete(r);
+                        })
+                .show();
+    }
+
+    /**
+     * What the last :guest run recorded, without a shell: OxygenOS drops third-party logcat
+     * output, so this file is the only evidence a device run leaves behind. The text also goes to
+     * the clipboard, ready to be sent back.
+     */
+    private void showRuntimeReport(PluginRecord r) {
+        String report = Diagnostics.readRuntimeReport(this);
+        if (report == null) {
+            Toast.makeText(this, "No run report yet. Launch " + r.label + " once, then look again.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        File file = Diagnostics.runtimeReportFile(this);
+        String text = report + (file != null ? "\nfile: " + file.getAbsolutePath() + "\n" : "");
+        boolean copied = Diagnostics.copy(this, "ZettaBridge run report", text);
+
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        view.setTypeface(Typeface.MONOSPACE);
+        view.setTextIsSelectable(true);
+        int pad = dp(16);
+        view.setPadding(pad, pad, pad, pad);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(view);
+        new AlertDialog.Builder(this)
+                .setTitle(copied ? "Last run report (copied)" : "Last run report")
+                .setView(scroll)
+                .setPositiveButton("Close", null)
                 .show();
     }
 
