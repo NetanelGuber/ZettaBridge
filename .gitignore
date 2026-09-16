@@ -21,3 +21,8 @@ sysroot
 cc
 cod
 Screenshot_*.jpg
+
+# Gradle wrapper for building the launcher APK on this machine
+!android/launcher/gradlew
+!android/launcher/gradle/wrapper/gradle-wrapper.jar
+!android/launcher/gradle/wrapper/gradle-wrapper.properties
