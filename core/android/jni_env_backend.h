@@ -25,7 +25,8 @@ public:
     Id from_reflected_field(Env env, Ref field) override;
     Ref to_reflected_method(Env env, Ref cls, Id method, bool is_static) override;
     Ref to_reflected_field(Env env, Ref cls, Id field, bool is_static) override;
-    NativeLookupStatus find_declared_natives(Env env, const char* cls, const char* name, Ref& class_ref,
+    NativeLookupStatus find_declared_natives(Env env, const char* cls, const char* name, const char* arguments,
+                                             Ref& class_ref,
                                              std::vector<DeclaredNativeMethod>& methods) override;
     Ref alloc_object(Env env, Ref cls) override;
     Ref get_object_class(Env env, Ref obj) override;
@@ -93,6 +94,8 @@ private:
         jclass constructor_class = nullptr;         // java.lang.reflect.Constructor
         jclass class_not_found_class = nullptr;     // java.lang.ClassNotFoundException
         jclass no_class_def_found_class = nullptr;  // java.lang.NoClassDefFoundError
+        jclass method_type_class = nullptr;         // java.lang.invoke.MethodType (API 26)
+        jclass no_such_method_class = nullptr;      // java.lang.NoSuchMethodException
         jmethodID class_get_name = nullptr;               // Class.getName()
         jmethodID class_is_primitive = nullptr;           // Class.isPrimitive()
         jmethodID class_get_declared_methods = nullptr;   // Class.getDeclaredMethods()
@@ -103,6 +106,13 @@ private:
         jmethodID executable_get_parameter_types = nullptr;  // Executable.getParameterTypes()
         jmethodID modifier_is_native = nullptr;           // static Modifier.isNative(int)
         jmethodID modifier_is_static = nullptr;           // static Modifier.isStatic(int)
+        jmethodID class_get_declared_method = nullptr;    // Class.getDeclaredMethod(String, Class[])
+        // static MethodType.fromMethodDescriptorString(String, ClassLoader)
+        jmethodID method_type_from_descriptor = nullptr;
+        jmethodID method_type_parameter_array = nullptr;  // MethodType.parameterArray()
+        // False when java.lang.invoke.MethodType is unavailable (below API 26). Long-form exports
+        // then fall back to enumeration, which skips instead of failing on an unresolvable type.
+        bool long_form_ok = false;
     };
     // nullptr when the lookup failed or an exception is pending (the lookup is never consumed then).
     const Reflection* reflection(JNIEnv* env);
@@ -114,6 +124,19 @@ private:
     // leaves behind belong to the caller's per-method local frame.
     bool scan_method(JNIEnv* env, const Reflection& r, jobject method, const char* name,
                      std::vector<DeclaredNativeMethod>& methods);
+    // Short-form discovery: every declared native called `name`. getDeclaredMethods() resolves the
+    // types of every declared method, so one unresolvable type anywhere in the class throws here;
+    // that is Unresolvable (skip this export), with the exception cleared, never Error.
+    NativeLookupStatus declared_by_name(JNIEnv* env, const Reflection& r, jobject cls, const char* name,
+                                        std::vector<DeclaredNativeMethod>& methods);
+    // Long-form discovery: the single method whose parameters are `arguments` ("(ILjava/lang/String;)").
+    // A JNI long name encodes no return type, so the complete descriptor cannot be spelled here:
+    // MethodType.fromMethodDescriptorString(arguments + "V", loader) resolves exactly the classes
+    // this one signature names, Class.getDeclaredMethod picks the method, and its real return type
+    // completes the descriptor. Nothing else in the class is touched.
+    NativeLookupStatus declared_by_arguments(JNIEnv* env, const Reflection& r, jobject loader, jobject cls,
+                                             const char* name, const char* arguments,
+                                             std::vector<DeclaredNativeMethod>& methods);
     // Called with the loadClass exception pending: clears it and reports MissingClass only for
     // ClassNotFoundException / NoClassDefFoundError, otherwise rethrows it and reports Error.
     NativeLookupStatus class_load_failure(JNIEnv* env, const Reflection& r);

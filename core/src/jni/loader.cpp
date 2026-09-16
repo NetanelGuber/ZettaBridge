@@ -63,6 +63,14 @@ void JniLoader::log_missing_class_once(const std::string& name) {
     }
 }
 
+void JniLoader::log_unresolvable_once(const std::string& symbol, const std::string& name) {
+    std::lock_guard<std::mutex> lock(missing_mutex_);
+    if (unresolvable_exports_.insert(symbol).second) {
+        log("JNI loader: cannot resolve the declared natives of %s; skipping export %s", name.c_str(),
+            symbol.c_str());
+    }
+}
+
 JniLoadReport JniLoader::load(JniBackend::Env env, const std::string& path,
                               std::uint32_t guest_flags) {
     JniLoadReport report;
@@ -93,10 +101,20 @@ JniLoadReport JniLoader::load(JniBackend::Env env, const std::string& path,
         JniBackend::Ref cls = 0;
         std::vector<DeclaredNativeMethod> methods;
         const NativeLookupStatus lookup =
-            backend_.find_declared_natives(env, decoded->class_name.c_str(), decoded->method.c_str(), cls, methods);
+            backend_.find_declared_natives(env, decoded->class_name.c_str(), decoded->method.c_str(),
+                                           decoded->arguments ? decoded->arguments->c_str() : nullptr, cls,
+                                           methods);
         if (lookup == NativeLookupStatus::MissingClass) {
             log_missing_class_once(decoded->class_name);
             ++report.skipped_classes;
+            continue;
+        }
+        // A type this export names, or a type of a sibling method the lookup had to touch, is not
+        // present. That costs this one export, never the rest of the library: a guest that bundles
+        // unresolvable classes next to the ones it needs must still bind the ones it needs.
+        if (lookup == NativeLookupStatus::Unresolvable) {
+            log_unresolvable_once(symbol, decoded->class_name);
+            ++report.skipped_exports;
             continue;
         }
         if (lookup != NativeLookupStatus::Found || cls == 0) {

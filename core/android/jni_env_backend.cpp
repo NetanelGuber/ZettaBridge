@@ -108,6 +108,49 @@ const JniEnvBackend::Reflection* JniEnvBackend::reflection(JNIEnv* env) {
             for (jobject global : globals) env->DeleteGlobalRef(global);
             return;
         }
+        // Optional group: the long-form export path. java.lang.invoke.MethodType is API 26, which
+        // the launcher requires, but a missing piece here only disables the fast path; it must not
+        // disable reflection for the process. Every failure is cleared before the next lookup.
+        bool long_ok = true;
+        const auto optional_class = [&](const char* name) -> jclass {
+            if (!long_ok) return nullptr;
+            jclass local = env->FindClass(name);
+            if (local == nullptr) {
+                env->ExceptionClear();
+                long_ok = false;
+                return nullptr;
+            }
+            jobject global = env->NewGlobalRef(local);
+            env->DeleteLocalRef(local);
+            if (global == nullptr) {
+                env->ExceptionClear();
+                long_ok = false;
+                return nullptr;
+            }
+            globals.push_back(global);
+            return static_cast<jclass>(global);
+        };
+        const auto optional_method = [&](jclass cls, const char* name, const char* signature, bool is_static) {
+            if (!long_ok || cls == nullptr) return static_cast<jmethodID>(nullptr);
+            const jmethodID id =
+                is_static ? env->GetStaticMethodID(cls, name, signature) : env->GetMethodID(cls, name, signature);
+            if (id == nullptr) {
+                env->ExceptionClear();
+                long_ok = false;
+            }
+            return id;
+        };
+        r.method_type_class = optional_class("java/lang/invoke/MethodType");
+        r.no_such_method_class = optional_class("java/lang/NoSuchMethodException");
+        r.class_get_declared_method = optional_method(
+            r.class_class, "getDeclaredMethod", "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;",
+            false);
+        r.method_type_from_descriptor =
+            optional_method(r.method_type_class, "fromMethodDescriptorString",
+                            "(Ljava/lang/String;Ljava/lang/ClassLoader;)Ljava/lang/invoke/MethodType;", true);
+        r.method_type_parameter_array =
+            optional_method(r.method_type_class, "parameterArray", "()[Ljava/lang/Class;", false);
+        r.long_form_ok = long_ok;
         reflection_ = r;
         reflection_ok_ = true;
     });
@@ -219,10 +262,116 @@ bool JniEnvBackend::set_class_loader(JNIEnv* env, jobject class_loader) {
     return true;
 }
 
+NativeLookupStatus JniEnvBackend::declared_by_name(JNIEnv* e, const Reflection& r, jobject cls,
+                                                   const char* name,
+                                                   std::vector<DeclaredNativeMethod>& methods) {
+    auto declared = static_cast<jobjectArray>(e->CallObjectMethod(cls, r.class_get_declared_methods));
+    // getDeclaredMethods() resolves the parameter and return types of every declared method, so a
+    // single unresolvable type anywhere in the class throws here. Skip this export, keep the library.
+    if (e->ExceptionCheck()) {
+        e->ExceptionClear();
+        return NativeLookupStatus::Unresolvable;
+    }
+    if (declared == nullptr) return NativeLookupStatus::Error;
+    const jsize count = e->GetArrayLength(declared);
+    for (jsize i = 0; i < count; ++i) {
+        // Each method gets its own frame, so no local reference of the enumeration outlives its
+        // iteration.
+        if (e->PushLocalFrame(8) != JNI_OK) return NativeLookupStatus::Error;  // OutOfMemoryError pending
+        jobject method = e->GetObjectArrayElement(declared, i);
+        const bool ok = !e->ExceptionCheck() && method != nullptr && scan_method(e, r, method, name, methods);
+        e->PopLocalFrame(nullptr);
+        if (!ok) {
+            // A type of this one method did not resolve: same treatment, since the overloads of an
+            // unreadable name cannot be bound in part.
+            e->ExceptionClear();
+            methods.clear();
+            return NativeLookupStatus::Unresolvable;
+        }
+    }
+    return NativeLookupStatus::Found;
+}
+
+NativeLookupStatus JniEnvBackend::declared_by_arguments(JNIEnv* e, const Reflection& r, jobject loader,
+                                                        jobject cls, const char* name, const char* arguments,
+                                                        std::vector<DeclaredNativeMethod>& methods) {
+    // The descriptor string, the MethodType, its parameter array and elements, the method name, the
+    // method and its return type.
+    if (e->PushLocalFrame(16) != JNI_OK) return NativeLookupStatus::Error;  // OutOfMemoryError pending
+    const auto done = [&](NativeLookupStatus status) {
+        if (status != NativeLookupStatus::Found) methods.clear();
+        if (status == NativeLookupStatus::Unresolvable) e->ExceptionClear();
+        e->PopLocalFrame(nullptr);
+        return status;
+    };
+
+    // A JNI long name encodes the parameter types and never the return type, so "(args)V" is the
+    // only complete descriptor available here; only its parameters are used.
+    std::string descriptor(arguments);
+    descriptor += 'V';
+    jstring java_descriptor = e->NewStringUTF(descriptor.c_str());
+    if (java_descriptor == nullptr) return done(NativeLookupStatus::Error);
+    jobject type = e->CallStaticObjectMethod(r.method_type_class, r.method_type_from_descriptor,
+                                             java_descriptor, loader);
+    // TypeNotPresentException, NoClassDefFoundError or IllegalArgumentException: this export names a
+    // type the plugin cannot resolve.
+    if (e->ExceptionCheck()) return done(NativeLookupStatus::Unresolvable);
+    if (type == nullptr) return done(NativeLookupStatus::Error);
+    auto parameters = static_cast<jobjectArray>(e->CallObjectMethod(type, r.method_type_parameter_array));
+    if (e->ExceptionCheck() || parameters == nullptr) return done(NativeLookupStatus::Error);
+
+    jstring java_name = e->NewStringUTF(name);
+    if (java_name == nullptr) return done(NativeLookupStatus::Error);
+    jobject method = e->CallObjectMethod(cls, r.class_get_declared_method, java_name, parameters);
+    if (e->ExceptionCheck()) {
+        // IsInstanceOf is not allowed with an exception pending: take the throwable out first.
+        jthrowable thrown = e->ExceptionOccurred();
+        e->ExceptionClear();
+        // NoSuchMethodException means the export names no declared method at all, which stays the
+        // loader's error. Anything else came from resolving a same-named overload's types.
+        const bool absent =
+            thrown != nullptr && e->IsInstanceOf(thrown, r.no_such_method_class) != JNI_FALSE;
+        if (thrown != nullptr) e->DeleteLocalRef(thrown);
+        return done(absent ? NativeLookupStatus::Found : NativeLookupStatus::Unresolvable);
+    }
+    if (method == nullptr) return done(NativeLookupStatus::Error);
+
+    const jint modifiers = e->CallIntMethod(method, r.method_get_modifiers);
+    if (e->ExceptionCheck()) return done(NativeLookupStatus::Error);
+    const jboolean is_native = e->CallStaticBooleanMethod(r.modifier_class, r.modifier_is_native, modifiers);
+    if (e->ExceptionCheck()) return done(NativeLookupStatus::Error);
+    if (is_native == JNI_FALSE) return done(NativeLookupStatus::Found);  // nothing to bind
+    const jboolean is_static = e->CallStaticBooleanMethod(r.modifier_class, r.modifier_is_static, modifiers);
+    if (e->ExceptionCheck()) return done(NativeLookupStatus::Error);
+
+    // The exact descriptor: the resolved parameter classes, then the method's real return type.
+    std::vector<std::string> parameter_descriptors;
+    const jsize count = e->GetArrayLength(parameters);
+    parameter_descriptors.reserve(static_cast<std::size_t>(count));
+    for (jsize i = 0; i < count; ++i) {
+        jobject parameter = e->GetObjectArrayElement(parameters, i);
+        if (e->ExceptionCheck() || parameter == nullptr) return done(NativeLookupStatus::Error);
+        std::string one;
+        const bool ok = type_descriptor(e, r, parameter, one);
+        e->DeleteLocalRef(parameter);
+        if (!ok) return done(NativeLookupStatus::Unresolvable);
+        parameter_descriptors.push_back(std::move(one));
+    }
+    jobject return_type = e->CallObjectMethod(method, r.method_get_return_type);
+    if (e->ExceptionCheck()) return done(NativeLookupStatus::Unresolvable);  // return type not present
+    if (return_type == nullptr) return done(NativeLookupStatus::Error);
+    std::string result;
+    if (!type_descriptor(e, r, return_type, result)) return done(NativeLookupStatus::Unresolvable);
+    std::optional<std::string> signature = jni_method_descriptor(parameter_descriptors, result);
+    if (!signature) return done(NativeLookupStatus::Error);
+    methods.push_back({std::move(*signature), is_static != JNI_FALSE});
+    return done(NativeLookupStatus::Found);
+}
+
 // ClassLoader.loadClass(String) on the retained plugin loader, not FindClass: FindClass from a
 // proxy JNI_OnLoad or a carrier resolves through the wrong (launcher or system) loader.
 NativeLookupStatus JniEnvBackend::find_declared_natives(Env env, const char* cls, const char* name,
-                                                        Ref& class_ref,
+                                                        const char* arguments, Ref& class_ref,
                                                         std::vector<DeclaredNativeMethod>& methods) {
     class_ref = 0;
     methods.clear();
@@ -233,8 +382,7 @@ NativeLookupStatus JniEnvBackend::find_declared_natives(Env env, const char* cls
     const std::optional<std::string> binary_name = jni_binary_class_name(cls);
     if (r == nullptr || loader == nullptr || !binary_name) return NativeLookupStatus::Error;
 
-    // Outer frame: the name string, the class and the method array. Each method gets its own frame,
-    // so no local reference of the enumeration outlives its iteration.
+    // Outer frame: the name string and the class.
     if (e->PushLocalFrame(8) != JNI_OK) return NativeLookupStatus::Error;  // OutOfMemoryError pending
     const auto fail = [&](NativeLookupStatus status) {
         methods.clear();
@@ -248,16 +396,13 @@ NativeLookupStatus JniEnvBackend::find_declared_natives(Env env, const char* cls
     if (e->ExceptionCheck()) return fail(class_load_failure(e, *r));
     if (found == nullptr) return fail(NativeLookupStatus::Error);
 
-    auto declared = static_cast<jobjectArray>(e->CallObjectMethod(found, r->class_get_declared_methods));
-    if (e->ExceptionCheck() || declared == nullptr) return fail(NativeLookupStatus::Error);
-    const jsize count = e->GetArrayLength(declared);
-    for (jsize i = 0; i < count; ++i) {
-        if (e->PushLocalFrame(8) != JNI_OK) return fail(NativeLookupStatus::Error);
-        jobject method = e->GetObjectArrayElement(declared, i);
-        const bool ok = !e->ExceptionCheck() && method != nullptr && scan_method(e, *r, method, name, methods);
-        e->PopLocalFrame(nullptr);
-        if (!ok) return fail(NativeLookupStatus::Error);
-    }
+    // A long-form export binds exactly one method, so it never enumerates: that is the whole point
+    // of the split. A short-form export binds every native overload of the name and has to.
+    const NativeLookupStatus status =
+        arguments != nullptr && r->long_form_ok
+            ? declared_by_arguments(e, *r, loader, found, name, arguments, methods)
+            : declared_by_name(e, *r, found, name, methods);
+    if (status != NativeLookupStatus::Found) return fail(status);
     class_ref = R(e->PopLocalFrame(found));
     return class_ref != 0 ? NativeLookupStatus::Found : NativeLookupStatus::Error;
 }

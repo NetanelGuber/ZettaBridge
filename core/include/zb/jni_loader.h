@@ -17,7 +17,11 @@ struct JniLoadReport {
     std::uint32_t guest_handle = 0;
     std::int32_t jni_version = 0x00010006;
     std::size_t bound_methods = 0;
+    // Exports whose declaring class is not in the plugin at all.
     std::size_t skipped_classes = 0;
+    // Exports whose Java side could not be inspected (an unresolvable type in the signature, or in
+    // the class the short-form lookup had to enumerate). Each one is logged once.
+    std::size_t skipped_exports = 0;
     std::string error;
 };
 
@@ -31,11 +35,13 @@ public:
 
 private:
     void log_missing_class_once(const std::string& name);
+    void log_unresolvable_once(const std::string& symbol, const std::string& name);
 
     HostJni& host_jni_;
     JniBackend& backend_;
     std::mutex missing_mutex_;
     std::unordered_set<std::string> missing_classes_;
+    std::unordered_set<std::string> unresolvable_exports_;
 };
 
 }  // namespace zb

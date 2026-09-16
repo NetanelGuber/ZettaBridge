@@ -11,5 +11,5 @@ extern "C" JNIEXPORT jint JNICALL zb_jni_reflection_compile_test(
     zb::JniBackend::Ref cls = 0;
     std::vector<zb::DeclaredNativeMethod> methods;
     return static_cast<jint>(backend.find_declared_natives(
-        reinterpret_cast<zb::JniBackend::Env>(env), class_name, method_name, cls, methods));
+        reinterpret_cast<zb::JniBackend::Env>(env), class_name, method_name, nullptr, cls, methods));
 }

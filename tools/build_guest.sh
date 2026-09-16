@@ -60,6 +60,8 @@ cp "$TOOLCHAIN/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" "$OUT/lib
     -Wl,-soname,libzbloadnoonload.so -o "$OUT/lib/libzbloadnoonload.so" "$ROOT/guest/testlib/zbloadprobe.c"
 "$CC" -shared -fPIC -O2 -Wall -Wextra -Wno-unused-parameter -DZB_LOAD_UNKNOWN_EXPORT \
     -Wl,-soname,libzbloadunknown.so -o "$OUT/lib/libzbloadunknown.so" "$ROOT/guest/testlib/zbloadprobe.c"
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wl,-soname,libzbloadskip.so \
+    -o "$OUT/lib/libzbloadskip.so" "$ROOT/guest/testlib/zbloadskip.c"
 for src in "$ROOT"/guest/tests/*_dynamic.cpp; do
     name=$(basename "$src" .cpp)
     "$CXX" -O2 -Wall -nostdlib++ -o "$OUT/$name" "$src" -L"$OUT/lib" -lzbthrow -lc++_shared

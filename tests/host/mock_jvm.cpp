@@ -181,6 +181,16 @@ void MockJvm::add_field(const std::string& cls, const std::string& name, const s
     fields_.push_back(field);
 }
 
+void MockJvm::fail_declared_enumeration(const std::string& cls, NativeLookupStatus status) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    failed_enumerations_[cls] = status;
+}
+
+void MockJvm::fail_type_resolution(const std::string& descriptor) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    unresolvable_types_.push_back(descriptor);
+}
+
 void MockJvm::fail_native_registration(const std::string& signature) {
     std::lock_guard<std::mutex> lock(mutex_);
     failed_registration_ = signature;
@@ -628,7 +638,7 @@ MockJvm::Ref MockJvm::to_reflected_field(Env env, Ref cls, Id field, bool is_sta
 }
 
 NativeLookupStatus MockJvm::find_declared_natives(Env env, const char* cls, const char* name,
-                                                  Ref& class_ref,
+                                                  const char* arguments, Ref& class_ref,
                                                   std::vector<DeclaredNativeMethod>& methods) {
     std::lock_guard<std::mutex> lock(mutex_);
     class_ref = 0;
@@ -636,12 +646,23 @@ NativeLookupStatus MockJvm::find_declared_natives(Env env, const char* cls, cons
     if (thread_locked(env, "find declared natives") == nullptr) return NativeLookupStatus::Error;
     Class* found = class_locked(cls);
     if (found == nullptr) return NativeLookupStatus::MissingClass;
+    // Injected failures are reported before the class reference exists, so a skipped export leaks
+    // nothing.
+    if (arguments == nullptr) {
+        const auto failure = failed_enumerations_.find(found->name);
+        if (failure != failed_enumerations_.end()) return failure->second;
+    } else {
+        for (const std::string& type : unresolvable_types_) {
+            if (std::string(arguments).find(type) != std::string::npos) return NativeLookupStatus::Unresolvable;
+        }
+    }
     class_ref = new_local_locked(env, found->object);
     if (class_ref == 0) return NativeLookupStatus::Error;
     for (const Method& method : methods_) {
-        if (method.cls == found->name && method.name == name && method.is_native) {
-            methods.push_back({method.signature, method.is_static});
-        }
+        if (method.cls != found->name || method.name != name || !method.is_native) continue;
+        // Long form resolves one signature, like Class.getDeclaredMethod; short form enumerates.
+        if (arguments != nullptr && method.signature.compare(0, std::strlen(arguments), arguments) != 0) continue;
+        methods.push_back({method.signature, method.is_static});
     }
     return NativeLookupStatus::Found;
 }

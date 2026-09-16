@@ -31,6 +31,15 @@ int main(int argc, char** argv) {
     vm->add_native("zb/Load", "shortExport", "(I)I", true);
     vm->add_native("zb/Load", "over", "(I)I", true);
     vm->add_native("zb/Load", "over", "(Ljava/lang/String;)I", false);
+    // libzbloadskip.so: one export names a type the plugin cannot resolve, one declares its natives
+    // in a class whose enumeration throws, one is ordinary and must still bind.
+    vm->define_class("zb/Skip");
+    vm->add_native("zb/Skip", "fine", "()I", true);
+    vm->add_native("zb/Skip", "ads", "(Lcom/google/ads/Ad;)I", true);
+    vm->define_class("zb/Broken");
+    vm->add_native("zb/Broken", "enumerate", "()I", true);
+    vm->fail_type_resolution("Lcom/google/ads/Ad;");
+    vm->fail_declared_enumeration("zb/Broken", zb::NativeLookupStatus::Unresolvable);
 
     auto* runtime = new zb::LibraryRuntime();
     auto* host_jni = new zb::HostJni(*runtime, *vm, 64);
@@ -104,6 +113,20 @@ int main(int argc, char** argv) {
     CHECK(!rejected.ok && rejected.error.find("RegisterNatives") != std::string::npos);
     CHECK(vm->exception_check(env));
     vm->exception_clear(env);
+
+    // A lookup that cannot be resolved skips only its own export; the library still loads.
+    const auto skipped = loader.load(env, library(argv[3], "libzbloadskip.so"), ZB_GUEST_RTLD_NOW);
+    CHECK(skipped.ok);
+    CHECK(skipped.bound_methods == 1 && skipped.skipped_exports == 2 && skipped.skipped_classes == 0);
+    CHECK(vm->native_function("zb/Skip", "fine", "()I") != nullptr);
+    CHECK(vm->native_function("zb/Skip", "ads", "(Lcom/google/ads/Ad;)I") == nullptr);
+    CHECK(vm->native_function("zb/Broken", "enumerate", "()I") == nullptr);
+    CHECK(!vm->exception_check(env));
+
+    // A genuine lookup error still fails the whole library.
+    vm->fail_declared_enumeration("zb/Broken", zb::NativeLookupStatus::Error);
+    const auto broken = loader.load(env, library(argv[3], "libzbloadskip.so"), ZB_GUEST_RTLD_NOW);
+    CHECK(!broken.ok && broken.error.find("failed to inspect declared natives") != std::string::npos);
 
     const std::string report_text = report.text();
     CHECK(report_text.find("jni-onload: libzbloadprobe.so ok jni=0x00010006") != std::string::npos);

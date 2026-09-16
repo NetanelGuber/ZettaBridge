@@ -52,6 +52,12 @@ public:
     void add_field(const std::string& cls, const std::string& name, const std::string& signature, bool is_static);
     // Makes the next RegisterNatives call for signature fail with NoSuchMethodError.
     void fail_native_registration(const std::string& signature);
+    // Makes short-form find_declared_natives on cls report `status`, standing in for an ART class
+    // whose getDeclaredMethods() throws (Unresolvable) or fails outright (Error).
+    void fail_declared_enumeration(const std::string& cls, NativeLookupStatus status);
+    // Makes long-form find_declared_natives report Unresolvable whenever the requested arguments
+    // name this type descriptor, standing in for a parameter class the plugin cannot load.
+    void fail_type_resolution(const std::string& descriptor);
 
     // Direct object access for tests and method bodies.
     ObjectId class_object(const std::string& name);
@@ -118,7 +124,8 @@ public:
     Id from_reflected_field(Env env, Ref field) override;
     Ref to_reflected_method(Env env, Ref cls, Id method, bool is_static) override;
     Ref to_reflected_field(Env env, Ref cls, Id field, bool is_static) override;
-    NativeLookupStatus find_declared_natives(Env env, const char* cls, const char* name, Ref& class_ref,
+    NativeLookupStatus find_declared_natives(Env env, const char* cls, const char* name, const char* arguments,
+                                             Ref& class_ref,
                                              std::vector<DeclaredNativeMethod>& methods) override;
     Ref alloc_object(Env env, Ref cls) override;
     Ref get_object_class(Env env, Ref obj) override;
@@ -249,6 +256,8 @@ private:
     Env next_env_ = 0xE000;
     std::vector<std::string> errors_;
     std::optional<std::string> failed_registration_;
+    std::map<std::string, NativeLookupStatus> failed_enumerations_;
+    std::vector<std::string> unresolvable_types_;
 };
 
 }  // namespace zb::mock

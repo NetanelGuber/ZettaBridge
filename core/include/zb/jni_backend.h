@@ -32,6 +32,10 @@ struct DeclaredNativeMethod {
 enum class NativeLookupStatus {
     Found,
     MissingClass,
+    // The class loaded, but the declared methods this export needs could not be resolved: a type
+    // named by the export, or by a sibling method the enumeration touched, is not present. The
+    // loader skips that one export and logs it once; it never fails the library.
+    Unresolvable,
     Error,
 };
 
@@ -64,7 +68,10 @@ public:
     // Loader-only reflection seam. Found returns a local class reference and every declared
     // native with the requested name. MissingClass must clear only the expected class-not-found
     // exception. Android supplies the plugin-scoped implementation in Phase 4d Task 3.
-    virtual NativeLookupStatus find_declared_natives(Env, const char*, const char*, Ref& cls,
+    // `arguments` is the argument part of the descriptor of a long-form export ("(ILjava/lang/String;)"),
+    // or nullptr for a short-form export, which binds every native overload of that name. Long-form
+    // lookups resolve only the types they name; short-form lookups must enumerate.
+    virtual NativeLookupStatus find_declared_natives(Env, const char*, const char*, const char*, Ref& cls,
                                                      std::vector<DeclaredNativeMethod>& methods) {
         cls = 0;
         methods.clear();
