@@ -834,3 +834,21 @@ on this machine.
   `zbridge` and `zbproxy` link.
 - **NEXT:** Phase 5 Task 6: build the arm32 `zbglprobe` and exercise the complete guest-stub ->
   `svc` -> `HostGl` -> mock path, including all 142 calls and a 20-run repeat loop.
+
+## HANDOFF 2026-09-16 after Phase 5 Task 5
+
+- Continue on local branch `codex/phase4d-launcher` at `51aa159`. Do not push without the user's
+  agreement. The only expected dirty path is the pre-existing required Dynarmic submodule patch;
+  do not stage, reset or change it.
+- Phase 5 Tasks 1-5 are committed as `79a1e41`, `dae9309`, `043c927`, `125367b`, `51aa159`.
+  The complete GLES 2.0 host surface is implemented: 142/142 functions. The next unstarted work is
+  Task 6 in `docs/superpowers/plans/2026-09-16-phase5-gles.md`.
+- Last fresh verification at `51aa159`: GLES and JNI generator checks PASS; ctest 34/34 PASS;
+  guest build and all 9 guest cases PASS; Android arm64 `zbridge` and `zbproxy` targets link.
+- Task 6 must follow TDD and end in its own local commit with this file updated. It adds
+  `guest/testlib/zbglprobe.c` and `gles_bridge_test`, drives the real arm32 stub/SVC/HostGl path,
+  covers all 142 functions, and repeats the bridge test 20 times.
+- Then execute Tasks 7-9 in order: Android asset calls (19 functions), production EGL/GLES/assets
+  backend wiring and launcher bundle, then the OnePlus 13 Orange Roulette rerun and first-frame
+  acceptance. The runtime report should show zero unimplemented GLES/asset calls after Task 8;
+  Task 9 is the first device/render proof.
