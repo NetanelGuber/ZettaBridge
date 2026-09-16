@@ -16,6 +16,7 @@
 namespace {
 
 constexpr std::uint32_t kStack = 0x10000;
+constexpr std::uint32_t kData = 0x20000;
 
 void set_words(zb::LibraryRuntime& runtime, zb::GuestThread& thread,
                const std::array<std::uint32_t, 12>& words) {
@@ -59,6 +60,7 @@ int main() {
 
     zb::LibraryRuntime runtime;
     CHECK(runtime.memory().map_anon(kStack, 0x1000, PROT_READ | PROT_WRITE));
+    CHECK(runtime.memory().map_anon(kData, 0x1000, PROT_READ | PROT_WRITE));
     MockGles backend;
     zb::HostGl host(runtime, backend);
     Dynarmic::ExclusiveMonitor monitor(1);
@@ -118,6 +120,38 @@ int main() {
     set_words(runtime, thread, copy_words);
     CHECK(host.handle_host_call(zb::ZB_GL_HC_glIsBuffer, thread));
     CHECK(thread.regs()[0] == 1 && thread.regs()[1] == 0);
+
+    // Registry len= shapes: literal, named parameter, product, and a parameter declared after
+    // its pointer. Each guest address must become base + address without copying.
+    backend.clear_calls();
+    std::array<std::uint32_t, 12> pointer_words{3, kData + 0xFF0};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glVertexAttrib4fv, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glVertexAttrib4fv");
+    CHECK(backend.calls()[0].arguments[1] ==
+          reinterpret_cast<std::uintptr_t>(runtime.memory().base() + kData + 0xFF0));
+
+    backend.clear_calls();
+    pointer_words = {2, kData + 0xFF8};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glDeleteBuffers, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glDeleteBuffers");
+
+    backend.clear_calls();
+    pointer_words = {7, 2, 0, kData + 0xFB8};  // 2 * 9 floats ends at the page boundary.
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glUniformMatrix3fv, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glUniformMatrix3fv");
+
+    backend.clear_calls();
+    pointer_words = {2, kData, 0x8DF8, kData + 0x100, 5};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glShaderBinary, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glShaderBinary");
+    CHECK(backend.calls()[0].arguments[1] ==
+          reinterpret_cast<std::uintptr_t>(runtime.memory().base() + kData));
+    CHECK(backend.calls()[0].arguments[3] ==
+          reinterpret_cast<std::uintptr_t>(runtime.memory().base() + kData + 0x100));
 
     backend.set_error(0);
     set_words(runtime, thread, copy_words);

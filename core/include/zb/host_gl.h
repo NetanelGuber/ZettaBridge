@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 
 #include "zb/gl_backend.h"
@@ -40,6 +41,48 @@ public:
         void set_result(T value) {
             static_assert(std::is_integral_v<T> || std::is_enum_v<T>);
             thread_.regs()[0] = static_cast<std::uint32_t>(value);
+        }
+
+        template <typename T>
+        std::uint64_t length(T value, std::uint64_t multiplier = 1) {
+            static_assert(std::is_integral_v<T>);
+            if constexpr (std::is_signed_v<T>) {
+                if (value < 0) {
+                    fail(kGlInvalidValue, "array length is negative");
+                    return 0;
+                }
+            }
+            const std::uint64_t unsigned_value = static_cast<std::uint64_t>(value);
+            if (multiplier != 0 &&
+                unsigned_value > std::numeric_limits<std::uint64_t>::max() / multiplier) {
+                fail(kGlInvalidValue, "array length overflowed");
+                return 0;
+            }
+            return unsigned_value * multiplier;
+        }
+
+        template <typename T>
+        T* pointer(unsigned position, std::uint64_t elements, std::uint8_t need) {
+            const std::uint32_t address = arg(position);
+            constexpr std::uint64_t element_size = [] {
+                if constexpr (std::is_void_v<std::remove_cv_t<T>>) {
+                    return std::uint64_t{1};
+                } else {
+                    return static_cast<std::uint64_t>(sizeof(T));
+                }
+            }();
+            if (elements > kGuestSpaceSize / element_size) {
+                fail(kGlInvalidValue, "array byte size exceeds the guest address space");
+                return nullptr;
+            }
+            const std::uint64_t bytes = elements * element_size;
+            if (address == 0) return nullptr;
+            std::uint8_t* host = host_.runtime().memory().host_ptr(address, bytes, need);
+            if (host == nullptr) {
+                fail(kGlInvalidValue, "array is outside accessible guest memory");
+                return nullptr;
+            }
+            return reinterpret_cast<T*>(host);
         }
 
         void fail(GLenum error, const char* reason);

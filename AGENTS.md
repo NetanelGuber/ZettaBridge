@@ -21,10 +21,10 @@ English and ASCII only.
   `JniBackend`, Java -> guest dispatch, `RegisterNatives`, attach/detach; committed directly
   to `phase1-zbrun` (see "Phase 4c done" below). Host tests are 18/18. Next is plan 4d.
 - **Phase 4 is complete and accepted on the OnePlus 13.** See `docs/phase4-acceptance.md`.
-- **Phase 5 Task 1 is done (2026-09-16).** The pinned GLES registry, generator, typed backend
-  seam, `HostGl`, mock and the 79 direct pointerless handlers are implemented. The two remaining
-  pointerless calls (`glDrawArrays`, `glGetString`) correctly remain semantic stubs. Host tests
-  are 32/32. Next is Phase 5 Task 2, registry-driven pointer marshaling.
+- **Phase 5 Tasks 1-2 are done (2026-09-16).** The pinned GLES registry, generator, typed
+  backend seam, `HostGl`, mock, 79 scalar handlers and 37 registry-`len` pointer handlers are
+  implemented: 116/142 GLES calls now dispatch to the backend. Host tests are 33/33. Next is
+  Phase 5 Task 3, COMPSIZE queries, pixel transfers and uniform read-back.
 - Work continues on local branch `codex/phase4d-launcher`, based on `phase1-zbrun`.
 - Commit locally after every task and update this file. Push only with the user's agreement.
 
@@ -740,3 +740,25 @@ on this machine.
   32/32; guest 9/9; Android arm64 `zbridge` links.
 - **NEXT:** Phase 5 Task 2 in `docs/superpowers/plans/2026-09-16-phase5-gles.md`: generate
   bounds-checked marshaling for registry `len=` pointer parameters and add `gles_pointer_test`.
+
+## Phase 5 Task 2 done (2026-09-16)
+
+- Implemented in this commit: the generator now emits 37 additional pointer-taking handlers,
+  bringing the direct typed backend surface to 116/142 GLES calls. It accepts literal, named
+  parameter and product `len=` forms and intentionally leaves `COMPSIZE`, NUL strings and the
+  semantic handlers for Tasks 3-5.
+- All scalar arguments are captured before any pointer is translated, so
+  `glShaderBinary(binary, length)` correctly uses its later `length` parameter. Length products
+  and byte sizes are computed in 64 bits; negative lengths, ranges beyond the 4 GiB guest space,
+  unmapped pages and insufficient permissions set `GL_INVALID_VALUE` and skip the driver.
+- Input and output arrays are zero-copy aliases of `GuestMemory`: non-null addresses become
+  `base() + address` after `kPageRead` or `kPageRead | kPageWrite` validation. A null guest
+  pointer stays null, while an impossible length is still rejected before the null shortcut.
+- TDD evidence: the new marshal cases and `gles_pointer_test` first failed with
+  `GL_INVALID_OPERATION` from the Task 1 stubs. They now cover literal/parameter/product lengths,
+  the later-parameter trap, past-end and unmapped addresses, read-only output, guest-space size
+  overflow, absurd `glGenTextures`, oversized `glBufferData`, and legal null data.
+- Fresh verification: GLES/JNI generator checks pass; host 33/33; guest 9/9; Android arm64
+  `zbridge` links.
+- **NEXT:** Phase 5 Task 3: implement `COMPSIZE(pname)`, pixel byte sizing/alignment and the
+  lazy uniform-location size map.

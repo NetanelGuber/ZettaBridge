@@ -4,6 +4,7 @@ set(ZB_HOST_TESTS
     elf_symbols_test
     guest_memory_test
     gles_marshal_test
+    gles_pointer_test
     jni_abi_test
     jni_descriptor_test
     jni_handles_test
@@ -27,6 +28,7 @@ add_test(NAME gen_jni_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/too
 add_test(NAME gen_gles_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gen_gles.py --check)
 
 target_sources(gles_marshal_test PRIVATE mock_gles.cpp)
+target_sources(gles_pointer_test PRIVATE mock_gles.cpp)
 
 # ZBridge.java and core/android/zbridge_jni.cpp declare and define the same native methods.
 add_test(NAME zbridge_natives_check
