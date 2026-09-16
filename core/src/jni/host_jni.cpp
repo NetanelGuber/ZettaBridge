@@ -321,6 +321,14 @@ std::uint32_t HostJni::guest_java_vm() const {
     return impl_->api.java_vm;
 }
 
+JniBackend::Env HostJni::current_env() {
+    return impl_->thread().env;
+}
+
+JniBackend::Ref HostJni::resolve_ref(std::uint32_t handle, const char* function) {
+    return impl_->resolve(impl_->thread(), handle, function);
+}
+
 std::uint32_t HostJni::load_library_on_current(JniBackend::Env env, const std::string& path,
                                                std::uint32_t guest_flags, std::string& error) {
     return loader_operation(*impl_, env, false, guest_flags, path, error);

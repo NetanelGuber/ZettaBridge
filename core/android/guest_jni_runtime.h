@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "asset_driver_backend.h"
 #include "gl_driver_backend.h"
 #include "jni_env_backend.h"
 #include "zb/proxy_runtime.h"
@@ -25,8 +26,9 @@ public:
 private:
     class Engine final : public GuestJniEngine {
     public:
-        Engine(JniEnvBackend& backend, GlBackend& gl_backend)
-            : GuestJniEngine(backend, &gl_backend, gl_egl_context_current), jni_backend_(backend) {}
+        Engine(JniEnvBackend& backend, GlBackend& gl_backend, AssetBackend& asset_backend)
+            : GuestJniEngine(backend, &gl_backend, gl_egl_context_current, &asset_backend),
+              jni_backend_(backend) {}
         bool bind_class_loader(JniBackend::Env env, JniBackend::Ref loader, std::string& error) override;
 
     protected:
@@ -40,6 +42,7 @@ private:
 
     JniEnvBackend backend_;
     GlDriverBackend gl_backend_;
+    AndroidAssetBackend asset_backend_;
     Engine engine_;
     ProxyRuntime proxies_;
 };

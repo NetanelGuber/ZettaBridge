@@ -8,7 +8,9 @@
 #include <string>
 #include <thread>
 
+#include "zb/asset_backend.h"
 #include "zb/gl_backend.h"
+#include "zb/host_assets.h"
 #include "zb/host_gl.h"
 #include "zb/jni_backend.h"
 #include "zb/jni_loader.h"
@@ -132,8 +134,10 @@ class GuestJniEngine : public ProxyLoadEngine {
 public:
     // gl_backend is optional: nullptr (the host build) chains only HostJni. Android supplies the
     // real driver backend (and an EGL-current probe) so GLES host calls reach the driver too.
+    // asset_backend is likewise optional: nullptr leaves AAsset* host calls unimplemented.
     explicit GuestJniEngine(JniBackend& backend, GlBackend* gl_backend = nullptr,
-                            HostGl::EglContextProbe egl_context_probe = {});
+                            HostGl::EglContextProbe egl_context_probe = {},
+                            AssetBackend* asset_backend = nullptr);
     ~GuestJniEngine() override;
     GuestJniEngine(const GuestJniEngine&) = delete;
     GuestJniEngine& operator=(const GuestJniEngine&) = delete;
@@ -147,6 +151,8 @@ public:
     HostJni& host_jni() { return *host_jni_; }
     // nullptr unless a gl_backend was passed to the constructor.
     HostGl* host_gl() { return host_gl_; }
+    // nullptr unless an asset_backend was passed to the constructor.
+    HostAssets* host_assets() { return host_assets_; }
 
 protected:
     // Clears a Java exception left pending by a failed load and describes it for the error
@@ -159,6 +165,7 @@ private:
     LibraryRuntime* runtime_;
     HostJni* host_jni_;
     HostGl* host_gl_ = nullptr;
+    HostAssets* host_assets_ = nullptr;
     JniLoader* loader_;
 };
 

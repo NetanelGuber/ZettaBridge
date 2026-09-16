@@ -46,6 +46,15 @@ public:
     // The guest JavaVM*, valid when ready().
     std::uint32_t guest_java_vm() const;
 
+    // The host JNIEnv of the calling thread's current JNI transition (call_native or a guest JNI
+    // host call reached from one), or 0 outside one. Lets another host-call dispatcher (HostAssets)
+    // call back into Java on the same thread.
+    JniBackend::Env current_env();
+    // Resolves a guest JNI local/global/weak-global reference handle to a host reference on the
+    // calling thread; 0 for the null handle. Fatal for an invalid handle, like every JNI reference
+    // operation. function names the caller for the error message.
+    JniBackend::Ref resolve_ref(std::uint32_t handle, const char* function);
+
     // Runs a guest function as native code called from Java on the calling host thread, whose
     // host JNIEnv is env. Uses the guest thread this host thread already runs, or else this host
     // thread's cached carrier. Opens a local frame for the call; return_type 'L' converts the

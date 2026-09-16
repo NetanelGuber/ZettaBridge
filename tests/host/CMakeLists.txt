@@ -40,6 +40,11 @@ foreach(gl_chain_mode no-backend with-backend)
     add_test(NAME gl_chain_test_${gl_chain_mode} COMMAND gl_chain_test ${gl_chain_mode})
 endforeach()
 
+# AAsset* host calls against the mock AssetBackend (Phase 5 Task 7), chained the same way.
+add_executable(asset_chain_test asset_chain_test.cpp)
+target_link_libraries(asset_chain_test PRIVATE zbcore zbmockjvm)
+add_test(NAME asset_chain_test COMMAND asset_chain_test)
+
 # ZBridge.java and core/android/zbridge_jni.cpp declare and define the same native methods.
 add_test(NAME zbridge_natives_check
     COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/check_zbridge_natives.py)

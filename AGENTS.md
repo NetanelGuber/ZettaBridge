@@ -930,3 +930,30 @@ The user ran Orange Roulette with the real GLES backend (`8c05689`):
 **NEXT: Phase 5 Task 7 (`AAsset*` over 32-bit handles).** It is the only thing between the game and
 its first frame. Then Task 6 (guest probe) and Task 9 (intro screen on the device). Rebuild the APK
 after Task 7 with the command in the HANDOFF section.
+
+## Phase 5 Task 7 done: `AAsset*` over 32-bit handles (2026-09-16)
+
+- New `HostAssets` (`core/include/zb/host_assets.h`, `core/src/assets/host_assets.cpp`) serves the
+  six `AAsset*` functions liblime.so imports (indices 145/146/148/150/155/157 in
+  `core/src/gen/hostcalls.inc`, named in `core/include/zb/asset_hostcalls.h`):
+  `AAssetManager_fromJava`, `AAssetManager_open`, `AAsset_getLength`, `AAsset_read`, `AAsset_close`,
+  `AAsset_openFileDescriptor`. `AAssetManager*`/`AAsset*` never cross into the guest; they are
+  32-bit handles into `HostAssets`'s own tables (reusing `GlobalHandles`). The other ~12 AAsset*
+  stubs in the reserved 142-160 range stay unimplemented. `HostJni` grew two small public methods,
+  `current_env()`/`resolve_ref()`, so `HostAssets` can turn the guest jobject handle into the real
+  host `jobject` and use the calling thread's host `JNIEnv` for `AAssetManager_fromJava`, per the
+  design. `GuestJniEngine` now takes an optional `AssetBackend*` and chains `HostAssets` into the
+  host-call handler alongside `HostGl`/`HostJni` (`core/src/jni/proxy_runtime.cpp`).
+- New `AssetBackend` interface (`core/include/zb/asset_backend.h`): `AndroidAssetBackend`
+  (`core/android/asset_driver_backend.*`) wraps the real NDK `<android/asset_manager_jni.h>`;
+  `MockAssetBackend` (`tests/host/mock_assets.h`) is an in-memory map for host tests. `zbridge` now
+  also links `android`.
+- New test `asset_chain_test` covers the open/getLength/read/close round trip, a missing file, an
+  out-of-bounds read buffer, operations on a closed handle, `AAsset_openFileDescriptor`'s 32-bit
+  outputs, and that `GuestJniEngine` chains `HostAssets` the way it chains `HostGl`. Full suite:
+  37/37 ctest, 9/9 guest tests, `zbridge`/`zbproxy` link for Android arm64.
+- Still unimplemented: `AAssetDir_*` (3), `AAssetManager_openDir`, `AAsset_getBuffer`,
+  `AAsset_getLength64`, `AAsset_getRemainingLength(64)`, `AAsset_isAllocated`,
+  `AAsset_openFileDescriptor64`, `AAsset_seek(64)`. None of these are imported by liblime.so.
+- **NEXT:** rebuild and push the launcher APK, then the OnePlus 13 rerun of Orange Roulette,
+  expecting the intro screen (Task 9). Task 6 (guest GL probe) is still open separately.
