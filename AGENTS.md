@@ -682,3 +682,37 @@ decisions, acceptance, no full code), then execute task by task.
 
 Put the phone steps in a short numbered block at the top of the message. OxygenOS hides
 third-party logcat, so rely on the runtime report, `Diagnostics` and the clipboard.
+
+### Update: the spec and plan are written (`956cd03`)
+
+- `docs/superpowers/specs/2026-09-16-gles-assets-design.md`
+- `docs/superpowers/plans/2026-09-16-phase5-gles.md` (9 tasks)
+
+A real generator prototype over `gl.xml` emitted 131 of 142 handlers mechanically and they
+compiled clean against the NDK headers. It corrected three things in the numbers above:
+
+1. **No copying for arrays.** Guest memory is host memory at `base() + addr`, so the
+   len-carrying functions need a bounds check and a pointer add, not a copy. Real copies remain
+   only in `glShaderSource` (array of 32-bit pointers) and `glGetString` (host pointer the guest
+   cannot hold).
+2. **Hand-written cases are 11, not 4:** `glVertexAttribPointer`, `glDrawArrays`,
+   `glDrawElements`, `glShaderSource`, `glGetVertexAttribPointerv`, `glGetString`,
+   `glGetUniform{f,i}v`, `glTexImage2D`, `glTexSubImage2D`, `glReadPixels`. The registry cannot
+   express `COMPSIZE` lengths (18 params), and pixel sizes also depend on `GL_*_ALIGNMENT`,
+   which the registry never mentions.
+3. **No GLES 2.0 parameter is 64 bits**, so argument index equals guest word index; none of the
+   JNI bridge's 64-bit pair handling applies. `GLintptr`/`GLsizeiptr` widen in `glBufferData`
+   and `glBufferSubData` only.
+
+Traps the prototype found, already written into the plan:
+- `glGetVertexAttribPointerv` must return the **guest** pointer; the registry marks it a plain
+  `len=1` output, and a naive generator would hand the guest a host address.
+- A `len=` can name a parameter declared after the pointer (`glShaderBinary`), so a single-pass
+  generator fails to compile.
+- Never add the NDK sysroot to a host target's include path; it breaks host glibc C++ headers.
+  Copy or isolate `GLES2/` and `KHR/` instead.
+
+**Biggest device risk:** the design assumes guest GL calls arrive on the host thread that
+borrowed `GLThread`'s carrier, where the EGL context is current. Only JNI has exercised that
+path. Plan Task 9 checks it first; if it is wrong, everything fails on device and nothing fails
+on this machine.
