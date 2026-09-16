@@ -8,6 +8,8 @@
 #include <string>
 #include <thread>
 
+#include "zb/gl_backend.h"
+#include "zb/host_gl.h"
 #include "zb/jni_backend.h"
 #include "zb/jni_loader.h"
 #include "zb/library_runtime.h"
@@ -128,7 +130,10 @@ private:
 // destructor aborts like the LibraryRuntime and HostJni it owns.
 class GuestJniEngine : public ProxyLoadEngine {
 public:
-    explicit GuestJniEngine(JniBackend& backend);
+    // gl_backend is optional: nullptr (the host build) chains only HostJni. Android supplies the
+    // real driver backend (and an EGL-current probe) so GLES host calls reach the driver too.
+    explicit GuestJniEngine(JniBackend& backend, GlBackend* gl_backend = nullptr,
+                            HostGl::EglContextProbe egl_context_probe = {});
     ~GuestJniEngine() override;
     GuestJniEngine(const GuestJniEngine&) = delete;
     GuestJniEngine& operator=(const GuestJniEngine&) = delete;
@@ -140,6 +145,8 @@ public:
 
     LibraryRuntime& runtime() { return *runtime_; }
     HostJni& host_jni() { return *host_jni_; }
+    // nullptr unless a gl_backend was passed to the constructor.
+    HostGl* host_gl() { return host_gl_; }
 
 protected:
     // Clears a Java exception left pending by a failed load and describes it for the error
@@ -151,6 +158,7 @@ protected:
 private:
     LibraryRuntime* runtime_;
     HostJni* host_jni_;
+    HostGl* host_gl_ = nullptr;
     JniLoader* loader_;
 };
 

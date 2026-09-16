@@ -32,6 +32,14 @@ target_sources(gles_marshal_test PRIVATE mock_gles.cpp)
 target_sources(gles_pointer_test PRIVATE mock_gles.cpp)
 target_sources(gles_client_arrays_test PRIVATE mock_gles.cpp)
 
+# Proves GuestJniEngine chains a GlBackend's HostGl alongside HostJni (Phase 5 Task 8). Each mode
+# is its own process: HostJni (like the LibraryRuntime it lives in) is one per process.
+add_executable(gl_chain_test gl_chain_test.cpp mock_gles.cpp)
+target_link_libraries(gl_chain_test PRIVATE zbcore zbmockjvm)
+foreach(gl_chain_mode no-backend with-backend)
+    add_test(NAME gl_chain_test_${gl_chain_mode} COMMAND gl_chain_test ${gl_chain_mode})
+endforeach()
+
 # ZBridge.java and core/android/zbridge_jni.cpp declare and define the same native methods.
 add_test(NAME zbridge_natives_check
     COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/check_zbridge_natives.py)

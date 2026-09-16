@@ -297,14 +297,22 @@ std::optional<std::string> ProxyRuntime::last_load_error() const {
     return last_error_;
 }
 
-GuestJniEngine::GuestJniEngine(JniBackend& backend)
+GuestJniEngine::GuestJniEngine(JniBackend& backend, GlBackend* gl_backend, HostGl::EglContextProbe egl_context_probe)
     : backend_(backend),
       runtime_(new LibraryRuntime()),
       host_jni_(new HostJni(*runtime_, backend)),
       loader_(new JniLoader(*host_jni_, backend)) {
+    if (gl_backend != nullptr) {
+        host_gl_ = new HostGl(*runtime_, *gl_backend, HostGl::GuestAllocator{}, std::move(egl_context_probe));
+    }
     HostJni* host_jni = host_jni_;
-    runtime_->set_host_call_handler(
-        [host_jni](std::uint32_t index, GuestThread& thread) { return host_jni->handle_host_call(index, thread); });
+    HostGl* host_gl = host_gl_;
+    // GL and JNI host-call index ranges never overlap (0-141 vs 0xFB00+), so the chain order is
+    // free; GL first since it is by far the hotter path during rendering.
+    runtime_->set_host_call_handler([host_jni, host_gl](std::uint32_t index, GuestThread& thread) {
+        if (host_gl != nullptr && host_gl->handle_host_call(index, thread)) return true;
+        return host_jni->handle_host_call(index, thread);
+    });
 }
 
 GuestJniEngine::~GuestJniEngine() {

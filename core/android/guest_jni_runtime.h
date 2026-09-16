@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "gl_driver_backend.h"
 #include "jni_env_backend.h"
 #include "zb/proxy_runtime.h"
 
@@ -24,7 +25,8 @@ public:
 private:
     class Engine final : public GuestJniEngine {
     public:
-        explicit Engine(JniEnvBackend& backend) : GuestJniEngine(backend), jni_backend_(backend) {}
+        Engine(JniEnvBackend& backend, GlBackend& gl_backend)
+            : GuestJniEngine(backend, &gl_backend, gl_egl_context_current), jni_backend_(backend) {}
         bool bind_class_loader(JniBackend::Env env, JniBackend::Ref loader, std::string& error) override;
 
     protected:
@@ -37,6 +39,7 @@ private:
     explicit GuestJniRuntime(JavaVM* vm);
 
     JniEnvBackend backend_;
+    GlDriverBackend gl_backend_;
     Engine engine_;
     ProxyRuntime proxies_;
 };

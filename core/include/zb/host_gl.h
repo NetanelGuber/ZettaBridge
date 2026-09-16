@@ -99,8 +99,14 @@ public:
         bool valid_ = true;
     };
 
-    HostGl(LibraryRuntime& runtime, GlBackend& backend, GuestAllocator allocator = {})
-        : runtime_(runtime), backend_(backend), allocator_(std::move(allocator)) {}
+    // Called at most once, on the first GLES host call, to check eglGetCurrentContext() on the
+    // calling thread. Left empty on the host (no EGL); the Android wiring supplies it.
+    using EglContextProbe = std::function<bool()>;
+
+    HostGl(LibraryRuntime& runtime, GlBackend& backend, GuestAllocator allocator = {},
+           EglContextProbe egl_context_probe = {})
+        : runtime_(runtime), backend_(backend), allocator_(std::move(allocator)),
+          egl_context_probe_(std::move(egl_context_probe)) {}
 
     // Serves the GLES range 0-141 and leaves 142-160 for HostAssets.
     bool handle_host_call(std::uint32_t index, GuestThread& thread);
@@ -121,6 +127,8 @@ private:
     LibraryRuntime& runtime_;
     GlBackend& backend_;
     GuestAllocator allocator_;
+    EglContextProbe egl_context_probe_;
+    bool egl_context_checked_ = false;
 };
 
 std::uint64_t gl_pname_count(GlBackend& backend, GLenum pname);

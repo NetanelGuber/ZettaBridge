@@ -43,8 +43,8 @@ if (ANDROID)
     # android/jni_env_backend.cpp: the JniBackend over the real JNIEnv, used by the JNI bridge (4d).
     # android/guest_jni_runtime.cpp: the process-lifetime runtime behind ZBridge.onProxyLoaded (4d).
     add_library(zbridge SHARED src/zbridge_c_api.cpp android/zbridge_jni.cpp android/jni_env_backend.cpp
-        android/guest_jni_runtime.cpp)
-    target_link_libraries(zbridge PRIVATE zbcore)
+        android/guest_jni_runtime.cpp android/gl_driver_backend.cpp)
+    target_link_libraries(zbridge PRIVATE zbcore GLESv2 EGL)
     set_target_properties(zbridge PROPERTIES CXX_VISIBILITY_PRESET hidden)
     target_compile_definitions(zbridge PRIVATE ZB_EXPORT_C_API)
     # --exclude-libs keeps the statically linked libc++ and friends from being exported, so

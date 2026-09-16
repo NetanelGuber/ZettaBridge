@@ -66,6 +66,41 @@ void check_empty_report() {
     CHECK(line_with(text, "guest-exit:") == "guest-exit: (none)");
     CHECK(report.first_unimplemented_host_call().empty());
     CHECK(report.unimplemented_host_calls() == 0);
+    CHECK(line_with(text, "gl-calls:") == "gl-calls: 0");
+    CHECK(line_with(text, "gl-first-call:") == "gl-first-call: (none)");
+    CHECK(line_with(text, "gl-egl-context-current:") == "gl-egl-context-current: (unknown)");
+    CHECK(line_with(text, "gl-first-error:") == "gl-first-error: (none)");
+    CHECK(report.gl_calls() == 0);
+}
+
+void check_gl_section() {
+    zb::RuntimeReport report;
+    report.note_gl_call("glClear", 4242);
+    report.note_gl_call("glDrawArrays", 4242);
+    report.note_gl_call("glDrawArrays", 4242);
+    CHECK(report.gl_calls() == 3);
+    std::string text = report.text();
+    CHECK(line_with(text, "gl-calls:") == "gl-calls: 3");
+    // Only the first call's name and thread id are kept.
+    CHECK(line_with(text, "gl-first-call:") == "gl-first-call: glClear tid=4242");
+
+    // EGL context and error are each recorded once; later notes are ignored.
+    report.note_gl_egl_context(true);
+    report.note_gl_egl_context(false);
+    text = report.text();
+    CHECK(line_with(text, "gl-egl-context-current:") == "gl-egl-context-current: yes");
+
+    report.note_gl_error("glGetError", 0x0502);
+    report.note_gl_error("glGetError", 0x0501);
+    text = report.text();
+    CHECK(line_with(text, "gl-first-error:") == "gl-first-error: glGetError 0x0502");
+
+    report.clear();
+    text = report.text();
+    CHECK(line_with(text, "gl-calls:") == "gl-calls: 0");
+    CHECK(line_with(text, "gl-first-call:") == "gl-first-call: (none)");
+    CHECK(line_with(text, "gl-egl-context-current:") == "gl-egl-context-current: (unknown)");
+    CHECK(line_with(text, "gl-first-error:") == "gl-first-error: (none)");
 }
 
 void check_unimplemented_host_calls() {
@@ -256,6 +291,7 @@ int main() {
     check_throttle(dir);
     check_process_wide_instance();
     check_threads();
+    check_gl_section();
 
     fs::remove_all(dir);
     std::puts("runtime_report_test PASS");

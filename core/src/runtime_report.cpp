@@ -154,6 +154,47 @@ void RuntimeReport::note_guest_exit(const std::string& reason) {
     if (observer) (*observer)(true);
 }
 
+void RuntimeReport::note_gl_call(const char* function, std::uint64_t host_tid) {
+    bool structural = false;
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++gl_call_total_;
+        if (gl_call_total_ == 1) {
+            gl_first_call_function_ = function != nullptr ? function : "?";
+            gl_first_call_tid_ = host_tid;
+            structural = true;
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(structural);
+}
+
+void RuntimeReport::note_gl_egl_context(bool current) {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (gl_egl_context_known_) return;
+        gl_egl_context_known_ = true;
+        gl_egl_context_current_ = current;
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
+void RuntimeReport::note_gl_error(const char* function, std::uint32_t error) {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (gl_error_known_) return;
+        gl_error_known_ = true;
+        gl_error_function_ = function != nullptr ? function : "?";
+        gl_error_value_ = error;
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
 std::size_t RuntimeReport::unimplemented_host_calls() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return static_cast<std::size_t>(host_call_total_);
@@ -178,6 +219,11 @@ std::string RuntimeReport::first_unimplemented_host_call() const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (host_calls_.empty()) return {};
     return std::string(host_calls_.front().library) + " " + host_calls_.front().function;
+}
+
+std::uint64_t RuntimeReport::gl_calls() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return gl_call_total_;
 }
 
 std::string RuntimeReport::text() const {
@@ -241,6 +287,28 @@ std::string RuntimeReport::text() const {
     out += "guest-exit: ";
     out += exit_reason_.empty() ? "(none)" : exit_reason_;
     out += '\n';
+
+    append_count(out, "gl-calls", gl_call_total_);
+    out += "gl-first-call: ";
+    if (gl_call_total_ == 0) {
+        out += "(none)";
+    } else {
+        out += gl_first_call_function_;
+        out += " tid=" + std::to_string(gl_first_call_tid_);
+    }
+    out += '\n';
+    out += "gl-egl-context-current: ";
+    out += !gl_egl_context_known_ ? "(unknown)" : (gl_egl_context_current_ ? "yes" : "no");
+    out += '\n';
+    out += "gl-first-error: ";
+    if (!gl_error_known_) {
+        out += "(none)";
+    } else {
+        char hex[11];
+        std::snprintf(hex, sizeof hex, "0x%04x", gl_error_value_);
+        out += gl_error_function_ + " " + hex;
+    }
+    out += '\n';
     return out;
 }
 
@@ -259,6 +327,14 @@ void RuntimeReport::clear() {
     onload_total_ = 0;
     registered_natives_ = 0;
     exit_reason_.clear();
+    gl_call_total_ = 0;
+    gl_first_call_function_.clear();
+    gl_first_call_tid_ = 0;
+    gl_egl_context_known_ = false;
+    gl_egl_context_current_ = false;
+    gl_error_known_ = false;
+    gl_error_function_.clear();
+    gl_error_value_ = 0;
 }
 
 RuntimeReport& runtime_report() {

@@ -835,6 +835,70 @@ on this machine.
 - **NEXT:** Phase 5 Task 6: build the arm32 `zbglprobe` and exercise the complete guest-stub ->
   `svc` -> `HostGl` -> mock path, including all 142 calls and a 20-run repeat loop.
 
+## Phase 5 Task 8 done (2026-09-16): Android GLES backend, chaining and report
+
+- Tasks 6-7 (the arm32 `zbglprobe` guest probe and the 19-function `AAsset*` bridge) are
+  deliberately postponed past Task 8. Reason: the biggest open risk for Orange Roulette on the
+  OnePlus 13 is whether guest GL calls really arrive on the host thread whose EGL context is
+  current (the spec's threading assumption, `docs/superpowers/specs/2026-09-16-gles-assets-design.md`
+  lines ~235-248: "there is no cross-thread dispatch and no GL command queue"). Wiring the real
+  driver first and reading the new report fields on a device run tests that assumption directly,
+  before spending a task on assets that only matter if rendering already works. Tasks 6-7 are
+  still open and come after Task 8's on-device read.
+- **New:** `core/android/gl_driver_backend.h/.cpp` (+ generated `gl_driver_backend_overrides.inc`):
+  `GlDriverBackend`, a `GlBackend` override that forwards all 141 non-`glGetError` typed calls
+  straight to `libGLESv2.so` (`::glFoo(...)`), Android-build-only. `glGetError` and `set_error`
+  are hand-written: there is no real API to inject an error into the driver's own queue, so a
+  `HostGl` rejection (a bad guest pointer, never reaching the driver) is queued in
+  `pending_error_` and returned by the *next* `glGetError()` call ahead of whatever the driver
+  itself queued; GL error state is sticky until read, so only the first rejection between two
+  `glGetError()` calls survives. `gl_egl_context_current()` links `EGL` only for
+  `eglGetCurrentContext() != EGL_NO_CONTEXT`.
+- **Chained:** `HostGl::EglContextProbe` (a `std::function<bool()>`, default empty on the host)
+  is a new optional 4th constructor argument. `GuestJniEngine` (core/include/zb/proxy_runtime.h,
+  core/src/jni/proxy_runtime.cpp) takes an optional `GlBackend*` and the probe; when given, it
+  builds a `HostGl` and installs a combined `LibraryRuntime::set_host_call_handler` lambda that
+  tries `HostGl::handle_host_call` (indices 0-141) before `HostJni::handle_host_call`
+  (0xFB00+) — the ranges never overlap so the order is free. `core/android/guest_jni_runtime.h/.cpp`
+  now owns a `GlDriverBackend gl_backend_` member and passes `&gl_backend_` plus
+  `gl_egl_context_current` into the `Engine`/`GuestJniEngine` constructor. The host build path
+  (`GuestJniEngine(backend)` with no GL args) is unchanged and still chains only `HostJni`.
+- **`RuntimeReport` GL section** (core/include/zb/runtime_report.h, core/src/runtime_report.cpp):
+  `note_gl_call(function, host_tid)` (every call; only the first is kept), `note_gl_egl_context(bool)`
+  (once), `note_gl_error(function, error)` (once, first non-`GL_NO_ERROR` `glGetError()` result).
+  All three are hooked generically in `HostGl::handle_host_call` (core/src/gl/host_gl.cpp), which
+  is portable and knows the index -> function name table already — no Android dependency needed
+  there. Four new `text()` lines: `gl-calls`, `gl-first-call`, `gl-egl-context-current`,
+  `gl-first-error`. Example (from `gl_chain_test`):
+  ```
+  gl-calls: 1
+  gl-first-call: glClear tid=4242
+  gl-egl-context-current: yes
+  gl-first-error: (none)
+  ```
+  `gl-first-error` looks like `glGetError 0x0502` when the first non-zero result is seen.
+- **`ZB_GL_TRACE=1`** (any non-empty, non-`"0"` value) logs every GLES host call and its raw
+  r0-r3 words once per call, added in `HostGl::handle_host_call` next to the report hooks.
+- Not done in this task, still open: `AAsset*` (`HostAssets`, Task 7) and the guest probe
+  (Task 6). Nothing chains `HostAssets` yet, so asset host-call indices still report
+  unimplemented — expected until Task 7.
+- TDD evidence: `tests/host/gl_chain_test.cpp` (two processes, `no-backend` / `with-backend`,
+  since both `HostJni` and the `LibraryRuntime` it lives in are one-per-process by design) proves
+  `GuestJniEngine::host_gl()` is null without a `GlBackend`, and with one, is wired to the exact
+  object passed in, the EGL probe fires exactly once on the first call, `glClear` reaches the
+  mock backend, `RuntimeReport::gl_calls()` counts it, and a JNI-range index still falls through
+  to `HostJni`. `runtime_report_test.cpp` gained `check_gl_section()` (sticky-first semantics for
+  the EGL and error fields, `clear()` resets them, empty-report defaults).
+- Fresh verification: GLES/JNI generator checks pass; host 36/36 (was 34 at `51aa159`; the two
+  new cases are `gl_chain_test_no-backend` and `gl_chain_test_with-backend`); guest 9/9; Android
+  arm64 `zbridge` and `zbproxy` link (`zbridge` now links `GLESv2`/`EGL`). Launcher APK rebuilt
+  via `tools/make_launcher_bundle.sh` + `./gradlew assembleDebug` and copied to
+  `/sdcard/ZettaBridge-debug.apk` (~9.1 MB).
+- **NEXT:** Phase 5 Task 9 (device run) can now read the GL report fields to confirm or refute
+  the threading assumption before Tasks 6-7 are built. If it confirms guest GL calls land on a
+  thread with a current EGL context, Tasks 6-7 (guest probe, `AAsset*`) are the remaining work
+  before the Orange Roulette intro-screen acceptance test.
+
 ## HANDOFF 2026-09-16 after Phase 5 Task 5
 
 - Continue on local branch `codex/phase4d-launcher` at `51aa159`. Do not push without the user's

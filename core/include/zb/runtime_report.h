@@ -43,12 +43,24 @@ public:
     // The first reason wins: a crash report says more than the exit status that follows it.
     void note_guest_exit(const std::string& reason);
 
+    // GLES section (Phase 5 Task 8): proves or disproves that guest GL calls arrive on a host
+    // thread with an EGL context current.
+    // One GL host call, always counted; the first call also records its function name and the
+    // calling host thread id (gettid()).
+    void note_gl_call(const char* function, std::uint64_t host_tid);
+    // Whether eglGetCurrentContext() != EGL_NO_CONTEXT on the thread of the first GL call.
+    // Recorded once; later calls are ignored.
+    void note_gl_egl_context(bool current);
+    // The first glGetError() result that is not GL_NO_ERROR. Recorded once.
+    void note_gl_error(const char* function, std::uint32_t error);
+
     std::size_t unimplemented_host_calls() const;
     std::size_t proxy_loads() const;
     std::size_t jni_onload_calls() const;
     std::size_t registered_natives() const;
     // "libGLESv2.so glCreateProgram", or empty while every host call was handled.
     std::string first_unimplemented_host_call() const;
+    std::uint64_t gl_calls() const;
 
     // The whole report: one "key: value" line per fact, in a fixed order.
     std::string text() const;
@@ -87,6 +99,15 @@ private:
     std::size_t onload_total_ = 0;
     std::uint64_t registered_natives_ = 0;
     std::string exit_reason_;
+
+    std::uint64_t gl_call_total_ = 0;
+    std::string gl_first_call_function_;
+    std::uint64_t gl_first_call_tid_ = 0;
+    bool gl_egl_context_known_ = false;
+    bool gl_egl_context_current_ = false;
+    bool gl_error_known_ = false;
+    std::string gl_error_function_;
+    std::uint32_t gl_error_value_ = 0;
 };
 
 // The one report of this process.

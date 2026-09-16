@@ -1,10 +1,14 @@
 #include "zb/host_gl.h"
 
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <cstdlib>
 #include <cstring>
 
 #include "zb/gl_hostcalls.h"
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -50,10 +54,38 @@ void HostGl::reject(Call& call, GLenum error, const char* reason) {
 
 #include "gen/gl_dispatch.inc"
 
+namespace {
+
+bool gl_trace_enabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("ZB_GL_TRACE");
+        return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0;
+    }();
+    return enabled;
+}
+
+}  // namespace
+
 bool HostGl::handle_host_call(std::uint32_t index, GuestThread& thread) {
     if (index > kGlHostCallLast) return false;
+    const char* name = index < kGlHostCalls.size() ? kGlHostCalls[index].name : "?";
+    if (gl_trace_enabled()) {
+        log("GLES trace: %s(0x%x, 0x%x, 0x%x, 0x%x)", name, thread.regs()[0], thread.regs()[1],
+            thread.regs()[2], thread.regs()[3]);
+    }
+    runtime_report().note_gl_call(name, static_cast<std::uint64_t>(::syscall(SYS_gettid)));
+    if (!egl_context_checked_) {
+        egl_context_checked_ = true;
+        if (egl_context_probe_) runtime_report().note_gl_egl_context(egl_context_probe_());
+    }
     Call call(*this, thread, index);
-    if (dispatch(call)) return true;
+    if (dispatch(call)) {
+        if (call.valid() && std::strcmp(name, "glGetError") == 0) {
+            const std::uint32_t error = thread.regs()[0];
+            if (error != 0) runtime_report().note_gl_error(name, error);
+        }
+        return true;
+    }
     log("GLES host call index %u has no generated handler", index);
     std::abort();
 }
