@@ -33,7 +33,7 @@ final class PluginClassLoader extends DexClassLoader {
 
     @Override
     protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-        synchronized (getClassLoadingLock(name)) {
+        synchronized (this) {
             Class<?> loaded = findLoadedClass(name);
             if (loaded == null) {
                 if (delegateToBridge(name)) {

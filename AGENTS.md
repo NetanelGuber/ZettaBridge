@@ -411,3 +411,19 @@ Orange Roulette smoke launch.
   review's missing/failure cases. Then run Task 8, the Orange Roulette Phase 4 smoke launch. Phase
   4 is complete when it reaches the first intentionally unimplemented GLES or `AAsset*` call with
   no JNI error; GLES passthrough and the first rendered frame are Phase 5.
+
+## Phase 4d Task 8 launcher gate ready (2026-09-16)
+
+- The first real AGP launcher build exposed `ClassLoader.getClassLoadingLock`, which exists in the
+  desktop JDK used by the compile harness but not in Android's API. `PluginClassLoader` now
+  synchronizes on itself, matching the T7 loader. `LauncherContractsTest` and the signed launcher
+  APK build both pass.
+- Ready device files:
+  - launcher APK: `/sdcard/AndroidIDEProjects/ZettaBridge/ZettaBridge-launcher-debug.apk`, SHA-256
+    `e6ec3a52a64dbfb556fcbf405c480c74a1b95b8fbe396914676f7fcb1c7977a3`;
+  - untouched Orange Roulette APK: `/sdcard/AndroidIDEProjects/ZettaBridge/orange-roulette-1-0-0.apk`,
+    SHA-256 `1fb252e27c06bc8f1a438a8bbed69f8feb75de4245a6105c04d4ca06982b3864`.
+- **NEXT/device action:** install/update the launcher, import the Orange Roulette APK, launch it,
+  and preserve the first on-screen/clipboard/file failure. A failed guest load requires force-stop
+  of the launcher before retrying. The theoretical `getDeclaredMethods` hardening from the review
+  remains open; use the real smoke result to decide whether it blocks this APK before expanding it.
