@@ -25,9 +25,23 @@ constexpr GLenum kGlNumShaderBinaryFormats = 0x8DF9;
 constexpr GLenum kGlShaderBinaryFormats = 0x8DF8;
 
 struct GlThreadState {
+    struct Attribute {
+        bool defined = false;
+        bool enabled = false;
+        GLint size = 4;
+        GLenum type = 0x1406;
+        GLboolean normalized = 0;
+        GLsizei stride = 0;
+        std::uint32_t guest_pointer = 0;
+        GLuint buffer = 0;
+    };
+
     const HostGl* owner = nullptr;
     GLint pack_alignment = 4;
     GLint unpack_alignment = 4;
+    GLuint array_buffer = 0;
+    GLuint element_array_buffer = 0;
+    std::unordered_map<GLuint, Attribute> attributes;
     std::unordered_map<GLuint, std::unordered_map<GLint, std::uint64_t>> uniforms;
     std::unordered_map<GLenum, std::uint32_t> strings;
 };
@@ -125,6 +139,77 @@ const GLchar* guest_string(HostGl& host, HostGl::Call& call, std::uint32_t addre
     return nullptr;
 }
 
+std::uint64_t attribute_component_bytes(GLenum type) {
+    switch (type) {
+    case 0x1400:  // GL_BYTE
+    case 0x1401:  // GL_UNSIGNED_BYTE
+        return 1;
+    case 0x1402:  // GL_SHORT
+    case 0x1403:  // GL_UNSIGNED_SHORT
+        return 2;
+    case 0x1406:  // GL_FLOAT
+    case 0x140C:  // GL_FIXED
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+bool materialize_client_arrays(HostGl& host, HostGl::Call& call, std::uint64_t first,
+                               std::uint64_t last) {
+    struct MaterializedAttribute {
+        GLuint index;
+        const GlThreadState::Attribute* attribute;
+        const void* pointer;
+    };
+
+    GlThreadState& current = state(host);
+    std::vector<MaterializedAttribute> materialized;
+    for (const auto& [index, attribute] : current.attributes) {
+        if (!attribute.enabled || !attribute.defined || attribute.buffer != 0) continue;
+        const std::uint64_t component = attribute_component_bytes(attribute.type);
+        if (attribute.size < 1 || attribute.size > 4 || component == 0 || attribute.stride < 0) {
+            call.fail(kGlInvalidOperation, "client vertex attribute layout is invalid");
+            return false;
+        }
+        const std::uint64_t element = static_cast<std::uint64_t>(attribute.size) * component;
+        const std::uint64_t stride = attribute.stride == 0
+                                         ? element
+                                         : static_cast<std::uint64_t>(attribute.stride);
+        std::uint64_t first_offset = 0;
+        std::uint64_t last_offset = 0;
+        if (!checked_multiply(first, stride, first_offset) ||
+            !checked_multiply(last, stride, last_offset) ||
+            last_offset > std::numeric_limits<std::uint64_t>::max() - element) {
+            call.fail(kGlInvalidOperation, "client vertex attribute range overflowed");
+            return false;
+        }
+        const std::uint64_t range_start =
+            static_cast<std::uint64_t>(attribute.guest_pointer) + first_offset;
+        const std::uint64_t range_end =
+            static_cast<std::uint64_t>(attribute.guest_pointer) + last_offset + element;
+        if (range_start >= kGuestSpaceSize || range_end > kGuestSpaceSize ||
+            range_end < range_start ||
+            host.runtime().memory().host_ptr(static_cast<std::uint32_t>(range_start),
+                                             range_end - range_start, kPageRead) == nullptr) {
+            call.fail(kGlInvalidOperation, "client vertex attribute range is unreadable");
+            return false;
+        }
+        const void* pointer = host.runtime().memory().base() + attribute.guest_pointer;
+        materialized.push_back({index, &attribute, pointer});
+    }
+
+    const bool rebound = !materialized.empty() && current.array_buffer != 0;
+    if (rebound) host.backend().glBindBuffer(0x8892, 0);  // GL_ARRAY_BUFFER
+    for (const auto& item : materialized) {
+        host.backend().glVertexAttribPointer(
+            item.index, item.attribute->size, item.attribute->type,
+            item.attribute->normalized, item.attribute->stride, item.pointer);
+    }
+    if (rebound) host.backend().glBindBuffer(0x8892, current.array_buffer);
+    return true;
+}
+
 }  // namespace
 
 std::uint64_t gl_pname_count(GlBackend& backend, GLenum pname) {
@@ -211,6 +296,16 @@ void HostGl::note_pixel_store(GLenum pname, GLint param) {
     GlThreadState& current = state(*this);
     if (pname == kGlPackAlignment) current.pack_alignment = param;
     if (pname == kGlUnpackAlignment) current.unpack_alignment = param;
+}
+
+void HostGl::note_bind_buffer(GLenum target, GLuint buffer) {
+    GlThreadState& current = state(*this);
+    if (target == 0x8892) current.array_buffer = buffer;          // GL_ARRAY_BUFFER
+    if (target == 0x8893) current.element_array_buffer = buffer;  // GL_ELEMENT_ARRAY_BUFFER
+}
+
+void HostGl::note_vertex_attrib_enabled(GLuint index, bool enabled) {
+    state(*this).attributes[index].enabled = enabled;
 }
 
 GLint HostGl::pixel_alignment(bool pack) const {
@@ -442,16 +537,107 @@ bool zbgl_manual_glShaderSource(HostGl& host, HostGl::Call& call) {
     return true;
 }
 
+bool zbgl_manual_glVertexAttribPointer(HostGl& host, HostGl::Call& call) {
+    const GLuint index = call.scalar<GLuint>(0);
+    GlThreadState::Attribute& attribute = state(host).attributes[index];
+    attribute.defined = true;
+    attribute.size = call.scalar<GLint>(1);
+    attribute.type = call.scalar<GLenum>(2);
+    attribute.normalized = call.scalar<GLboolean>(3);
+    attribute.stride = call.scalar<GLsizei>(4);
+    attribute.guest_pointer = call.arg(5);
+    attribute.buffer = state(host).array_buffer;
+    if (!call.valid()) return true;
+    if (attribute.buffer != 0) {
+        host.backend().glVertexAttribPointer(
+            index, attribute.size, attribute.type, attribute.normalized, attribute.stride,
+            reinterpret_cast<const void*>(static_cast<std::uintptr_t>(attribute.guest_pointer)));
+    }
+    return true;
+}
+
+bool zbgl_manual_glDrawArrays(HostGl& host, HostGl::Call& call) {
+    const GLenum mode = call.scalar<GLenum>(0);
+    const GLint first = call.scalar<GLint>(1);
+    const GLsizei count = call.scalar<GLsizei>(2);
+    if (!call.valid()) return true;
+    if (count > 0) {
+        if (first < 0 || !materialize_client_arrays(
+                             host, call, static_cast<std::uint64_t>(first),
+                             static_cast<std::uint64_t>(first) + static_cast<std::uint64_t>(count) - 1)) {
+            return true;
+        }
+    }
+    host.backend().glDrawArrays(mode, first, count);
+    return true;
+}
+
+bool zbgl_manual_glDrawElements(HostGl& host, HostGl::Call& call) {
+    const GLenum mode = call.scalar<GLenum>(0);
+    const GLsizei count = call.scalar<GLsizei>(1);
+    const GLenum type = call.scalar<GLenum>(2);
+    const std::uint32_t guest_indices = call.arg(3);
+    if (!call.valid()) return true;
+    if (count < 0) {
+        call.fail(kGlInvalidOperation, "element count is negative");
+        return true;
+    }
+
+    GlThreadState& current = state(host);
+    const void* driver_indices = nullptr;
+    std::uint64_t max_index = 0;
+    if (current.element_array_buffer == 0) {
+        const std::uint64_t index_size = type == 0x1401 ? 1 : type == 0x1403 ? 2 : 0;
+        if (index_size == 0) {
+            call.fail(kGlInvalidOperation, "element index type is invalid");
+            return true;
+        }
+        const std::uint64_t bytes = static_cast<std::uint64_t>(count) * index_size;
+        const std::uint8_t* indices = count == 0 && guest_indices == 0
+                                          ? nullptr
+                                          : host.runtime().memory().host_ptr(guest_indices, bytes, kPageRead);
+        if (count != 0 && indices == nullptr) {
+            call.fail(kGlInvalidOperation, "client element indices are unreadable");
+            return true;
+        }
+        for (GLsizei i = 0; i < count; ++i) {
+            std::uint64_t value = indices[i];
+            if (index_size == 2) {
+                std::uint16_t value16;
+                std::memcpy(&value16, indices + static_cast<std::size_t>(i) * 2, sizeof(value16));
+                value = value16;
+            }
+            max_index = std::max(max_index, value);
+        }
+        driver_indices = indices;
+    } else {
+        driver_indices = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(guest_indices));
+        if (count > 0) max_index = static_cast<std::uint64_t>(count - 1);
+    }
+    if (count > 0 && !materialize_client_arrays(host, call, 0, max_index)) return true;
+    host.backend().glDrawElements(mode, count, type, driver_indices);
+    return true;
+}
+
+bool zbgl_manual_glGetVertexAttribPointerv(HostGl& host, HostGl::Call& call) {
+    const GLuint index = call.scalar<GLuint>(0);
+    (void)call.scalar<GLenum>(1);
+    std::uint32_t* pointer = call.pointer<std::uint32_t>(2, 1, kPageRead | kPageWrite);
+    if (!call.valid()) return true;
+    if (pointer == nullptr) {
+        call.fail(kGlInvalidValue, "vertex attribute pointer output is null");
+        return true;
+    }
+    const auto found = state(host).attributes.find(index);
+    *pointer = found == state(host).attributes.end() ? 0 : found->second.guest_pointer;
+    return true;
+}
+
 #define ZB_GL_STUB(name)                                                            \
     bool zbgl_manual_##name(HostGl& host, HostGl::Call& call) {                     \
         host.reject(call, kGlInvalidOperation, #name " is not implemented yet");   \
         return true;                                                                \
     }
-
-ZB_GL_STUB(glDrawArrays)
-ZB_GL_STUB(glDrawElements)
-ZB_GL_STUB(glGetVertexAttribPointerv)
-ZB_GL_STUB(glVertexAttribPointer)
 
 #undef ZB_GL_STUB
 

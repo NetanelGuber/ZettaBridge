@@ -358,6 +358,12 @@ def dispatch_include(commands):
                     lines.append("        note_pixel_store(pname, param);")
                 elif command.name in ("glLinkProgram", "glDeleteProgram"):
                     lines.append("        invalidate_uniforms(program);")
+                elif command.name == "glBindBuffer":
+                    lines.append("        note_bind_buffer(target, buffer);")
+                elif command.name == "glEnableVertexAttribArray":
+                    lines.append("        note_vertex_attrib_enabled(index, true);")
+                elif command.name == "glDisableVertexAttribArray":
+                    lines.append("        note_vertex_attrib_enabled(index, false);")
             else:
                 lines.append("        call.set_result(%s);" % invocation)
             lines.append("        return true;")

@@ -108,6 +108,8 @@ public:
     GlBackend& backend() { return backend_; }
     void reject(Call& call, GLenum error, const char* reason);
     void note_pixel_store(GLenum pname, GLint param);
+    void note_bind_buffer(GLenum target, GLuint buffer);
+    void note_vertex_attrib_enabled(GLuint index, bool enabled);
     void invalidate_uniforms(GLuint program);
     GLint pixel_alignment(bool pack) const;
     std::optional<std::uint64_t> uniform_elements(GLuint program, GLint location);

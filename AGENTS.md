@@ -21,10 +21,11 @@ English and ASCII only.
   `JniBackend`, Java -> guest dispatch, `RegisterNatives`, attach/detach; committed directly
   to `phase1-zbrun` (see "Phase 4c done" below). Host tests are 18/18. Next is plan 4d.
 - **Phase 4 is complete and accepted on the OnePlus 13.** See `docs/phase4-acceptance.md`.
-- **Phase 5 Tasks 1-4 are done (2026-09-16).** Registry generation, scalar and pointer
+- **Phase 5 Tasks 1-5 are done (2026-09-16).** Registry generation, scalar and pointer
   marshaling, COMPSIZE, pixels, uniforms, bounded names, `glGetString` and `glShaderSource` are
-  implemented: 138/142 GLES calls are functional. Host tests are 33/33. Next is Phase 5 Task 5,
-  client-side vertex arrays and the two draw calls.
+  implemented, as are client-side vertex arrays and both draw paths: all 142/142 GLES calls are
+  functional. Host tests are 34/34. Next is Phase 5 Task 6, the arm32 guest probe and full bridge
+  test.
 - Work continues on local branch `codex/phase4d-launcher`, based on `phase1-zbrun`.
 - Commit locally after every task and update this file. Push only with the user's agreement.
 
@@ -813,3 +814,23 @@ on this machine.
 - **NEXT:** Phase 5 Task 5: implement client-array state, draw-time pointer materialization,
   `glDrawArrays`, `glDrawElements` and guest-pointer-preserving
   `glGetVertexAttribPointerv`. These are the final four GLES functions.
+
+## Phase 5 Task 5 done (2026-09-16)
+
+- Implemented in this commit: thread-local `GL_ARRAY_BUFFER` / `GL_ELEMENT_ARRAY_BUFFER`, enabled
+  attribute and pointer-definition state; deferred guest client pointers; draw-time validation and
+  materialization; client and buffer-backed `glDrawElements`; and guest-address-preserving
+  `glGetVertexAttribPointerv`. All 142/142 GLES 2.0 calls now have functional handlers.
+- Buffer-backed vertex pointers are forwarded as offsets immediately. Client pointers are retained
+  as 32-bit guest addresses and re-issued only after the complete draw range is readable. Client
+  U8/U16 indices are scanned for their maximum; an element-buffer value remains an opaque offset.
+  Invalid layouts, ranges and output pointers set a GL error and never reach the draw call.
+- TDD evidence: `gles_client_arrays_test` first failed against the four Task 4 stubs. It now covers
+  zero and explicit strides, non-zero `first`, client and buffer-backed attributes together, U8 and
+  U16 client indices, an element-buffer offset, an out-of-range selected vertex, draw rejection,
+  and `glGetVertexAttribPointerv` returning the original guest address. The full suite also exposed
+  and corrected Task 1's obsolete expectation that `glDrawArrays` remained a stub.
+- Fresh verification: GLES/JNI generator checks pass; host 34/34; guest 9/9; Android arm64
+  `zbridge` and `zbproxy` link.
+- **NEXT:** Phase 5 Task 6: build the arm32 `zbglprobe` and exercise the complete guest-stub ->
+  `svc` -> `HostGl` -> mock path, including all 142 calls and a 20-run repeat loop.

@@ -22,6 +22,7 @@ bool HostGl::dispatch(Call& call) {
         const GLuint buffer = call.scalar<GLuint>(1);
         if (!call.valid()) return true;
         backend_.glBindBuffer(target, buffer);
+        note_bind_buffer(target, buffer);
         return true;
     }
     case ZB_GL_HC_glBindFramebuffer: {
@@ -296,6 +297,7 @@ bool HostGl::dispatch(Call& call) {
         const GLuint index = call.scalar<GLuint>(0);
         if (!call.valid()) return true;
         backend_.glDisableVertexAttribArray(index);
+        note_vertex_attrib_enabled(index, false);
         return true;
     }
     case ZB_GL_HC_glDrawArrays: {
@@ -314,6 +316,7 @@ bool HostGl::dispatch(Call& call) {
         const GLuint index = call.scalar<GLuint>(0);
         if (!call.valid()) return true;
         backend_.glEnableVertexAttribArray(index);
+        note_vertex_attrib_enabled(index, true);
         return true;
     }
     case ZB_GL_HC_glFinish: {

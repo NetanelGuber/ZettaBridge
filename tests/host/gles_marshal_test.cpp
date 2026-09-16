@@ -37,15 +37,10 @@ void dispatch_all_pointerless(zb::HostGl& host, zb::GuestThread& thread,
         backend.set_error(0);
         const std::size_t before = backend.calls().size();
         CHECK(host.handle_host_call(info.index, thread));
-        // glDrawArrays has no pointer parameter but remains semantic: it materializes client
-        // arrays in Task 5. glGetString is semantic too, but now calls the backend before copying.
-        if (std::string(info.name) == "glDrawArrays") {
-            CHECK(backend.calls().size() == before);
-            CHECK(backend.error() == zb::kGlInvalidOperation);
-        } else {
-            CHECK(backend.calls().size() == before + 1);
-            CHECK(backend.calls().back().name == info.name);
-        }
+        // The two semantic pointerless calls now both reach the backend: glDrawArrays first
+        // materializes any enabled client arrays, and glGetString copies the returned string.
+        CHECK(backend.calls().size() == before + 1);
+        CHECK(backend.calls().back().name == info.name);
     }
     CHECK(seen == zb::kGlPointerlessHostCallCount);
 }
@@ -83,8 +78,8 @@ int main() {
     widening.set_result(static_cast<zb::GLint>(-7));
     CHECK(thread.regs()[0] == 0xFFFFFFF9u && thread.regs()[1] == 0);
 
-    // Every registry function with no pointer parameter is dispatched. The two semantic calls
-    // reach the current semantic handler or safe stub.
+    // Every registry function with no pointer parameter is dispatched, including the two
+    // semantic handlers.
     dispatch_all_pointerless(host, thread, backend, runtime);
 
     // r0-r3 must be captured before HostGl clears r0/r1 for the default result. Eight arguments
