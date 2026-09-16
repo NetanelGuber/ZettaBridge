@@ -23,11 +23,19 @@
      - Short-form exports: turn a `getDeclaredMethods()` exception into skip-and-log for that
        export (a new `NativeLookupStatus`, or the `MissingClass` path) instead of aborting the
        library.
+   - **Fixed in `19bc37a`.** Long-form exports resolve their own signature through
+     `MethodType.fromMethodDescriptorString(arguments + "V", pluginLoader).parameterArray()` plus
+     `Class.getDeclaredMethod`, then take the return type from the found `Method` (a JNI long name
+     encodes no return type, so `GetMethodID` alone cannot be used). Short-form exports still
+     enumerate but report the new `NativeLookupStatus::Unresolvable`, which the loader skips, logs
+     once and counts in `JniLoadReport::skipped_exports`.
 2. **[Important] The real ART backend has no executable tests.**
    - Current state: `zbjni_reflection_compile_test` only links.
    - Fix: add a host test that drives `jni_env_backend.cpp` against a fake reflective `JNIEnv`,
      following the pattern of `tests/proxy/fake_jni.c`. Cover success, missing class,
      `getDeclaredMethods` throwing, an unresolvable parameter type, and PushLocalFrame failure.
+   - **Fixed in `fc10efa` and `19bc37a`.** `tests/host/jni_env_backend_test.cpp` is that test; it
+     now covers the whole list on both discovery paths, and again with `MethodType` unavailable.
 
 ## Minor
 

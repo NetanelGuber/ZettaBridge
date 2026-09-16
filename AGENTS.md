@@ -20,9 +20,11 @@ English and ASCII only.
 - **Phase 4c done (2026-09-15).** Guest `JNIEnv`/`JavaVM`, host JNI calls against
   `JniBackend`, Java -> guest dispatch, `RegisterNatives`, attach/detach; committed directly
   to `phase1-zbrun` (see "Phase 4c done" below). Host tests are 18/18. Next is plan 4d.
-- **Phase 4d Tasks 1-6 done.** ELF fixups/symbol scanning, JNI loader, ART backend, standalone
-  proxy, process-lifetime runtime, and launcher integration are implemented. Next is Task 7 (T7
-  on real ART), then the two recorded ART discovery review fixes before Task 8.
+- **Phase 4d Tasks 1-7 done, and the Tasks 3-4 review is closed** (`19bc37a`, see the last section
+  of this file). ELF fixups/symbol scanning, JNI loader, ART backend, standalone proxy,
+  process-lifetime runtime, launcher integration and T7 on real ART are implemented, and one
+  unresolvable Java type no longer fails a whole library load. Next is Task 8, the Orange Roulette
+  smoke launch. Host tests are 30/30.
 - Work continues on local branch `codex/phase4d-launcher`, based on `phase1-zbrun`.
 - Commit locally after every task and update this file. Push only with the user's agreement.
 
@@ -337,9 +339,9 @@ Orange Roulette smoke launch.
   - Task 6 on local branch `codex/phase4d-launcher`: launcher arm32 import, runtime bundle,
     `PluginClassLoader`, activation before plugin code, proxy routing, and persistent diagnostics;
   - host tests 27/27 and guest tests 9/9.
-- **Review of Tasks 3-4:** `docs/superpowers/reviews/2026-09-15-phase4d-tasks3-4-review.md` (`61c2361`). Fix its two Important items before Task 8:
-  1. `getDeclaredMethods` can fail a whole library: bind long-form exports through `GetMethodID`, and skip-and-log short-form ones.
-  2. Add executable host tests for `jni_env_backend.cpp` with a fake reflective `JNIEnv`.
+- **Review of Tasks 3-4:** `docs/superpowers/reviews/2026-09-15-phase4d-tasks3-4-review.md` (`61c2361`). Both Important items are now fixed:
+  1. `getDeclaredMethods` could fail a whole library -> `19bc37a` (long-form exports resolve only their own signature, short-form failures skip-and-log);
+  2. executable host tests for `jni_env_backend.cpp` with a fake reflective `JNIEnv` -> `fc10efa`, expanded in `19bc37a`.
 - **Task 5 review passed:**
   `docs/superpowers/reviews/2026-09-15-phase4d-task5-review.md`. No Critical or Important
   findings. Focused tests passed 3/3 and `proxy_runtime_test` passed 50/50 repeated runs.
@@ -405,10 +407,9 @@ Orange Roulette smoke launch.
 - **Device acceptance:** `T7 PASS` on 2026-09-16. This covers the real ART backend, all JNI value
   types and call forms, refs, strings, arrays, direct buffers, exceptions, guest `JNI_OnLoad`,
   `RegisterNatives`, nested calls, JavaVM attach/detach and two concurrent Java callers.
-- **NEXT:** finish the remaining Important Tasks 3-4 review item before Task 8: long-form native
-  exports must bind without `getDeclaredMethods`, while a reflection failure for a short-form
-  export must skip-and-log instead of aborting the library. Expand `jni_env_backend_test` with the
-  review's missing/failure cases. Then run Task 8, the Orange Roulette Phase 4 smoke launch. Phase
+- **NEXT:** the remaining Important Tasks 3-4 review item is now **done** (`19bc37a`; see "Phase 4d:
+  the Tasks 3-4 review is closed" at the end of this file). Next is Task 8, the Orange Roulette
+  Phase 4 smoke launch. Phase
   4 is complete when it reaches the first intentionally unimplemented GLES or `AAsset*` call with
   no JNI error; GLES passthrough and the first rendered frame are Phase 5.
 
@@ -425,8 +426,8 @@ Orange Roulette smoke launch.
     SHA-256 `1fb252e27c06bc8f1a438a8bbed69f8feb75de4245a6105c04d4ca06982b3864`.
 - **NEXT/device action:** install/update the launcher, import the Orange Roulette APK, launch it,
   and preserve the first on-screen/clipboard/file failure. A failed guest load requires force-stop
-  of the launcher before retrying. The theoretical `getDeclaredMethods` hardening from the review
-  remains open; use the real smoke result to decide whether it blocks this APK before expanding it.
+  of the launcher before retrying. (The `getDeclaredMethods` hardening this paragraph left open
+  landed later as `19bc37a`.)
 
 ## Phase 4d Task 8 first device result (2026-09-16, not complete)
 
@@ -447,12 +448,12 @@ Orange Roulette smoke launch.
   and documentation commit. Do not claim Phase 4 complete from the visual symptom alone.
   The diagnostic half of this is done: see "Phase 4d Task 8 runtime report" at the end of this file
   for the report, the device file and the exact phone steps. The device rerun is still open.
-- The Tasks 3-4 review hardening remains open. Note that the suggested long-form-export shortcut is
-  underspecified: JNI long names encode parameter types but not the return type, while
-  `GetMethodID` needs the complete descriptor. A robust targeted implementation can use
+- The Tasks 3-4 review hardening is **done** (`19bc37a`), implemented exactly this way: JNI long
+  names encode parameter types but not the return type, while `GetMethodID` needs the complete
+  descriptor, so the backend uses
   `MethodType.fromMethodDescriptorString(arguments + "V", pluginLoader).parameterArray()` followed
-  by `Class.getDeclaredMethod`, then derive the actual return descriptor; short-form reflection
-  resolution failures should skip-and-log. Do not blindly append a guessed return type.
+  by `Class.getDeclaredMethod` and the found method's real return type; short-form reflection
+  failures skip-and-log. No return type is ever guessed.
 
 ## Phase 4d Task 8 runtime report (2026-09-16)
 
@@ -533,3 +534,66 @@ shows the text and copies it, plus the file path, to the clipboard.
 The run answers Task 8 when the report shows six `proxy-loaded:` lines, the guest `JNI_OnLoad`
 results, a non-zero `registered-natives:`, and a `first-unimplemented:` naming a generated GLES or
 `AAsset*` function with no JNI failure before it.
+
+## Phase 4d: the Tasks 3-4 review is closed (2026-09-16)
+
+Both Important findings of `docs/superpowers/reviews/2026-09-15-phase4d-tasks3-4-review.md` are
+fixed. Finding 2 (executable tests for the real ART backend) closed with `fc10efa`; finding 1
+(`getDeclaredMethods` could fail a whole library) closed with `19bc37a`.
+
+**Why it mattered.** `Class.getDeclaredMethods()` eagerly resolves the parameter and return types of
+every declared method, so one unresolvable type anywhere in the class threw `NoClassDefFoundError`,
+and `JniLoader::load` turned any `Error` into a fatal failure for the whole `.so`. Orange Roulette
+bundles AdMob classes next to lime in one dex, which is exactly that shape.
+
+**Two discovery paths** in `JniEnvBackend::find_declared_natives`, picked by the new `arguments`
+parameter of the `JniBackend` seam (the argument part of the descriptor for a long-form export,
+`nullptr` for a short-form one; `core/src/jni/loader.cpp` passes `decoded->arguments`):
+
+- **Long form** (`Java_pkg_Class_method__<mangled argument types>`) never enumerates.
+  `MethodType.fromMethodDescriptorString(arguments + "V", pluginLoader).parameterArray()` resolves
+  only the classes that one signature names, `Class.getDeclaredMethod(name, parameters)` picks the
+  method, and the descriptor is completed from that `Method`'s real return type with
+  `zb/jni_descriptor.h`. A JNI long name encodes parameter types and **never** a return type, so
+  `GetMethodID` alone cannot be used and no return type may be guessed.
+- **Short form** still enumerates, because every overload of the name must bind.
+
+**New `NativeLookupStatus::Unresolvable`** means "the class loaded, but the types this export needs
+did not". The loader skips that one export, logs it once
+(`JniLoader::log_unresolvable_once`) and counts it in the new `JniLoadReport::skipped_exports`.
+`MissingClass` (cleared and logged once) and real errors are unchanged.
+
+| Export form | Failure | Outcome |
+|---|---|---|
+| long | `fromMethodDescriptorString` throws (type not present) | `Unresolvable`: skip the export, library loads |
+| long | `getDeclaredMethod` throws `NoSuchMethodException` | `Found` with no methods -> loader error "no declared native matches export" |
+| long | `getDeclaredMethod` throws anything else (sibling overload's types) | `Unresolvable`: skip |
+| long | method is declared but not `native` | `Found` with no methods -> loader error |
+| long | `getReturnType()` throws | `Unresolvable`: skip |
+| short | `getDeclaredMethods()` throws | `Unresolvable`: skip |
+| short | one matching method's types do not resolve | `Unresolvable`: skip |
+| both | `loadClass` throws `ClassNotFoundException` / `NoClassDefFoundError` | `MissingClass`: cleared, logged once, `skipped_classes` |
+| both | `loadClass` throws anything else | `Error`: rethrown, the library fails |
+| both | `PushLocalFrame` fails, or a JNI call returns null with no exception | `Error`: the library fails |
+
+**`MethodType` is API 26** (the launcher's `minSdk`). Its reflection ids are an *optional* group:
+if any of them is missing, `Reflection::long_form_ok` stays false and long-form exports fall back to
+enumeration, which now skips instead of failing. A failure there never disables reflection for the
+process.
+
+**Tests.** `tests/host/jni_env_backend_test.cpp` drives the real ART backend against a fake
+reflective `JNIEnv` (a toy Java world with declared methods, `Class` type objects, `MethodType`, and
+a type name that cannot be resolved) over the whole matrix above, then repeats it with `MethodType`
+unavailable. `jni_loader_test` covers the end-to-end half with the new guest library
+`libzbloadskip.so` (`guest/testlib/zbloadskip.c`) and two `MockJvm` knobs,
+`fail_declared_enumeration` and `fail_type_resolution`. Host 30/30, guest 9/9,
+`LauncherContractsTest` PASS, Android `zbridge` / `zbrun` / `zbproxy` /
+`zbjni_reflection_compile_test` link.
+
+**Not verifiable without a device (watch in T7/T8):** which throwable ART's
+`MethodType.fromMethodDescriptorString` actually raises for an absent type
+(`TypeNotPresentException`, `NoClassDefFoundError` or `IllegalArgumentException` - all three are
+treated as a skip), and whether libcore's `Class.getDeclaredMethod` really resolves sibling
+overloads' parameter types. The pessimistic case is a skipped export, visible as a Java
+`UnsatisfiedLinkError` when the guest calls it, plus the once-per-export `[zb] JNI loader: cannot
+resolve the declared natives of ...` line.
