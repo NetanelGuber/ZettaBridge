@@ -427,3 +427,27 @@ Orange Roulette smoke launch.
   and preserve the first on-screen/clipboard/file failure. A failed guest load requires force-stop
   of the launcher before retrying. The theoretical `getDeclaredMethods` hardening from the review
   remains open; use the real smoke result to decide whether it blocks this APK before expanding it.
+
+## Phase 4d Task 8 first device result (2026-09-16, not complete)
+
+- The user installed `fc10efa`'s launcher APK, imported the untouched Orange Roulette APK, and
+  launched it. There was no Java/JNI error or launcher diagnostic. The plugin showed a black
+  screen, briefly changed half the screen to white while switching to landscape/render setup, then
+  silently returned to the launcher.
+- This is the first observed end-to-end arm32 launch through the production launcher and is
+  consistent with reaching the generated GLES/asset stubs. It is not yet enough to check Task 8:
+  OxygenOS hides third-party logcat output, so the run did not preserve the first host-call name or
+  prove the exact six proxy loads, two guest `JNI_OnLoad`s and 20 registrations.
+- `Process::dispatch_stop` currently logs the first unimplemented host call, writes `r0 = 0`, and
+  continues. Therefore the silent exit can happen after several zero-returning GLES calls; it is
+  not necessarily the first trap itself.
+- **NEXT:** expose the first non-JNI generated host call through a process-safe persistent/on-screen
+  diagnostic (or begin the Phase 5 host dispatcher with equivalent tracing), rerun Orange Roulette,
+  and record the exact call plus load/registration counts. Then perform the final Phase 4 regression
+  and documentation commit. Do not claim Phase 4 complete from the visual symptom alone.
+- The Tasks 3-4 review hardening remains open. Note that the suggested long-form-export shortcut is
+  underspecified: JNI long names encode parameter types but not the return type, while
+  `GetMethodID` needs the complete descriptor. A robust targeted implementation can use
+  `MethodType.fromMethodDescriptorString(arguments + "V", pluginLoader).parameterArray()` followed
+  by `Class.getDeclaredMethod`, then derive the actual return descriptor; short-form reflection
+  resolution failures should skip-and-log. Do not blindly append a guessed return type.
