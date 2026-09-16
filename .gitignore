@@ -1,6 +1,7 @@
 # build outputs
 build/
 out/
+.gradle/
 *.o
 *.so.dbg
 

@@ -263,7 +263,18 @@ NativeLookupStatus JniEnvBackend::find_declared_natives(Env env, const char* cls
 }
 
 JniBackend::Ref JniEnvBackend::find_class(Env env, const char* name) {
-    return R(E(env)->FindClass(name));
+    JNIEnv* e = E(env);
+    if (e == nullptr || name == nullptr) return 0;
+    const jobject loader = class_loader();
+    const std::optional<std::string> binary_name = jni_binary_class_name(name);
+    if (loader == nullptr || !binary_name) return R(e->FindClass(name));
+    const Reflection* r = reflection(e);
+    if (r == nullptr) return 0;
+    jstring java_name = e->NewStringUTF(binary_name->c_str());
+    if (java_name == nullptr) return 0;
+    jobject found = e->CallObjectMethod(loader, r->class_loader_load_class, java_name);
+    e->DeleteLocalRef(java_name);
+    return R(found);
 }
 
 JniBackend::Ref JniEnvBackend::get_superclass(Env env, Ref cls) {
@@ -626,7 +637,7 @@ std::int32_t JniEnvBackend::monitor_exit(Env env, Ref obj) {
 
 std::int32_t JniEnvBackend::register_native(Env env, Ref cls, const char* name, const char* signature,
                                             void* function) {
-    const JNINativeMethod method = {name, signature, function};
+    const JNINativeMethod method = {const_cast<char*>(name), const_cast<char*>(signature), function};
     return E(env)->RegisterNatives(C(cls), &method, 1);
 }
 
@@ -649,7 +660,12 @@ std::int64_t JniEnvBackend::get_direct_buffer_capacity(Env env, Ref buffer) {
 JniBackend::Env JniEnvBackend::attach_current_thread(bool daemon, const char* name, Ref group) {
     JavaVMAttachArgs args = {JNI_VERSION_1_6, const_cast<char*>(name), O(group)};
     JNIEnv* env = nullptr;
+#if defined(__ANDROID__)
     const jint rc = daemon ? vm_->AttachCurrentThreadAsDaemon(&env, &args) : vm_->AttachCurrentThread(&env, &args);
+#else
+    auto out = reinterpret_cast<void**>(&env);
+    const jint rc = daemon ? vm_->AttachCurrentThreadAsDaemon(out, &args) : vm_->AttachCurrentThread(out, &args);
+#endif
     return rc == JNI_OK ? static_cast<Env>(reinterpret_cast<std::uintptr_t>(env)) : 0;
 }
 

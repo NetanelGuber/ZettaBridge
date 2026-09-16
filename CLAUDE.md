@@ -30,10 +30,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `libzbjni.so` against a mock JVM; the real `JNIEnv` backend is compile-only so far.
   The three Important post-review findings are fixed on
   `codex/phase4c-review-fixes` (slot publication and two buffer bounds checks).
-- Phase 4d Tasks 1-6 are done: ELF preparation and symbol scanning, `Java_*` binding, the
+- Phase 4d Tasks 1-7 are done: ELF preparation and symbol scanning, `Java_*` binding, the
   real ART backend, `libzbproxy.so`, process-lifetime guest JNI runtime, and launcher arm32
-  import/class loading/runtime bundle. Next is Task 7 (T7 on real ART), then the recorded ART
-  discovery review fixes and Task 8 (Orange Roulette smoke test).
+  import/class loading/runtime bundle. T7 passes on real ART on the OnePlus 13. Next are the
+  remaining ART discovery review fix and Task 8 (Orange Roulette smoke test).
 - Work is on local branch `codex/phase4d-launcher`, based on `phase1-zbrun`.
 
 Private GitHub repo `ZailoxTT/ZettaBridge` (remote `origin`). Local `phase1-zbrun` tracks

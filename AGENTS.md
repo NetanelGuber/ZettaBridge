@@ -370,3 +370,44 @@ Orange Roulette smoke launch.
 - Task 5 review and Task 6 are complete. Next is Phase 4d Task 7.
 - Commit every completed task locally and update this file in the same task commit so a fresh
   Claude or Codex session can resume from the latest `NEXT` section.
+
+## Phase 4d Task 7 done (2026-09-16)
+
+- Task 7 is complete in this commit:
+  - `guest/testlib/zbt7probe.c` and its `tools/build_guest.sh` target;
+  - `android/t7/java/` real-ART model/runner and minimal plugin loader activity;
+  - `android/t7/project/`, `tools/make_t7_bundle.sh`, and `docs/phase4-device-test.md`.
+- `libzbt7probe.so` uses the safe portions of the existing JNI probe plus real-ART string, array,
+  reference and direct-buffer checks. Its guest `JNI_OnLoad` performs `RegisterNatives`; Java then
+  tests nested calls and two concurrent callers. Deliberate invalid-JNI cases remain host-only so
+  CheckJNI cannot abort the diagnostics app.
+- Fresh local verification with the Task 7 work:
+  - `tools/make_t7_bundle.sh`: PASS, 7.0 MiB; Java compile and ELF/export checks pass;
+  - Gradle 8.11.1 / AGP 8.7.3 `:app:assembleDebug`: PASS on the arm64 phone host;
+    the ready APK is copied to
+    `/sdcard/AndroidIDEProjects/ZettaBridge/ZBridgeT7-debug.apk` (6.0 MiB);
+  - host suite 28/28; guest suite 9/9; JNI generator check PASS;
+  - Android `zbridge`/`zbproxy` link and proxy structure check PASS.
+- First device run reached the `strings` checkpoint and failed only at `zbt7probe.c:94`:
+  current ART deliberately emits a supplementary code point as four-byte UTF-8 from
+  `GetStringUTFRegion`, rather than the six-byte Modified UTF-8 form required by the JNI spec.
+  The test expectation was corrected to ART behavior and the replacement APK (SHA-256
+  `bc69597e7e35cf6ae56051b946c7af896a508a906cbe7196eb691fca0b592165`) was rebuilt; the next
+  device run passed this checkpoint.
+- Second device run passed strings and reached `RegisterNatives`, then `zb.Natives.add` was
+  unresolved. Root cause: guest `FindClass("zb/Natives")` used ART's caller loader and registered
+  the default app-loader copy, while T7 invoked the plugin-loader copy. `JniEnvBackend::find_class`
+  now routes ordinary internal class names through the retained plugin loader. A new executable
+  fake-JNI host test observed RED before the fix and PASS after it; it also made the Android-only
+  backend compile and run on the host. Full verification is host 28/28, guest 9/9, generator PASS,
+  Android link PASS and APK build PASS. Device rerun of APK SHA-256
+  `de344ba365acf12eee9e740ef6fb1ce71de1bc5cc182c7093ea516af2677612d` passed T7 on the OnePlus 13.
+- **Device acceptance:** `T7 PASS` on 2026-09-16. This covers the real ART backend, all JNI value
+  types and call forms, refs, strings, arrays, direct buffers, exceptions, guest `JNI_OnLoad`,
+  `RegisterNatives`, nested calls, JavaVM attach/detach and two concurrent Java callers.
+- **NEXT:** finish the remaining Important Tasks 3-4 review item before Task 8: long-form native
+  exports must bind without `getDeclaredMethods`, while a reflection failure for a short-form
+  export must skip-and-log instead of aborting the library. Expand `jni_env_backend_test` with the
+  review's missing/failure cases. Then run Task 8, the Orange Roulette Phase 4 smoke launch. Phase
+  4 is complete when it reaches the first intentionally unimplemented GLES or `AAsset*` call with
+  no JNI error; GLES passthrough and the first rendered frame are Phase 5.

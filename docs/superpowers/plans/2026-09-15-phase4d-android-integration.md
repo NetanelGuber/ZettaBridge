@@ -147,10 +147,10 @@ part of Task 7.
 
 **Produces:** an installable diagnostics app that exercises the real JNIEnv backend without depending on the Phase 0 launcher.
 
-- [ ] Build a minimal plugin class loader/proxy harness and Java model covering all argument/return types, all three `Call*` forms, strings, arrays/release modes, globals/weaks, exceptions, `RegisterNatives` from guest `JNI_OnLoad`, guest pthread attach, two Java callers, and nested Java/guest calls.
-- [ ] Run compile/bundle structural checks locally and record expected on-screen checkpoints.
-- [ ] Have the user install/run on the OnePlus 13; collect clipboard/file diagnostics, fix failures through focused host regressions where reproducible, and repeat until every T7 checkpoint passes.
-- [ ] Commit `android: add the Phase 4 JNI device test` after device acceptance.
+- [x] Build a minimal plugin class loader/proxy harness and Java model covering all argument/return types, all three `Call*` forms, strings, arrays/release modes, globals/weaks, exceptions, `RegisterNatives` from guest `JNI_OnLoad`, guest pthread attach, two Java callers, and nested Java/guest calls.
+- [x] Run compile/bundle structural checks locally and record expected on-screen checkpoints.
+- [x] Have the user install/run on the OnePlus 13; collect clipboard/file diagnostics, fix failures through focused host regressions where reproducible, and repeat until every T7 checkpoint passes.
+- [x] Commit `android: add the Phase 4 JNI device test` after device acceptance.
 
 ### Task 8: Orange Roulette Phase 4 smoke launch
 

@@ -30,6 +30,19 @@ find_path(ZB_JDK_JNI_INCLUDE jni.h
     PATHS /usr/lib/jvm/default-java/include /usr/lib/jvm/java-17-openjdk-arm64/include
     NO_CMAKE_FIND_ROOT_PATH)
 if (ZB_JDK_JNI_INCLUDE AND EXISTS ${ZB_JDK_JNI_INCLUDE}/linux/jni_md.h)
+    add_executable(jni_env_backend_test
+        jni_env_backend_test.cpp
+        ${CMAKE_SOURCE_DIR}/core/android/jni_env_backend.cpp
+    )
+    target_include_directories(jni_env_backend_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/core/android
+        ${ZB_JDK_JNI_INCLUDE}
+        ${ZB_JDK_JNI_INCLUDE}/linux
+    )
+    target_link_libraries(jni_env_backend_test PRIVATE zbcore)
+    target_compile_options(jni_env_backend_test PRIVATE -Wall -Wextra)
+    add_test(NAME jni_env_backend_test COMMAND jni_env_backend_test)
+
     add_library(zbproxy_host SHARED ${CMAKE_SOURCE_DIR}/core/android/zbproxy.c)
     target_include_directories(zbproxy_host PRIVATE ${ZB_JDK_JNI_INCLUDE} ${ZB_JDK_JNI_INCLUDE}/linux)
     set_target_properties(zbproxy_host PROPERTIES C_VISIBILITY_PRESET hidden)
