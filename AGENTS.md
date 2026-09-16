@@ -984,3 +984,12 @@ Suspects in order:
 4. pixel data marshaling for textures.
 
 Keep the report additive, rebuild the APK, and ask the user for one more run.
+
+**User observation for the black-screen run:**
+- On launch: a white screen with the navigation bar visible (the activity background before the
+  GL surface exists).
+- Then the screen turns black and goes fullscreen, in landscape at once.
+
+So the `GLSurfaceView` is created and its frames are presented, but they show nothing. Rule out
+"frames never presented". Focus on shader status, draw calls, the framebuffer bound at draw
+time (an off-screen FBO never resolved to framebuffer 0?) and the clear color and viewport.
