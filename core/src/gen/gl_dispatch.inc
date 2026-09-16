@@ -237,6 +237,7 @@ bool HostGl::dispatch(Call& call) {
         const GLuint program = call.scalar<GLuint>(0);
         if (!call.valid()) return true;
         backend_.glDeleteProgram(program);
+        invalidate_uniforms(program);
         return true;
     }
     case ZB_GL_HC_glDeleteRenderbuffers: {
@@ -424,7 +425,12 @@ bool HostGl::dispatch(Call& call) {
         return zbgl_manual_glGetBooleanv(*this, call);
     }
     case ZB_GL_HC_glGetBufferParameteriv: {
-        return zbgl_manual_glGetBufferParameteriv(*this, call);
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLint * params = call.pointer<GLint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetBufferParameteriv(target, pname, params);
+        return true;
     }
     case ZB_GL_HC_glGetError: {
         if (!call.valid()) return true;
@@ -435,7 +441,13 @@ bool HostGl::dispatch(Call& call) {
         return zbgl_manual_glGetFloatv(*this, call);
     }
     case ZB_GL_HC_glGetFramebufferAttachmentParameteriv: {
-        return zbgl_manual_glGetFramebufferAttachmentParameteriv(*this, call);
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum attachment = call.scalar<GLenum>(1);
+        const GLenum pname = call.scalar<GLenum>(2);
+        GLint * params = call.pointer<GLint>(3, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetFramebufferAttachmentParameteriv(target, attachment, pname, params);
+        return true;
     }
     case ZB_GL_HC_glGetIntegerv: {
         return zbgl_manual_glGetIntegerv(*this, call);
@@ -450,10 +462,20 @@ bool HostGl::dispatch(Call& call) {
         return true;
     }
     case ZB_GL_HC_glGetProgramiv: {
-        return zbgl_manual_glGetProgramiv(*this, call);
+        const GLuint program = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLint * params = call.pointer<GLint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetProgramiv(program, pname, params);
+        return true;
     }
     case ZB_GL_HC_glGetRenderbufferParameteriv: {
-        return zbgl_manual_glGetRenderbufferParameteriv(*this, call);
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLint * params = call.pointer<GLint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetRenderbufferParameteriv(target, pname, params);
+        return true;
     }
     case ZB_GL_HC_glGetShaderInfoLog: {
         const GLuint shader = call.scalar<GLuint>(0);
@@ -483,16 +505,31 @@ bool HostGl::dispatch(Call& call) {
         return true;
     }
     case ZB_GL_HC_glGetShaderiv: {
-        return zbgl_manual_glGetShaderiv(*this, call);
+        const GLuint shader = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLint * params = call.pointer<GLint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetShaderiv(shader, pname, params);
+        return true;
     }
     case ZB_GL_HC_glGetString: {
         return zbgl_manual_glGetString(*this, call);
     }
     case ZB_GL_HC_glGetTexParameterfv: {
-        return zbgl_manual_glGetTexParameterfv(*this, call);
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLfloat * params = call.pointer<GLfloat>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetTexParameterfv(target, pname, params);
+        return true;
     }
     case ZB_GL_HC_glGetTexParameteriv: {
-        return zbgl_manual_glGetTexParameteriv(*this, call);
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLint * params = call.pointer<GLint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetTexParameteriv(target, pname, params);
+        return true;
     }
     case ZB_GL_HC_glGetUniformLocation: {
         return zbgl_manual_glGetUniformLocation(*this, call);
@@ -581,6 +618,7 @@ bool HostGl::dispatch(Call& call) {
         const GLuint program = call.scalar<GLuint>(0);
         if (!call.valid()) return true;
         backend_.glLinkProgram(program);
+        invalidate_uniforms(program);
         return true;
     }
     case ZB_GL_HC_glPixelStorei: {
@@ -588,6 +626,7 @@ bool HostGl::dispatch(Call& call) {
         const GLint param = call.scalar<GLint>(1);
         if (!call.valid()) return true;
         backend_.glPixelStorei(pname, param);
+        note_pixel_store(pname, param);
         return true;
     }
     case ZB_GL_HC_glPolygonOffset: {
@@ -702,7 +741,12 @@ bool HostGl::dispatch(Call& call) {
         return true;
     }
     case ZB_GL_HC_glTexParameterfv: {
-        return zbgl_manual_glTexParameterfv(*this, call);
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        const GLfloat * params = call.pointer<const GLfloat>(2, 1u, kPageRead);
+        if (!call.valid()) return true;
+        backend_.glTexParameterfv(target, pname, params);
+        return true;
     }
     case ZB_GL_HC_glTexParameteri: {
         const GLenum target = call.scalar<GLenum>(0);
@@ -713,7 +757,12 @@ bool HostGl::dispatch(Call& call) {
         return true;
     }
     case ZB_GL_HC_glTexParameteriv: {
-        return zbgl_manual_glTexParameteriv(*this, call);
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        const GLint * params = call.pointer<const GLint>(2, 1u, kPageRead);
+        if (!call.valid()) return true;
+        backend_.glTexParameteriv(target, pname, params);
+        return true;
     }
     case ZB_GL_HC_glTexSubImage2D: {
         return zbgl_manual_glTexSubImage2D(*this, call);

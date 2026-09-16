@@ -3,6 +3,7 @@
 #include <bit>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <type_traits>
 
 #include "zb/gl_backend.h"
@@ -102,6 +103,10 @@ public:
     LibraryRuntime& runtime() { return runtime_; }
     GlBackend& backend() { return backend_; }
     void reject(Call& call, GLenum error, const char* reason);
+    void note_pixel_store(GLenum pname, GLint param);
+    void invalidate_uniforms(GLuint program);
+    GLint pixel_alignment(bool pack) const;
+    std::optional<std::uint64_t> uniform_elements(GLuint program, GLint location);
 
 private:
     bool dispatch(Call& call);
@@ -109,5 +114,9 @@ private:
     LibraryRuntime& runtime_;
     GlBackend& backend_;
 };
+
+std::uint64_t gl_pname_count(GlBackend& backend, GLenum pname);
+std::optional<std::uint64_t> gl_pixel_bytes(GLenum format, GLenum type, GLsizei width,
+                                            GLsizei height, GLint alignment);
 
 }  // namespace zb

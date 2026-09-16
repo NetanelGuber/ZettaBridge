@@ -153,6 +153,78 @@ int main() {
     CHECK(backend.calls()[0].arguments[3] ==
           reinterpret_cast<std::uintptr_t>(runtime.memory().base() + kData + 0x100));
 
+    // Task 3 helpers: pname vector widths, padded pixel rows and lazy uniform sizing.
+    backend.set_integer(0x86A2, 3);  // GL_NUM_COMPRESSED_TEXTURE_FORMATS
+    CHECK(zb::gl_pname_count(backend, 0x0B21) == 1);  // GL_LINE_WIDTH
+    CHECK(zb::gl_pname_count(backend, 0x846E) == 2);  // GL_ALIASED_LINE_WIDTH_RANGE
+    CHECK(zb::gl_pname_count(backend, 0x0C22) == 4);  // GL_COLOR_CLEAR_VALUE
+    CHECK(zb::gl_pname_count(backend, 0x86A3) == 3);  // GL_COMPRESSED_TEXTURE_FORMATS
+
+    CHECK(zb::gl_pixel_bytes(0x1907, 0x1401, 1, 2, 4) == 7);   // RGB/U8: 3 + pad + 3
+    CHECK(zb::gl_pixel_bytes(0x1907, 0x8363, 3, 2, 8) == 14);  // RGB/565: 6 + pad + 6
+    CHECK(zb::gl_pixel_bytes(0x1908, 0x1401, 2, 2, 1) == 16);  // RGBA/U8
+    CHECK(!zb::gl_pixel_bytes(0x1907, 0x8033, 1, 1, 4));       // RGB/4444 is invalid
+    struct PixelCase {
+        std::uint32_t format;
+        std::uint32_t type;
+        std::uint64_t bytes_per_pixel;
+    };
+    const PixelCase pixel_cases[] = {
+        {0x1906, 0x1401, 1}, {0x1909, 0x1401, 1}, {0x190A, 0x1401, 2},
+        {0x1907, 0x1401, 3}, {0x1908, 0x1401, 4}, {0x1907, 0x8363, 2},
+        {0x1908, 0x8033, 2}, {0x1908, 0x8034, 2},
+    };
+    for (const PixelCase& pixel : pixel_cases) {
+        for (const std::uint64_t alignment : {1u, 2u, 4u, 8u}) {
+            const std::uint64_t row = 3 * pixel.bytes_per_pixel;
+            const std::uint64_t stride = (row + alignment - 1) & ~(alignment - 1);
+            CHECK(zb::gl_pixel_bytes(pixel.format, pixel.type, 3, 2,
+                                     static_cast<std::int32_t>(alignment)) == stride + row);
+        }
+    }
+
+    // PixelStore state selects row alignment for the semantic texture handler.
+    pointer_words = {0x0CF5, 8};  // GL_UNPACK_ALIGNMENT
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glPixelStorei, thread));
+    backend.clear_calls();
+    pointer_words = {0x0DE1, 0, 0x1907, 1, 2, 0, 0x1907, 0x1401, kData + 0xFF5};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glTexImage2D, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glTexImage2D");
+
+    // A one-element COMPSIZE(pname) entry is generated rather than left as a stub.
+    backend.clear_calls();
+    pointer_words = {3, 0x8B81, kData + 0xFFC};  // GL_COMPILE_STATUS
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetShaderiv, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glGetShaderiv");
+
+    backend.set_active_uniforms(7, {{"uColor", 1, 0x8B52, 5}});  // GL_FLOAT_VEC4
+    backend.clear_calls();
+    pointer_words = {7, 5, kData + 0xFF0};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetUniformfv, thread));
+    CHECK(!backend.calls().empty() && backend.calls().back().name == "glGetUniformfv");
+
+    backend.set_active_uniforms(7, {{"uScalar", 1, 0x1406, 9}});  // GL_FLOAT
+    pointer_words = {7};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glLinkProgram, thread));
+    backend.clear_calls();
+    pointer_words = {7, 9, kData + 0xFFC};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetUniformfv, thread));
+    CHECK(!backend.calls().empty() && backend.calls().back().name == "glGetUniformfv");
+
+    backend.clear_calls();
+    backend.set_error(0);
+    pointer_words = {7, 99, kData + 0xFF0};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetUniformfv, thread));
+    CHECK(backend.error() == zb::kGlInvalidOperation);
+    CHECK(backend.calls().empty() || backend.calls().back().name != "glGetUniformfv");
+
     backend.set_error(0);
     set_words(runtime, thread, copy_words);
     const std::size_t before_manual = backend.calls().size();

@@ -21,10 +21,10 @@ English and ASCII only.
   `JniBackend`, Java -> guest dispatch, `RegisterNatives`, attach/detach; committed directly
   to `phase1-zbrun` (see "Phase 4c done" below). Host tests are 18/18. Next is plan 4d.
 - **Phase 4 is complete and accepted on the OnePlus 13.** See `docs/phase4-acceptance.md`.
-- **Phase 5 Tasks 1-2 are done (2026-09-16).** The pinned GLES registry, generator, typed
-  backend seam, `HostGl`, mock, 79 scalar handlers and 37 registry-`len` pointer handlers are
-  implemented: 116/142 GLES calls now dispatch to the backend. Host tests are 33/33. Next is
-  Phase 5 Task 3, COMPSIZE queries, pixel transfers and uniform read-back.
+- **Phase 5 Tasks 1-3 are done (2026-09-16).** The pinned GLES registry, generator, typed
+  backend seam, `HostGl`, mock, registry pointers, COMPSIZE queries, pixel transfers and uniform
+  read-back are implemented: 133/142 GLES calls are functional. Host tests are 33/33. Next is
+  Phase 5 Task 4, strings, `glGetString` and `glShaderSource`.
 - Work continues on local branch `codex/phase4d-launcher`, based on `phase1-zbrun`.
 - Commit locally after every task and update this file. Push only with the user's agreement.
 
@@ -762,3 +762,30 @@ on this machine.
   `zbridge` links.
 - **NEXT:** Phase 5 Task 3: implement `COMPSIZE(pname)`, pixel byte sizing/alignment and the
   lazy uniform-location size map.
+
+## Phase 5 Task 3 done (2026-09-16)
+
+- Implemented in this commit: nine one-element `COMPSIZE(pname)` handlers are now generated;
+  `glGetBooleanv` / `glGetFloatv` / `glGetIntegerv` use the GLES 2.0 1/2/4/variable count rules;
+  and `glTexImage2D`, `glTexSubImage2D`, `glReadPixels`, `glGetUniformfv` and
+  `glGetUniformiv` have semantic handlers. The functional surface is 133/142 GLES calls.
+- Pixel sizing validates all GLES 2.0 format/type pairs, dimensions and alignments, includes row
+  padding except after the final row, and tracks `GL_PACK_ALIGNMENT` / `GL_UNPACK_ALIGNMENT`
+  from generated `glPixelStorei` dispatch. Null `glTexImage2D` data remains legal.
+- Uniform result sizes are cached per thread/program after `GL_ACTIVE_UNIFORMS` enumeration.
+  Array `[0]` suffixes are stripped before `glGetUniformLocation`; scalar/vector/matrix types map
+  to 1/2/3/4/9/16 elements. `glLinkProgram` and `glDeleteProgram` invalidate the program cache;
+  an unknown location is rejected with `GL_INVALID_OPERATION` before touching guest memory.
+- The generated manual list is now real per-function declarations, so a missing semantic
+  definition is a link failure. Nine deliberate stubs remain for Tasks 4-5: the three name
+  lookups, `glGetString`, `glShaderSource`, `glVertexAttribPointer`, both draws and
+  `glGetVertexAttribPointerv`.
+- TDD evidence: the test first failed to compile on missing `gl_pname_count` and
+  `gl_pixel_bytes`; the first implementation run then correctly exposed a missing
+  `GL_ACTIVE_UNIFORM_MAX_LENGTH` behavior in `MockGles`. Final tests cover all eight valid pixel
+  format/type pairs at alignments 1/2/4/8, the one-pixel RGB padding edge, variable pnames,
+  one-element COMPSIZE, PixelStore tracking, lazy uniform lookup and link invalidation.
+- Fresh verification: GLES/JNI generator checks pass; host 33/33; guest 9/9; Android arm64
+  `zbridge` links.
+- **NEXT:** Phase 5 Task 4: bounded guest strings, process-lifetime `glGetString` copies and
+  32-bit-to-64-bit `glShaderSource` pointer-array translation.

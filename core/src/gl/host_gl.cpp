@@ -46,19 +46,9 @@ void HostGl::reject(Call& call, GLenum error, const char* reason) {
     backend_.set_error(error);
 }
 
-#define ZB_GL_MANUAL(name) bool zbgl_manual_##name(HostGl& host, HostGl::Call& call);
 #include "gen/gl_manual.inc"
-#undef ZB_GL_MANUAL
 
 #include "gen/gl_dispatch.inc"
-
-#define ZB_GL_MANUAL(name)                                                        \
-    bool zbgl_manual_##name(HostGl& host, HostGl::Call& call) {                   \
-        host.reject(call, kGlInvalidOperation, #name " is not implemented yet"); \
-        return true;                                                              \
-    }
-#include "gen/gl_manual.inc"
-#undef ZB_GL_MANUAL
 
 bool HostGl::handle_host_call(std::uint32_t index, GuestThread& thread) {
     if (index > kGlHostCallLast) return false;
