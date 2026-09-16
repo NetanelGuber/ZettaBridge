@@ -957,3 +957,30 @@ after Task 7 with the command in the HANDOFF section.
   `AAsset_openFileDescriptor64`, `AAsset_seek(64)`. None of these are imported by liblime.so.
 - **NEXT:** rebuild and push the launcher APK, then the OnePlus 13 rerun of Orange Roulette,
   expecting the intro screen (Task 9). Task 6 (guest GL probe) is still open separately.
+
+## Device result after AAsset (`a5fd0ea`, 2026-09-16): game RUNS, screen black
+
+The report shows `guest-exit: (none)`, `unimplemented-host-calls: 0`, `gl-calls: 141589`,
+`gl-first-error: (none)` and `gl-egl-context-current: yes`. The render loop runs with no crash,
+no missing bridge and no GL error, but the screen stays black.
+
+`glGetError` does not catch the likely causes. **NEXT: a GL visibility diagnostic in
+`RuntimeReport` before changing marshaling code.**
+- **Shader compile and program link status.** For every `glCompileShader` / `glLinkProgram`, check
+  `GL_COMPILE_STATUS` / `GL_LINK_STATUS` on the host side and record the first failure with its
+  info log (truncated). Top suspect: `glShaderSource` string assembly.
+- **Draw calls.** Count `glDrawArrays` / `glDrawElements`, and record the framebuffer bound at the
+  first draw.
+- **Last state values.** The last `glViewport` rectangle and the last `glClearColor`.
+- **Client-side vertex arrays.** How many draws used them, and the byte range of the first
+  materialization.
+- **Pixel uploads.** The first `glTexImage2D` size/format/type, and whether its data pointer was
+  null.
+
+Suspects in order:
+1. shader text marshaling;
+2. client-array materialization;
+3. viewport or framebuffer binding (drawing into an off-screen FBO, or a zero-size viewport);
+4. pixel data marshaling for textures.
+
+Keep the report additive, rebuild the APK, and ask the user for one more run.
