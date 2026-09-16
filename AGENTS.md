@@ -916,3 +916,17 @@ on this machine.
   backend wiring and launcher bundle, then the OnePlus 13 Orange Roulette rerun and first-frame
   acceptance. The runtime report should show zero unimplemented GLES/asset calls after Task 8;
   Task 9 is the first device/render proof.
+
+## Device result after Phase 5 Task 8 (2026-09-16) - threading risk DISPROVEN
+
+The user ran Orange Roulette with the real GLES backend (`8c05689`):
+- **`gl-egl-context-current: yes`.** Guest GL calls arrive on the thread with the current EGL
+  context, so the no-cross-thread design holds.
+- **`gl-calls: 64`, `gl-first-error: (none)`.** All real driver calls succeed.
+- **The only unimplemented call left is `libandroid.so AAssetManager_fromJava` x1.** It returns 0,
+  and the game dereferences the null manager: `SIGSEGV read of 0x00000004` in
+  `libApplicationMain.so+0x26abe4`.
+
+**NEXT: Phase 5 Task 7 (`AAsset*` over 32-bit handles).** It is the only thing between the game and
+its first frame. Then Task 6 (guest probe) and Task 9 (intro screen on the device). Rebuild the APK
+after Task 7 with the command in the HANDOFF section.
