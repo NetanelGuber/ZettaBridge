@@ -597,3 +597,88 @@ treated as a skip), and whether libcore's `Class.getDeclaredMethod` really resol
 overloads' parameter types. The pessimistic case is a skipped export, visible as a Java
 `UnsatisfiedLinkError` when the guest calls it, plus the once-per-export `[zb] JNI loader: cannot
 resolve the declared natives of ...` line.
+
+## HANDOFF 2026-09-16: Phase 4 complete, Part 4 design approved, Phase 5 next
+
+Claude is out of weekly budget for about a day. Codex continues alone. Everything below is
+decided; implement it, do not redesign.
+
+### Where things stand
+
+- **Phase 4 is complete and accepted on the device.** Evidence: `docs/phase4-acceptance.md`.
+  All six Orange Roulette arm32 libraries load, both guest `JNI_OnLoad` run, 20 natives
+  register, the game then makes 45 GLES calls (18 distinct) into stubs that return 0 and
+  crashes on a null GL object. No JNI error anywhere.
+- **The last review finding is fixed** (`19bc37a`, `7aff563`): one unresolvable Java type no
+  longer fails a whole library.
+- Host tests 30/30, guest 9/9, Android links, launcher tests pass.
+- Branch `codex/phase4d-launcher`. `origin/main` still points at the older `phase1-zbrun`;
+  merge and push only with the user's agreement.
+
+### Building the launcher APK on this machine (new, use it)
+
+No more copying projects to the phone:
+
+```
+ninja -C build/android-arm64 zbridge zbproxy; tools/make_launcher_bundle.sh; cd android/launcher; ANDROID_HOME=$HOME/android-sdk ANDROID_SDK_ROOT=$HOME/android-sdk ./gradlew --no-daemon assembleDebug; cd -; cp android/launcher/app/build/outputs/apk/debug/app-debug.apk /sdcard/ZettaBridge-debug.apk
+```
+
+The user installs `/sdcard/ZettaBridge-debug.apk`. The APK carries the runtime bundle
+(`assets/zb`, 17 files) and `libzbridge.so`.
+
+### Next: write the Part 4 spec and the Phase 5 plan, then implement
+
+The user approved this design. Write
+`docs/superpowers/specs/2026-09-16-gles-assets-design.md` (style of the JNI bridge spec) and
+`docs/superpowers/plans/2026-09-16-phase5-gles.md` (lean style of the 4c plan: tasks, tests,
+decisions, acceptance, no full code), then execute task by task.
+
+**User decisions:**
+1. Implement all of GLES 2.0, not only what Orange Roulette needs.
+2. `AAsset*` (6 functions) ships in the same phase; without it the game shows nothing.
+3. Correctness first, performance later; keep the design friendly to batching, because 3D
+   games are a goal.
+
+**Verified numbers (measured here, reuse them):**
+- `https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/xml/gl.xml` downloads
+  (2.8 MB) and parses with `xml.etree`.
+- `GLES2/gl2.h` declares 142 core functions; all 142 appear in `gl.xml`.
+- 81 take no pointers: fully mechanical.
+- 57 take pointers whose lengths the registry gives through `len=`: mechanical with rules.
+- 4 need hand-written rules: `glBindAttribLocation`, `glGetAttribLocation`,
+  `glGetUniformLocation` (NUL-terminated strings) and `glVertexAttribPointer`.
+
+**Design:**
+- `tools/gen_gles.py` reads `gl.xml` plus the NDK headers and emits the host-call list and the
+  host dispatch handlers with marshaling. Generated files are committed and checked by a ctest,
+  like `gen_jni.py`.
+- Pointer rules from the registry: guest-to-host copies for inputs (`glShaderSource`,
+  `glTexImage2D`, `glBufferData`), host-to-guest for outputs (`glGen*`, `glGet*iv`), and
+  NUL-terminated strings for the three name lookups. Bounds-check every guest pointer through
+  `GuestMemory`, as the JNI bridge does.
+- `glVertexAttribPointer` is the one hand-written case: GLES 2.0 allows client-side vertex
+  arrays, so record enabled attributes and copy the referenced guest memory at draw time
+  (`glDrawArrays`, `glDrawElements`), deriving the byte range from first/count/stride/type or
+  from the index buffer.
+- Threading: handlers call the real `gl*` inline on the calling host thread, which borrowed the
+  carrier of the Java `GLThread` where the EGL context is current. No cross-thread dispatch.
+- Assets: `AAssetManager_fromJava` takes a `jobject` through the JNI bridge; `AAsset*` and
+  `AAssetManager*` become 32-bit handles for the guest, like JNI references.
+- Testing without a phone: a mock GLES that records calls and returns predictable ids, driven by
+  an arm32 guest probe (`guest/testlib/zbglprobe.c`). Separate tests for out-of-bounds and null
+  pointers, absurd sizes, and client-side vertex arrays with stride, offset and indices. Only the
+  real EGL context, `GLThread` and the first frame need the device.
+- Order: generator plus pointerless functions; pointer functions; `glVertexAttribPointer` plus
+  draws; `AAsset*`; then the Orange Roulette run.
+- Acceptance: Orange Roulette draws its intro screen on the device.
+
+### Cheap diagnostic worth adding early
+
+`zb::RuntimeReport` does not record exports skipped by the JNI loader
+(`JniLoadReport::skipped_exports`). If the device run shows an unexpected
+`UnsatisfiedLinkError`, add them to the report first.
+
+### Device-test etiquette that works
+
+Put the phone steps in a short numbered block at the top of the message. OxygenOS hides
+third-party logcat, so rely on the runtime report, `Diagnostics` and the clipboard.
