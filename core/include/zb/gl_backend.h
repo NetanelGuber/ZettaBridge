@@ -23,6 +23,7 @@ using GLuint = std::uint32_t;
 
 inline constexpr GLenum kGlInvalidValue = 0x0501;
 inline constexpr GLenum kGlInvalidOperation = 0x0502;
+inline constexpr GLenum kGlOutOfMemory = 0x0505;
 
 template <typename T>
 inline std::uint64_t gl_backend_word(T value) {

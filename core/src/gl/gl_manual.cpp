@@ -1,6 +1,7 @@
 #include "zb/host_gl.h"
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -28,6 +29,7 @@ struct GlThreadState {
     GLint pack_alignment = 4;
     GLint unpack_alignment = 4;
     std::unordered_map<GLuint, std::unordered_map<GLint, std::uint64_t>> uniforms;
+    std::unordered_map<GLenum, std::uint32_t> strings;
 };
 
 thread_local GlThreadState t_state;
@@ -96,6 +98,31 @@ bool pixel_pointer(HostGl::Call& call, GLenum format, GLenum type, GLsizei width
     }
     out = call.pointer<void>(position, *bytes, permission);
     return call.valid();
+}
+
+const GLchar* guest_string(HostGl& host, HostGl::Call& call, std::uint32_t address) {
+    constexpr std::uint64_t kMaxGuestString = 64u << 20;
+    if (address == 0) {
+        call.fail(kGlInvalidValue, "string pointer is null");
+        return nullptr;
+    }
+    std::uint64_t scanned = 0;
+    while (scanned < kMaxGuestString) {
+        const std::uint64_t current = static_cast<std::uint64_t>(address) + scanned;
+        if (current >= kGuestSpaceSize) break;
+        const std::uint64_t page_left = kPageSize - (current & kPageMask);
+        const std::uint64_t chunk = std::min({page_left, kMaxGuestString - scanned,
+                                              kGuestSpaceSize - current});
+        const std::uint8_t* data = host.runtime().memory().host_ptr(
+            static_cast<std::uint32_t>(current), chunk, kPageRead);
+        if (data == nullptr) break;
+        if (std::memchr(data, 0, static_cast<std::size_t>(chunk)) != nullptr) {
+            return reinterpret_cast<const GLchar*>(host.runtime().memory().base() + address);
+        }
+        scanned += chunk;
+    }
+    call.fail(kGlInvalidValue, "string is unreadable or not terminated within 64 MiB");
+    return nullptr;
 }
 
 }  // namespace
@@ -193,6 +220,16 @@ GLint HostGl::pixel_alignment(bool pack) const {
 
 void HostGl::invalidate_uniforms(GLuint program) {
     state(*this).uniforms.erase(program);
+}
+
+std::optional<std::uint32_t> HostGl::allocate_guest(std::size_t size) {
+    if (size == 0 || size > UINT32_MAX) return std::nullopt;
+    if (allocator_) return allocator_(size);
+    GuestCall args;
+    args.regs = {static_cast<std::uint32_t>(size), 0, 0, 0};
+    const auto result = runtime_.call_on_current(runtime_.service_api().malloc_fn, args);
+    if (!result || result->r0 == 0) return std::nullopt;
+    return result->r0;
 }
 
 std::optional<std::uint64_t> HostGl::uniform_elements(GLuint program, GLint location) {
@@ -314,20 +351,106 @@ bool zbgl_manual_glGetUniformiv(HostGl& host, HostGl::Call& call) {
     return true;
 }
 
+bool zbgl_manual_glBindAttribLocation(HostGl& host, HostGl::Call& call) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLuint index = call.scalar<GLuint>(1);
+    const GLchar* name = guest_string(host, call, call.arg(2));
+    if (call.valid()) host.backend().glBindAttribLocation(program, index, name);
+    return true;
+}
+
+bool zbgl_manual_glGetAttribLocation(HostGl& host, HostGl::Call& call) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLchar* name = guest_string(host, call, call.arg(1));
+    if (call.valid()) call.set_result(host.backend().glGetAttribLocation(program, name));
+    return true;
+}
+
+bool zbgl_manual_glGetUniformLocation(HostGl& host, HostGl::Call& call) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLchar* name = guest_string(host, call, call.arg(1));
+    if (call.valid()) call.set_result(host.backend().glGetUniformLocation(program, name));
+    return true;
+}
+
+bool zbgl_manual_glGetString(HostGl& host, HostGl::Call& call) {
+    const GLenum name = call.scalar<GLenum>(0);
+    GlThreadState& current = state(host);
+    const auto cached = current.strings.find(name);
+    if (cached != current.strings.end()) {
+        call.set_result(cached->second);
+        return true;
+    }
+    const GLubyte* source = host.backend().glGetString(name);
+    if (source == nullptr) return true;
+    constexpr std::size_t kMaxDriverString = 64u << 20;
+    const std::size_t length = strnlen(reinterpret_cast<const char*>(source), kMaxDriverString);
+    if (length == kMaxDriverString) {
+        host.reject(call, kGlInvalidOperation, "driver string exceeds 64 MiB");
+        return true;
+    }
+    const auto address = host.allocate_guest(length + 1);
+    if (!address) {
+        host.reject(call, kGlOutOfMemory, "guest allocation for driver string failed");
+        return true;
+    }
+    std::uint8_t* destination = host.runtime().memory().host_ptr(
+        *address, length + 1, kPageRead | kPageWrite);
+    if (destination == nullptr) {
+        host.reject(call, kGlInvalidOperation, "guest allocator returned an unreadable buffer");
+        return true;
+    }
+    std::memcpy(destination, source, length + 1);
+    current.strings[name] = *address;
+    call.set_result(*address);
+    return true;
+}
+
+bool zbgl_manual_glShaderSource(HostGl& host, HostGl::Call& call) {
+    const GLuint shader = call.scalar<GLuint>(0);
+    const GLsizei count = call.scalar<GLsizei>(1);
+    if (count < 0) {
+        call.fail(kGlInvalidValue, "shader source count is negative");
+        return true;
+    }
+    const std::uint64_t items = call.length(count);
+    const std::uint32_t* guest_sources =
+        call.pointer<const std::uint32_t>(2, items, kPageRead);
+    const GLint* lengths = call.pointer<const GLint>(3, items, kPageRead);
+    if (!call.valid()) return true;
+
+    std::vector<const GLchar*> sources(static_cast<std::size_t>(items));
+    for (std::size_t i = 0; i < sources.size(); ++i) {
+        const std::uint32_t address = guest_sources[i];
+        if (lengths == nullptr || lengths[i] < 0) {
+            sources[i] = guest_string(host, call, address);
+        } else if (address == 0) {
+            call.fail(kGlInvalidValue, "shader source pointer is null");
+        } else {
+            const std::uint8_t* source = host.runtime().memory().host_ptr(
+                address, static_cast<std::uint64_t>(lengths[i]), kPageRead);
+            if (source == nullptr) {
+                call.fail(kGlInvalidValue, "shader source range is unreadable");
+            } else {
+                sources[i] = reinterpret_cast<const GLchar*>(source);
+            }
+        }
+        if (!call.valid()) return true;
+    }
+    host.backend().glShaderSource(shader, count,
+                                  sources.empty() ? nullptr : sources.data(), lengths);
+    return true;
+}
+
 #define ZB_GL_STUB(name)                                                            \
     bool zbgl_manual_##name(HostGl& host, HostGl::Call& call) {                     \
         host.reject(call, kGlInvalidOperation, #name " is not implemented yet");   \
         return true;                                                                \
     }
 
-ZB_GL_STUB(glBindAttribLocation)
 ZB_GL_STUB(glDrawArrays)
 ZB_GL_STUB(glDrawElements)
-ZB_GL_STUB(glGetAttribLocation)
-ZB_GL_STUB(glGetString)
-ZB_GL_STUB(glGetUniformLocation)
 ZB_GL_STUB(glGetVertexAttribPointerv)
-ZB_GL_STUB(glShaderSource)
 ZB_GL_STUB(glVertexAttribPointer)
 
 #undef ZB_GL_STUB

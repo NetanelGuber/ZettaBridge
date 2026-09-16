@@ -47,6 +47,22 @@ std::uint64_t MockGles::invoke(const char* name,
             }
         }
         return static_cast<std::uint64_t>(-1);
+    } else if (calls_.back().name == "glGetString" && args.size() == 1) {
+        const auto found = strings_.find(static_cast<zb::GLenum>(args[0]));
+        return found == strings_.end()
+                   ? 0
+                   : reinterpret_cast<std::uintptr_t>(found->second.c_str());
+    } else if (calls_.back().name == "glShaderSource" && args.size() == 4) {
+        shader_sources_ = {};
+        const auto count = static_cast<zb::GLsizei>(args[1]);
+        const auto sources = reinterpret_cast<const zb::GLchar* const*>(args[2]);
+        const auto lengths = reinterpret_cast<const zb::GLint*>(args[3]);
+        for (zb::GLsizei i = 0; i < count; ++i) {
+            const zb::GLint length = lengths == nullptr ? -1 : lengths[i];
+            shader_sources_.lengths.push_back(length);
+            shader_sources_.strings.emplace_back(
+                sources[i], length < 0 ? std::strlen(sources[i]) : static_cast<std::size_t>(length));
+        }
     }
     const auto found = results_.find(name);
     if (found != results_.end()) return found->second;

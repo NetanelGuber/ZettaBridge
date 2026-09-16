@@ -21,10 +21,10 @@ English and ASCII only.
   `JniBackend`, Java -> guest dispatch, `RegisterNatives`, attach/detach; committed directly
   to `phase1-zbrun` (see "Phase 4c done" below). Host tests are 18/18. Next is plan 4d.
 - **Phase 4 is complete and accepted on the OnePlus 13.** See `docs/phase4-acceptance.md`.
-- **Phase 5 Tasks 1-3 are done (2026-09-16).** The pinned GLES registry, generator, typed
-  backend seam, `HostGl`, mock, registry pointers, COMPSIZE queries, pixel transfers and uniform
-  read-back are implemented: 133/142 GLES calls are functional. Host tests are 33/33. Next is
-  Phase 5 Task 4, strings, `glGetString` and `glShaderSource`.
+- **Phase 5 Tasks 1-4 are done (2026-09-16).** Registry generation, scalar and pointer
+  marshaling, COMPSIZE, pixels, uniforms, bounded names, `glGetString` and `glShaderSource` are
+  implemented: 138/142 GLES calls are functional. Host tests are 33/33. Next is Phase 5 Task 5,
+  client-side vertex arrays and the two draw calls.
 - Work continues on local branch `codex/phase4d-launcher`, based on `phase1-zbrun`.
 - Commit locally after every task and update this file. Push only with the user's agreement.
 
@@ -789,3 +789,27 @@ on this machine.
   `zbridge` links.
 - **NEXT:** Phase 5 Task 4: bounded guest strings, process-lifetime `glGetString` copies and
   32-bit-to-64-bit `glShaderSource` pointer-array translation.
+
+## Phase 5 Task 4 done (2026-09-16)
+
+- Implemented in this commit: bounded guest-string marshaling for `glBindAttribLocation`,
+  `glGetAttribLocation` and `glGetUniformLocation`; process-lifetime guest copies for
+  `glGetString`; and host-width pointer-array construction for `glShaderSource`. The functional
+  surface is 138/142 GLES calls.
+- Guest strings are scanned page by page, never across an unmapped page and never beyond the
+  JNI bridge's 64 MiB cap. Driver strings are copied through the runtime service `malloc` and
+  cached by enum, so repeated `glGetString` returns the same 32-bit guest address. Host tests use
+  the constructor's allocator seam; production defaults to `LibraryRuntime::call_on_current`.
+- `glShaderSource` reads all scalars first, validates the guest `uint32_t` pointer array and
+  optional `GLint` length array, translates each source, and keeps embedded NUL bytes when an
+  explicit non-negative length is present. Negative lengths use bounded NUL scanning. The
+  temporary host pointer array exists only for the driver call.
+- TDD evidence: the new test first failed on the missing allocator-aware `HostGl` constructor.
+  Final cases cover a normal name, an unterminated name at an unmapped page boundary, two shader
+  strings with negative/explicit lengths and an embedded NUL, `count == 0`, a partly unreadable
+  pointer array, and stable/readable `glGetString` results across two calls.
+- Fresh verification: GLES/JNI generator checks pass; host 33/33; guest 9/9; Android arm64
+  `zbridge` links.
+- **NEXT:** Phase 5 Task 5: implement client-array state, draw-time pointer materialization,
+  `glDrawArrays`, `glDrawElements` and guest-pointer-preserving
+  `glGetVertexAttribPointerv`. These are the final four GLES functions.

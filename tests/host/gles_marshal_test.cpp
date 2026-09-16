@@ -37,9 +37,9 @@ void dispatch_all_pointerless(zb::HostGl& host, zb::GuestThread& thread,
         backend.set_error(0);
         const std::size_t before = backend.calls().size();
         CHECK(host.handle_host_call(info.index, thread));
-        // These two have no pointer parameters, but the approved design requires semantic
-        // handlers: glDrawArrays materializes client arrays and glGetString copies its return.
-        if (std::string(info.name) == "glDrawArrays" || std::string(info.name) == "glGetString") {
+        // glDrawArrays has no pointer parameter but remains semantic: it materializes client
+        // arrays in Task 5. glGetString is semantic too, but now calls the backend before copying.
+        if (std::string(info.name) == "glDrawArrays") {
             CHECK(backend.calls().size() == before);
             CHECK(backend.error() == zb::kGlInvalidOperation);
         } else {
@@ -62,7 +62,13 @@ int main() {
     CHECK(runtime.memory().map_anon(kStack, 0x1000, PROT_READ | PROT_WRITE));
     CHECK(runtime.memory().map_anon(kData, 0x1000, PROT_READ | PROT_WRITE));
     MockGles backend;
-    zb::HostGl host(runtime, backend);
+    std::uint32_t next_allocation = kData + 0x800;
+    zb::HostGl host(runtime, backend, [&](std::size_t size) -> std::optional<std::uint32_t> {
+        const std::uint32_t result = next_allocation;
+        next_allocation += static_cast<std::uint32_t>((size + 7) & ~std::size_t{7});
+        if (next_allocation > kData + 0xF00) return std::nullopt;
+        return result;
+    });
     Dynarmic::ExclusiveMonitor monitor(1);
     zb::GuestThread thread(runtime.memory(), &monitor, 0, false, zb::kCarrierCodeCacheSize);
 
@@ -78,7 +84,7 @@ int main() {
     CHECK(thread.regs()[0] == 0xFFFFFFF9u && thread.regs()[1] == 0);
 
     // Every registry function with no pointer parameter is dispatched. The two semantic calls
-    // reach their safe Task 1 stubs; the other 79 reach the typed backend entry point.
+    // reach the current semantic handler or safe stub.
     dispatch_all_pointerless(host, thread, backend, runtime);
 
     // r0-r3 must be captured before HostGl clears r0/r1 for the default result. Eight arguments
@@ -153,6 +159,60 @@ int main() {
     CHECK(backend.calls()[0].arguments[3] ==
           reinterpret_cast<std::uintptr_t>(runtime.memory().base() + kData + 0x100));
 
+    // Bounded names are passed as direct guest-memory aliases.
+    std::memcpy(runtime.memory().base() + kData + 0x200, "position", 9);
+    backend.clear_calls();
+    pointer_words = {4, 2, kData + 0x200};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glBindAttribLocation, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glBindAttribLocation");
+
+    // glShaderSource translates the guest uint32_t pointer array to host-width pointers.
+    const std::uint32_t source_addresses[] = {kData + 0x240, kData + 0x260};
+    std::memcpy(runtime.memory().base() + kData + 0x220, source_addresses,
+                sizeof(source_addresses));
+    std::memcpy(runtime.memory().base() + kData + 0x240, "one", 4);
+    const char source_two[] = {'t', 'w', '\0', 'o', '\0'};
+    std::memcpy(runtime.memory().base() + kData + 0x260, source_two, sizeof(source_two));
+    const std::int32_t source_lengths[] = {-1, 4};
+    std::memcpy(runtime.memory().base() + kData + 0x280, source_lengths,
+                sizeof(source_lengths));
+    backend.clear_calls();
+    pointer_words = {9, 2, kData + 0x220, kData + 0x280};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glShaderSource, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glShaderSource");
+    CHECK(backend.shader_sources().strings.size() == 2);
+    CHECK(backend.shader_sources().strings[0] == "one");
+    CHECK(backend.shader_sources().strings[1] == std::string(source_two, 4));
+
+    backend.clear_calls();
+    pointer_words = {9, 0, 0, 0};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glShaderSource, thread));
+    CHECK(backend.calls().size() == 1 && backend.shader_sources().strings.empty());
+
+    backend.clear_calls();
+    backend.set_error(0);
+    pointer_words = {9, 2, kData + 0xFFC, 0};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glShaderSource, thread));
+    CHECK(backend.calls().empty());
+    CHECK(backend.error() == zb::kGlInvalidValue);
+
+    // Driver strings are copied into guest memory once and cached by enum.
+    backend.set_string(0x1F00, "Mock Vendor");
+    pointer_words = {0x1F00};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetString, thread));
+    const std::uint32_t vendor = thread.regs()[0];
+    CHECK(vendor != 0);
+    CHECK(std::strcmp(reinterpret_cast<const char*>(runtime.memory().base() + vendor),
+                      "Mock Vendor") == 0);
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetString, thread));
+    CHECK(thread.regs()[0] == vendor);
+
     // Task 3 helpers: pname vector widths, padded pixel rows and lazy uniform sizing.
     backend.set_integer(0x86A2, 3);  // GL_NUM_COMPRESSED_TEXTURE_FORMATS
     CHECK(zb::gl_pname_count(backend, 0x0B21) == 1);  // GL_LINE_WIDTH
@@ -226,11 +286,13 @@ int main() {
     CHECK(backend.calls().empty() || backend.calls().back().name != "glGetUniformfv");
 
     backend.set_error(0);
-    set_words(runtime, thread, copy_words);
+    std::memset(runtime.memory().base() + kData + 0xF00, 'x', 0x100);
+    pointer_words = {7, kData + 0xF00};
+    set_words(runtime, thread, pointer_words);
     const std::size_t before_manual = backend.calls().size();
     CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetAttribLocation, thread));
     CHECK(backend.calls().size() == before_manual);
-    CHECK(backend.error() == zb::kGlInvalidOperation);
+    CHECK(backend.error() == zb::kGlInvalidValue);
     CHECK(thread.regs()[0] == 0 && thread.regs()[1] == 0);
 
     // The asset range is deliberately not swallowed by HostGl.

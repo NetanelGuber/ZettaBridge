@@ -2,9 +2,11 @@
 
 #include <bit>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <type_traits>
+#include <utility>
 
 #include "zb/gl_backend.h"
 #include "zb/guest_thread.h"
@@ -16,6 +18,7 @@ namespace zb {
 // HostGl translates those words to the portable GlBackend seam after Dynarmic has stopped.
 class HostGl {
 public:
+    using GuestAllocator = std::function<std::optional<std::uint32_t>(std::size_t)>;
     class Call {
     public:
         Call(HostGl& host, GuestThread& thread, std::uint32_t index);
@@ -96,7 +99,8 @@ public:
         bool valid_ = true;
     };
 
-    HostGl(LibraryRuntime& runtime, GlBackend& backend) : runtime_(runtime), backend_(backend) {}
+    HostGl(LibraryRuntime& runtime, GlBackend& backend, GuestAllocator allocator = {})
+        : runtime_(runtime), backend_(backend), allocator_(std::move(allocator)) {}
 
     // Serves the GLES range 0-141 and leaves 142-160 for HostAssets.
     bool handle_host_call(std::uint32_t index, GuestThread& thread);
@@ -107,12 +111,14 @@ public:
     void invalidate_uniforms(GLuint program);
     GLint pixel_alignment(bool pack) const;
     std::optional<std::uint64_t> uniform_elements(GLuint program, GLint location);
+    std::optional<std::uint32_t> allocate_guest(std::size_t size);
 
 private:
     bool dispatch(Call& call);
 
     LibraryRuntime& runtime_;
     GlBackend& backend_;
+    GuestAllocator allocator_;
 };
 
 std::uint64_t gl_pname_count(GlBackend& backend, GLenum pname);
