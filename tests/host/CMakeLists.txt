@@ -10,6 +10,7 @@ set(ZB_HOST_TESTS
     jni_shorty_test
     native_thunk_test
     proxy_runtime_test
+    runtime_report_test
     t1_blob_test
 )
 
@@ -22,6 +23,10 @@ endforeach()
 # The committed tools/gen_jni.py outputs match jni.h and the generator.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME gen_jni_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gen_jni.py --check)
+
+# ZBridge.java and core/android/zbridge_jni.cpp declare and define the same native methods.
+add_test(NAME zbridge_natives_check
+    COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/check_zbridge_natives.py)
 
 # libzbproxy.so (core/android/zbproxy.c) built for the host against the JDK jni.h, then driven
 # by a fake JavaVM/JNIEnv that loads it by absolute path so dladdr runs for real.

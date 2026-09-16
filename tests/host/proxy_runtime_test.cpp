@@ -17,6 +17,7 @@
 
 #include "check.h"
 #include "zb/proxy_runtime.h"
+#include "zb/runtime_report.h"
 
 namespace {
 
@@ -393,6 +394,38 @@ void test_preload_failure(const Tree& tree) {
     CHECK(runtime.last_load_error() && *runtime.last_load_error() == second.error);
 }
 
+// Everything a device run must leave behind about plugin activation and proxy loads.
+void test_runtime_report(const Tree& tree) {
+    zb::RuntimeReport& report = zb::runtime_report();
+    report.clear();
+
+    FakeEngine engine;
+    zb::ProxyRuntime runtime(engine);
+    std::string error;
+    CHECK(runtime.activate_plugin(kEnv, tree.root("com.example.a").string(), 16, kLoader, error));
+
+    tree.library("com.example.a", "libgood.so");
+    engine.reports["libgood.so"].ok = true;
+    engine.reports["libgood.so"].jni_version = 0x00010006;
+    CHECK(runtime.on_proxy_loaded(kEnv, tree.proxy("com.example.a", "libgood.so")).ok);
+    // A memoized repeat is one load, not two.
+    CHECK(runtime.on_proxy_loaded(kEnv, tree.proxy("com.example.a", "libgood.so")).ok);
+
+    tree.library("com.example.a", "libbad.so");
+    engine.reports["libbad.so"].ok = false;
+    engine.reports["libbad.so"].error = "guest dlopen failed: cannot locate symbol";
+    CHECK(!runtime.on_proxy_loaded(kEnv, tree.proxy("com.example.a", "libbad.so")).ok);
+
+    CHECK(report.proxy_loads() == 1);
+    const std::string text = report.text();
+    const std::string root = fs::canonical(tree.root("com.example.a")).string();
+    CHECK(contains(text, ("plugin: " + root + " targetSdk 16").c_str()));
+    CHECK(contains(text, "proxy-loads: 1"));
+    CHECK(contains(text, "proxy-loaded: libgood.so jni=0x00010006"));
+    CHECK(contains(text, "proxy-failures: 1"));
+    CHECK(contains(text, "proxy-failed: libbad.so guest dlopen failed: cannot locate symbol"));
+}
+
 }  // namespace
 
 int main() {
@@ -406,6 +439,7 @@ int main() {
     test_activation_and_loads(tree);
     test_concurrent_first_start(make_tree(base / "concurrent", true));
     test_preload_failure(make_tree(base / "preload", true));
+    test_runtime_report(make_tree(base / "report", true));
 
     fs::remove_all(base);
     std::puts("proxy_runtime_test PASS");

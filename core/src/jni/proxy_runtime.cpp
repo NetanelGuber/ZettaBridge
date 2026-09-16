@@ -13,6 +13,7 @@
 #include "zb/host_jni.h"
 #include "zb/library_protocol.h"
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -189,6 +190,7 @@ bool ProxyRuntime::activate_plugin(JniBackend::Env env, const std::string& plugi
         target_sdk_ = target_sdk;
         options_ = std::move(options);
         log("guest JNI runtime: plugin %s activated (targetSdk %u)", root.c_str(), target_sdk);
+        runtime_report().note_plugin(root, target_sdk);
     }
     return true;
 }
@@ -199,6 +201,7 @@ ProxyLoadResult ProxyRuntime::fail_locked(const std::string& key, const std::str
     entry.error = "ZettaBridge cannot load " + library + " (proxy " + key + "): " + detail;
     last_error_ = entry.error;
     log("%s", entry.error.c_str());
+    runtime_report().note_proxy_failed(library, detail);
     cv_.notify_all();
     return {false, 0, entry.error};
 }
@@ -273,6 +276,7 @@ ProxyLoadResult ProxyRuntime::on_proxy_loaded(JniBackend::Env env, const std::st
     log("guest JNI library %s loaded: %zu natives bound, %zu classes skipped, JNI version %s",
         location.guest_library.c_str(), report.bound_methods, report.skipped_classes,
         hex_version(report.jni_version).c_str());
+    runtime_report().note_proxy_loaded(location.library, report.jni_version);
     cv_.notify_all();
     return {true, report.jni_version, {}};
 }

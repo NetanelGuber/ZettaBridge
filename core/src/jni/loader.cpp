@@ -11,6 +11,7 @@
 #include "zb/host_jni.h"
 #include "zb/jni_mangle.h"
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -24,6 +25,11 @@ constexpr std::int32_t kJniVersion16 = 0x00010006;
 bool supported_version(std::int32_t version) {
     return version == kJniVersion11 || version == kJniVersion12 || version == kJniVersion14 ||
            version == kJniVersion16;
+}
+
+std::string base_name(const std::string& path) {
+    const std::size_t slash = path.rfind('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
 bool matches_arguments(const std::string& signature, const std::optional<std::string>& arguments) {
@@ -125,6 +131,7 @@ JniLoadReport JniLoader::load(JniBackend::Env env, const std::string& path,
     }
 
     if (has_onload) {
+        const std::string library = base_name(path);
         std::string symbol_error;
         const std::uint32_t onload =
             host_jni_.find_symbol_on_current(env, report.guest_handle, "JNI_OnLoad", symbol_error);
@@ -139,21 +146,25 @@ JniLoadReport JniLoader::load(JniBackend::Env env, const std::string& path,
                 return call;
             });
         if (!result) {
+            runtime_report().note_jni_onload(library, false, 0);
             report.error = "guest JNI_OnLoad call failed";
             return report;
         }
         if (backend_.exception_check(env)) {
+            runtime_report().note_jni_onload(library, false, 0);
             report.error = "guest JNI_OnLoad left a pending Java exception";
             return report;
         }
         report.jni_version = static_cast<std::int32_t>(result->guest.r0);
         if (!supported_version(report.jni_version)) {
+            runtime_report().note_jni_onload(library, false, report.jni_version);
             report.error = "guest JNI_OnLoad returned unsupported JNI version 0x";
             char suffix[9];
             std::snprintf(suffix, sizeof suffix, "%08x", static_cast<std::uint32_t>(report.jni_version));
             report.error += suffix;
             return report;
         }
+        runtime_report().note_jni_onload(library, true, report.jni_version);
     }
 
     report.ok = true;

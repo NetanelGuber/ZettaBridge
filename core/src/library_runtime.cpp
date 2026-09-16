@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -374,6 +375,7 @@ bool LibraryRuntime::start(const LibraryRuntimeOptions& options, std::string& er
     if (!options.preload.empty()) argv.push_back(options.preload);
     impl->runner = std::thread([impl, argv, options] {
         const int status = impl->process.run(options.zbhost, argv, options.guest_environment);
+        runtime_report().note_guest_exit(exit_message(status));
         std::deque<std::shared_ptr<Command>> pending;
         {
             std::lock_guard<std::mutex> lock(impl->mutex);

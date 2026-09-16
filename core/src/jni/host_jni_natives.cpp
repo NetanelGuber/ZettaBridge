@@ -7,6 +7,7 @@
 
 #include "zb/jni_shorty.h"
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -73,7 +74,12 @@ std::int32_t HostJni::register_native(JniBackend::Env env, JniBackend::Ref cls, 
     }
     const std::int32_t rc =
         jni.backend.register_native(env, cls, name, descriptor.c_str(), native_thunk_address(static_cast<std::uint32_t>(slot)));
-    if (rc != 0) jni.slots.release(static_cast<std::uint32_t>(slot));
+    if (rc != 0) {
+        jni.slots.release(static_cast<std::uint32_t>(slot));
+        return rc;
+    }
+    // Counts both statically named Java_* exports and guest RegisterNatives.
+    runtime_report().note_registered_native();
     return rc;
 }
 

@@ -22,6 +22,7 @@
 #include "zb/elf_loader.h"
 #include "zb/initial_stack.h"
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 #include "zb/syscalls.h"
 
 namespace zb {
@@ -170,6 +171,7 @@ Process::~Process() = default;
 void Process::request_exit(int status) {
     exit_status_ = status;
     exiting_ = true;
+    runtime_report().note_guest_exit("guest exited with status " + std::to_string(status));
 }
 
 void Process::invalidate(std::uint32_t addr, std::uint32_t len) {
@@ -457,10 +459,13 @@ bool Process::dispatch_stop(GuestThread& thread, const Stop& stop) {
         if ((stop.swi & 0xFF0000u) == kHostCallBase) {
             const std::uint32_t index = stop.swi & 0xFFFFu;
             if (host_call_handler_ && host_call_handler_(index, thread)) return !exiting_;
+            const auto [library, name] = host_call_name(index);
             if (first_time(kSeenHostCall | index)) {
-                const auto [library, name] = host_call_name(index);
                 log("host call %s:%s is not implemented yet", library, name);
             }
+            // The guest keeps running with r0 = 0; the report is the only record that survives a
+            // device run, because OxygenOS drops our logcat output.
+            runtime_report().note_unimplemented_host_call(index, library, name);
             thread.regs()[0] = 0;
             return true;
         }
@@ -583,11 +588,17 @@ void Process::exit_host_process() {
 }
 
 void Process::crash_report(const Stop& stop, GuestThread& thread) const {
+    char summary[192];
     if (stop.kind == StopKind::MemoryFault) {
-        log("guest SIGSEGV: %s of 0x%08x, pc 0x%08x", stop.fault_write ? "write" : "read", stop.fault_addr, stop.pc);
+        std::snprintf(summary, sizeof summary, "guest SIGSEGV: %s of 0x%08x, pc 0x%08x",
+                      stop.fault_write ? "write" : "read", stop.fault_addr, stop.pc);
     } else {
-        log("guest SIGILL: %s at pc 0x%08x", exception_name(stop.exception), stop.pc);
+        std::snprintf(summary, sizeof summary, "guest SIGILL: %s at pc 0x%08x", exception_name(stop.exception),
+                      stop.pc);
     }
+    log("%s", summary);
+    // Recorded before request_exit, so the crash and not the exit status reaches the report.
+    runtime_report().note_guest_exit(std::string(summary) + " in " + describe_address(stop.pc));
     const auto& r = thread.regs();
     for (int i = 0; i < 16; i += 4) {
         log("  r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x", i, r[i], i + 1, r[i + 1], i + 2, r[i + 2], i + 3, r[i + 3]);

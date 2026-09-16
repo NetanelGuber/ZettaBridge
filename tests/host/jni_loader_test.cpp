@@ -8,6 +8,7 @@
 #include "zb/jni_loader.h"
 #include "zb/library_protocol.h"
 #include "zb/library_runtime.h"
+#include "zb/runtime_report.h"
 
 namespace {
 
@@ -52,8 +53,13 @@ int main(int argc, char** argv) {
               env, library(argv[3], "lib-does-not-exist.so"), ZB_GUEST_RTLD_NOW, error) == 0);
     CHECK(!error.empty());
     zb::JniLoader loader(*host_jni, *vm);
+    zb::RuntimeReport& report = zb::runtime_report();
+    report.clear();
     const auto loaded = loader.load(env, library(argv[3], "libzbloadprobe.so"), ZB_GUEST_RTLD_NOW);
     CHECK(loaded.ok);
+    // Every bound native and every guest JNI_OnLoad reaches the runtime report.
+    CHECK(report.registered_natives() == loaded.bound_methods);
+    CHECK(report.jni_onload_calls() == 1);
     CHECK(loaded.bound_methods == 4 && loaded.skipped_classes == 1);
     CHECK(loaded.jni_version == 0x00010006);
     CHECK(vm->native_function("zb/Load", "shortExport", "()I") != nullptr);
@@ -83,9 +89,12 @@ int main(int argc, char** argv) {
 
     const auto no_onload = loader.load(env, library(argv[3], "libzbloadnoonload.so"), ZB_GUEST_RTLD_NOW);
     CHECK(no_onload.ok && no_onload.jni_version == 0x00010006);
+    // A library without JNI_OnLoad is not counted as one that ran.
+    CHECK(report.jni_onload_calls() == 1);
 
     const auto bad_version = loader.load(env, library(argv[3], "libzbloadbad.so"), ZB_GUEST_RTLD_NOW);
     CHECK(!bad_version.ok && bad_version.error.find("unsupported JNI version") != std::string::npos);
+    CHECK(report.jni_onload_calls() == 2);
 
     const auto unknown = loader.load(env, library(argv[3], "libzbloadunknown.so"), ZB_GUEST_RTLD_NOW);
     CHECK(!unknown.ok && unknown.error.find("no declared native") != std::string::npos);
@@ -95,6 +104,12 @@ int main(int argc, char** argv) {
     CHECK(!rejected.ok && rejected.error.find("RegisterNatives") != std::string::npos);
     CHECK(vm->exception_check(env));
     vm->exception_clear(env);
+
+    const std::string report_text = report.text();
+    CHECK(report_text.find("jni-onload: libzbloadprobe.so ok jni=0x00010006") != std::string::npos);
+    CHECK(report_text.find("jni-onload: libzbloadbad.so failed") != std::string::npos);
+    CHECK(report_text.find("registered-natives: " + std::to_string(report.registered_natives())) !=
+          std::string::npos);
 
     CHECK(frame.close() == 0);
     CHECK(vm->errors().empty());

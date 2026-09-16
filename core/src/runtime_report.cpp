@@ -1,0 +1,335 @@
+#include "zb/runtime_report.h"
+
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <utility>
+
+#include "zb/log.h"
+
+namespace zb {
+
+namespace {
+
+// One line per record: newlines and other control characters would break the "key: value"
+// layout that makes the report diff-friendly.
+std::string one_line(const std::string& text, std::size_t limit) {
+    std::string out;
+    out.reserve(text.size() < limit ? text.size() : limit);
+    for (const char c : text) {
+        if (out.size() >= limit) {
+            out += "...";
+            break;
+        }
+        out += (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) ? ' ' : c;
+    }
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
+std::string hex_version(std::int32_t version) {
+    char text[11];
+    std::snprintf(text, sizeof text, "0x%08x", static_cast<std::uint32_t>(version));
+    return text;
+}
+
+void append_count(std::string& out, const char* key, std::uint64_t value) {
+    out += key;
+    out += ": ";
+    out += std::to_string(value);
+    out += '\n';
+}
+
+}  // namespace
+
+std::shared_ptr<RuntimeReport::Observer> RuntimeReport::take_observer() const {
+    return observer_;
+}
+
+void RuntimeReport::set_observer(Observer observer) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    observer_ = observer ? std::make_shared<Observer>(std::move(observer)) : nullptr;
+}
+
+void RuntimeReport::note_plugin(const std::string& plugin_root, std::uint32_t target_sdk) {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        plugin_root_ = one_line(plugin_root, kMaxDetail);
+        target_sdk_ = target_sdk;
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
+void RuntimeReport::note_unimplemented_host_call(std::uint32_t index, const char* library, const char* function) {
+    bool structural = false;
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++host_call_total_;
+        HostCall* found = nullptr;
+        for (HostCall& entry : host_calls_) {
+            if (entry.index == index) {
+                found = &entry;
+                break;
+            }
+        }
+        if (found != nullptr) {
+            ++found->count;
+        } else {
+            ++distinct_host_calls_;
+            structural = true;
+            if (host_calls_.size() < kMaxDistinctHostCalls) {
+                host_calls_.push_back(HostCall{index, library != nullptr ? library : "?",
+                                               function != nullptr ? function : "?", 1});
+            }
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(structural);
+}
+
+void RuntimeReport::note_proxy_loaded(const std::string& library, std::int32_t jni_version) {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++proxy_load_total_;
+        if (proxy_loads_.size() < kMaxLibraries) {
+            proxy_loads_.push_back(Load{one_line(library, kMaxDetail), true, jni_version, {}});
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
+void RuntimeReport::note_proxy_failed(const std::string& library, const std::string& error) {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++proxy_failure_total_;
+        if (proxy_loads_.size() < kMaxLibraries) {
+            proxy_loads_.push_back(Load{one_line(library, kMaxDetail), false, 0, one_line(error, kMaxDetail)});
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
+void RuntimeReport::note_jni_onload(const std::string& library, bool ok, std::int32_t jni_version) {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++onload_total_;
+        if (onloads_.size() < kMaxLibraries) {
+            onloads_.push_back(Load{one_line(library, kMaxDetail), ok, jni_version, {}});
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
+void RuntimeReport::note_registered_native() {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++registered_natives_;
+        observer = take_observer();
+    }
+    if (observer) (*observer)(false);
+}
+
+void RuntimeReport::note_guest_exit(const std::string& reason) {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!exit_reason_.empty()) return;
+        exit_reason_ = one_line(reason, kMaxDetail);
+        if (exit_reason_.empty()) exit_reason_ = "unknown";
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
+std::size_t RuntimeReport::unimplemented_host_calls() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return static_cast<std::size_t>(host_call_total_);
+}
+
+std::size_t RuntimeReport::proxy_loads() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return proxy_load_total_;
+}
+
+std::size_t RuntimeReport::jni_onload_calls() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return onload_total_;
+}
+
+std::size_t RuntimeReport::registered_natives() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return static_cast<std::size_t>(registered_natives_);
+}
+
+std::string RuntimeReport::first_unimplemented_host_call() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (host_calls_.empty()) return {};
+    return std::string(host_calls_.front().library) + " " + host_calls_.front().function;
+}
+
+std::string RuntimeReport::text() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::string out = "zettabridge-runtime-report 1\n";
+    out += "plugin: ";
+    out += plugin_root_.empty() ? "(none)" : plugin_root_;
+    if (!plugin_root_.empty()) out += " targetSdk " + std::to_string(target_sdk_);
+    out += '\n';
+
+    append_count(out, "proxy-loads", proxy_load_total_);
+    append_count(out, "proxy-failures", proxy_failure_total_);
+    for (const Load& load : proxy_loads_) {
+        out += load.ok ? "proxy-loaded: " : "proxy-failed: ";
+        out += load.library;
+        if (load.ok) {
+            out += " jni=" + hex_version(load.jni_version);
+        } else {
+            out += ' ';
+            out += load.error;
+        }
+        out += '\n';
+    }
+    if (proxy_load_total_ + proxy_failure_total_ > proxy_loads_.size()) {
+        append_count(out, "proxy-more", proxy_load_total_ + proxy_failure_total_ - proxy_loads_.size());
+    }
+
+    append_count(out, "jni-onload-calls", onload_total_);
+    for (const Load& load : onloads_) {
+        out += "jni-onload: ";
+        out += load.library;
+        out += load.ok ? " ok jni=" + hex_version(load.jni_version) : std::string(" failed");
+        out += '\n';
+    }
+    if (onload_total_ > onloads_.size()) append_count(out, "jni-onload-more", onload_total_ - onloads_.size());
+
+    append_count(out, "registered-natives", registered_natives_);
+    append_count(out, "unimplemented-host-calls", host_call_total_);
+    append_count(out, "unimplemented-distinct", distinct_host_calls_);
+    out += "first-unimplemented: ";
+    if (host_calls_.empty()) {
+        out += "(none)";
+    } else {
+        out += host_calls_.front().library;
+        out += ' ';
+        out += host_calls_.front().function;
+    }
+    out += '\n';
+    for (const HostCall& entry : host_calls_) {
+        out += "unimplemented: ";
+        out += entry.library;
+        out += ' ';
+        out += entry.function;
+        out += " x" + std::to_string(entry.count);
+        out += '\n';
+    }
+    if (distinct_host_calls_ > host_calls_.size()) {
+        append_count(out, "unimplemented-more", distinct_host_calls_ - host_calls_.size());
+    }
+
+    out += "guest-exit: ";
+    out += exit_reason_.empty() ? "(none)" : exit_reason_;
+    out += '\n';
+    return out;
+}
+
+void RuntimeReport::clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    observer_ = nullptr;
+    plugin_root_.clear();
+    target_sdk_ = 0;
+    host_calls_.clear();
+    distinct_host_calls_ = 0;
+    host_call_total_ = 0;
+    proxy_loads_.clear();
+    proxy_load_total_ = 0;
+    proxy_failure_total_ = 0;
+    onloads_.clear();
+    onload_total_ = 0;
+    registered_natives_ = 0;
+    exit_reason_.clear();
+}
+
+RuntimeReport& runtime_report() {
+    // Process-lifetime: notes arrive from guest threads that are never torn down, so this must
+    // outlive every static destructor.
+    static RuntimeReport* report = new RuntimeReport();
+    return *report;
+}
+
+namespace {
+
+// Rewrites one file from a RuntimeReport. Shared by the observer and owned by it.
+class ReportWriter {
+public:
+    using Clock = std::chrono::steady_clock;
+
+    ReportWriter(RuntimeReport& report, std::string path, std::chrono::milliseconds min_interval)
+        : report_(report), path_(std::move(path)), temporary_(path_ + ".tmp"), min_interval_(min_interval) {}
+
+    bool write_now() {
+        const std::string text = report_.text();
+        const int fd = ::open(temporary_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd < 0) return false;
+        std::size_t written = 0;
+        while (written < text.size()) {
+            const ssize_t n = ::write(fd, text.data() + written, text.size() - written);
+            if (n <= 0) {
+                if (errno == EINTR) continue;
+                ::close(fd);
+                ::unlink(temporary_.c_str());
+                return false;
+            }
+            written += static_cast<std::size_t>(n);
+        }
+        ::fsync(fd);
+        ::close(fd);
+        if (::rename(temporary_.c_str(), path_.c_str()) != 0) {
+            ::unlink(temporary_.c_str());
+            return false;
+        }
+        return true;
+    }
+
+    void operator()(bool structural) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const Clock::time_point now = Clock::now();
+        if (!structural && now - last_ < min_interval_) return;
+        last_ = now;
+        write_now();
+    }
+
+private:
+    RuntimeReport& report_;
+    std::string path_;
+    std::string temporary_;
+    std::chrono::milliseconds min_interval_;
+    std::mutex mutex_;
+    Clock::time_point last_ = Clock::time_point::min();
+};
+
+}  // namespace
+
+bool write_runtime_report_to(RuntimeReport& report, const std::string& path,
+                             std::chrono::milliseconds min_interval) {
+    auto writer = std::make_shared<ReportWriter>(report, path, min_interval);
+    if (!writer->write_now()) {
+        log("cannot write the runtime report to %s: %s", path.c_str(), std::strerror(errno));
+        return false;
+    }
+    report.set_observer([writer](bool structural) { (*writer)(structural); });
+    return true;
+}
+
+}  // namespace zb

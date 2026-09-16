@@ -25,6 +25,7 @@ add_library(zbcore STATIC
     src/log.cpp
     src/proc_files.cpp
     src/process.cpp
+    src/runtime_report.cpp
     src/signals.cpp
     src/syscalls.cpp
     src/zbridge_c_api.cpp

@@ -9,6 +9,7 @@
 
 #include "check.h"
 #include "zb/process.h"
+#include "zb/runtime_report.h"
 
 namespace {
 
@@ -60,6 +61,7 @@ void check_borrower(zb::Process& process, zb::GuestThread& carrier) {
 
 int main(int argc, char** argv) {
     CHECK(argc == 2);
+    zb::runtime_report().clear();
     zb::Process process;
     bool called = false;
     process.set_host_call_handler([&](std::uint32_t index, zb::GuestThread& thread) {
@@ -72,6 +74,17 @@ int main(int argc, char** argv) {
     });
     CHECK(process.run(argv[1], {argv[1]}, {}) == 0);
     CHECK(called);
+
+    // The declined host call kept guest semantics (r0 = 0, the guest ran on to exit 0) and is the
+    // only record a silent device run leaves behind.
+    zb::RuntimeReport& report = zb::runtime_report();
+    CHECK(report.first_unimplemented_host_call() == "libGLESv2.so glCreateProgram");
+    CHECK(report.unimplemented_host_calls() == 1);
+    const std::string text = report.text();
+    CHECK(text.find("first-unimplemented: libGLESv2.so glCreateProgram") != std::string::npos);
+    CHECK(text.find("unimplemented: libGLESv2.so glCreateProgram x1") != std::string::npos);
+    CHECK(text.find("guest-exit: guest exited with status 0") != std::string::npos);
+
     std::puts("host_call_dispatch_test PASS");
     return 0;
 }
