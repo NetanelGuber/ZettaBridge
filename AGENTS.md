@@ -20,11 +20,11 @@ English and ASCII only.
 - **Phase 4c done (2026-09-15).** Guest `JNIEnv`/`JavaVM`, host JNI calls against
   `JniBackend`, Java -> guest dispatch, `RegisterNatives`, attach/detach; committed directly
   to `phase1-zbrun` (see "Phase 4c done" below). Host tests are 18/18. Next is plan 4d.
-- **Phase 4d Tasks 1-7 done, and the Tasks 3-4 review is closed** (`19bc37a`, see the last section
-  of this file). ELF fixups/symbol scanning, JNI loader, ART backend, standalone proxy,
-  process-lifetime runtime, launcher integration and T7 on real ART are implemented, and one
-  unresolvable Java type no longer fails a whole library load. Next is Task 8, the Orange Roulette
-  smoke launch. Host tests are 30/30.
+- **Phase 4 is complete and accepted on the OnePlus 13.** See `docs/phase4-acceptance.md`.
+- **Phase 5 Task 1 is done (2026-09-16).** The pinned GLES registry, generator, typed backend
+  seam, `HostGl`, mock and the 79 direct pointerless handlers are implemented. The two remaining
+  pointerless calls (`glDrawArrays`, `glGetString`) correctly remain semantic stubs. Host tests
+  are 32/32. Next is Phase 5 Task 2, registry-driven pointer marshaling.
 - Work continues on local branch `codex/phase4d-launcher`, based on `phase1-zbrun`.
 - Commit locally after every task and update this file. Push only with the user's agreement.
 
@@ -716,3 +716,27 @@ Traps the prototype found, already written into the plan:
 borrowed `GLThread`'s carrier, where the EGL context is current. Only JNI has exercised that
 path. Plan Task 9 checks it first; if it is wrong, everything fails on device and nothing fails
 on this machine.
+
+## Phase 5 Task 1 done (2026-09-16)
+
+- Implemented in this commit on `codex/phase4d-launcher`: pinned Khronos `gl.xml` (SHA-256
+  `b9ca2cfa5c676e901c20d34af3407f1687cde0f1336a5ff7a8974d04c7494ad3`),
+  `tools/gen_gles.py`, generated host-call constants/dispatch/manual list/backend seam,
+  `HostGl`, `MockGles`, `gles_marshal_test` and `gen_gles_check`.
+- The generator verifies exactly 142 GLES 2.0 registry commands, exactly 142 NDK declarations,
+  the empty symmetric difference, 81 pointerless declarations, and exact agreement with the
+  committed guest-stub indices. Builds never use the network.
+- `HostGl` owns only indices 0-141 and leaves 142-160 to Task 7's `HostAssets`. It captures
+  `r0-r3` before clearing the result, reads later words from guest `sp`, bit-preserves floats,
+  and sign-extends the one-word guest `GLintptr` / `GLsizeiptr` values.
+- Plan corrections recorded in the spec and plan: `HostGl` must not swallow the asset range;
+  `glDrawArrays` and `glGetString` are pointerless by parameter shape but are two of the 11
+  semantic handlers. Task 1 therefore has 79 direct backend calls and two safe manual stubs,
+  not 81 unsafe direct calls.
+- TDD evidence: `gles_marshal_test` first failed because `zb/gl_hostcalls.h` did not exist, then
+  passed with coverage of all 81 pointerless dispatches, stack arguments, float bits, widening,
+  returns, safe stubs and the asset boundary.
+- Fresh verification: `tools/gen_gles.py --check` and `tools/gen_jni.py --check` pass; host
+  32/32; guest 9/9; Android arm64 `zbridge` links.
+- **NEXT:** Phase 5 Task 2 in `docs/superpowers/plans/2026-09-16-phase5-gles.md`: generate
+  bounds-checked marshaling for registry `len=` pointer parameters and add `gles_pointer_test`.

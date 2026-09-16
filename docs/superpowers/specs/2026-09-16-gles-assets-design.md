@@ -93,8 +93,8 @@ real libGLESv2.so of the device, on the calling host thread
 ```
 
 - **`HostGl` is chained into `LibraryRuntime::set_host_call_handler`** in front of (or
-  behind) `HostJni`, exactly as `HostJni` is today. It claims indices 0-160 and returns
-  false for everything else. A single chain function in the owner (`ProxyRuntime` on
+  behind) `HostJni`, exactly as `HostJni` is today. It claims GLES indices 0-141 and returns
+  false for everything else; `HostAssets` claims 142-160. A single chain function in the owner (`ProxyRuntime` on
   Android, the test fixture on this machine) calls `HostJni::handle_host_call` first and
   `HostGl::handle_host_call` second; the ranges do not overlap, so the order is free.
 - **`HostGl` is process-lifetime**, like `HostJni` and `LibraryRuntime`: one instance, no
@@ -116,6 +116,7 @@ needs the network) plus `GLES2/gl2.h` from the NDK, and writes committed files:
 |---|---|
 | `core/src/gen/gl_dispatch.inc` | one C++ handler per mechanical function plus the `switch` over host-call indices |
 | `core/include/zb/gl_hostcalls.h` | `ZB_GL_HC_<name>` index constants, shared by host and tests |
+| `core/include/zb/gl_backend.h` | portable GLES typedefs and the typed `GlBackend` seam |
 | `core/src/gen/gl_manual.inc` | forward declarations of the hand-written handlers, so a missing one is a link error |
 
 The index order is taken from `tools/gen_stubs.py`, not recomputed, and the generator
@@ -396,7 +397,7 @@ explicitly *not* part of this acceptance; a silent, non-interactive intro screen
 | `core/src/gen/gl_dispatch.inc`, `core/include/zb/gl_hostcalls.h` | generated | the 131 mechanical handlers and the index constants |
 | `core/src/gl/gl_manual.cpp` | C++ | the 11 hand-written handlers and `gl_pname_count` |
 | `core/src/gl/gl_client_arrays.cpp` | C++ | attribute state and draw-time materialization |
-| `core/include/zb/gl_backend.h` | C++ | the driver seam |
+| `core/include/zb/gl_backend.h` | generated C++ | the driver seam and portable GLES types |
 | `core/android/gl_driver_backend.cpp` | C++ | the real GLES backend (Android build) |
 | `core/include/zb/host_assets.h`, `core/src/gl/host_assets.cpp` | C++ | `HostAssets`, asset handles |
 | `core/android/asset_backend.cpp` | C++ | the real `AAssetManager` backend |
