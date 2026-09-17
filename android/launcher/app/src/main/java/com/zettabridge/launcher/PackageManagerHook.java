@@ -1,6 +1,7 @@
 package com.zettabridge.launcher;
 
 import android.content.ComponentName;
+import android.content.Intent;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
@@ -8,6 +9,7 @@ import android.content.pm.ComponentInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
+import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.util.Log;
@@ -17,6 +19,8 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Package manager virtualization for the :guest process. Plugins run under the launcher's package
@@ -91,6 +95,16 @@ final class PackageManagerHook implements InvocationHandler {
                 Object component = pluginComponent(name, args[0]);
                 return component != null ? component : result;
             }
+            case "queryIntentActivities": {
+                // Explicit intents for a plugin activity: old AdMob refuses to show ads unless
+                // queryIntentActivities finds AdActivity with the right configChanges.
+                ResolveInfo resolved = pluginActivityResolve(args[0]);
+                return resolved != null ? withResolved(result, resolved) : result;
+            }
+            case "resolveIntent": {
+                if (result != null) return result;
+                return pluginActivityResolve(args[0]);
+            }
             case "getApplicationInfo":
                 if (hostPackage.equals(args[0]) && result instanceof ApplicationInfo) {
                     return withPluginMetaData((ApplicationInfo) result);
@@ -130,6 +144,38 @@ final class PackageManagerHook implements InvocationHandler {
         if (info instanceof ActivityInfo) return new ActivityInfo((ActivityInfo) info);
         if (info instanceof ProviderInfo) return new ProviderInfo((ProviderInfo) info);
         return info;
+    }
+
+    private ResolveInfo pluginActivityResolve(Object arg) {
+        if (!(arg instanceof Intent)) return null;
+        Object info = pluginComponent("getActivityInfo", ((Intent) arg).getComponent());
+        if (!(info instanceof ActivityInfo)) return null;
+        ResolveInfo resolved = new ResolveInfo();
+        resolved.activityInfo = (ActivityInfo) info;
+        return resolved;
+    }
+
+    /** A query result (a ParceledListSlice, or a List on old releases) that holds `resolved` when it was empty. */
+    private static Object withResolved(Object result, ResolveInfo resolved) {
+        try {
+            if (result instanceof List) {
+                if (!((List<?>) result).isEmpty()) return result;
+                List<ResolveInfo> list = new ArrayList<>();
+                list.add(resolved);
+                return list;
+            }
+            Class<?> slice = Class.forName("android.content.pm.ParceledListSlice");
+            if (result != null && slice.isInstance(result)) {
+                List<?> current = (List<?>) Reflect.method(slice, "getList").invoke(result);
+                if (current != null && !current.isEmpty()) return result;
+            }
+            List<ResolveInfo> list = new ArrayList<>();
+            list.add(resolved);
+            return slice.getConstructor(List.class).newInstance(list);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            Log.w(TAG, "cannot rewrite an activity query: " + e);
+            return result;
+        }
     }
 
     private ApplicationInfo withPluginMetaData(ApplicationInfo hostInfo) {
