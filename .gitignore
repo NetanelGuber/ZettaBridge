@@ -30,3 +30,4 @@ Screenshot_*.jpg
 2.jpg
 3.jpg
 crash.txt
+tools/__pycache__/
