@@ -6,6 +6,7 @@ add_library(zbcore STATIC
     src/elf_loader.cpp
     src/guest_memory.cpp
     src/guest_thread.cpp
+    src/gl/gl_diagnostics.cpp
     src/gl/gl_manual.cpp
     src/gl/host_gl.cpp
     src/initial_stack.cpp

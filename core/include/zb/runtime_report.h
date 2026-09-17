@@ -53,6 +53,10 @@ public:
     void note_gl_egl_context(bool current);
     // The first glGetError() result that is not GL_NO_ERROR. Recorded once.
     void note_gl_error(const char* function, std::uint32_t error);
+    // Free-form GL visibility diagnostics (black-screen hunt): one "gl-<key>: <value>" line per
+    // key, in first-note order. A known key keeps its value unless `overwrite` is set. At most
+    // kMaxGlDetails keys; later new keys are dropped.
+    void note_gl_detail(const std::string& key, const std::string& value, bool overwrite);
 
     std::size_t unimplemented_host_calls() const;
     std::size_t proxy_loads() const;
@@ -108,6 +112,8 @@ private:
     bool gl_error_known_ = false;
     std::string gl_error_function_;
     std::uint32_t gl_error_value_ = 0;
+    static constexpr std::size_t kMaxGlDetails = 48;
+    std::vector<std::pair<std::string, std::string>> gl_details_;
 };
 
 // The one report of this process.

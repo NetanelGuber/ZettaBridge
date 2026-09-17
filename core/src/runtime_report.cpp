@@ -1,5 +1,7 @@
 #include "zb/runtime_report.h"
 
+#include <algorithm>
+
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -195,6 +197,27 @@ void RuntimeReport::note_gl_error(const char* function, std::uint32_t error) {
     if (observer) (*observer)(true);
 }
 
+void RuntimeReport::note_gl_detail(const std::string& key, const std::string& value, bool overwrite) {
+    bool structural = false;
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const std::string line = one_line(value, 600);
+        auto found = std::find_if(gl_details_.begin(), gl_details_.end(),
+                                  [&](const auto& entry) { return entry.first == key; });
+        if (found != gl_details_.end()) {
+            if (!overwrite || found->second == line) return;
+            found->second = line;
+        } else {
+            if (gl_details_.size() >= kMaxGlDetails) return;
+            gl_details_.emplace_back(one_line(key, 64), line);
+            structural = true;
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(structural);
+}
+
 std::size_t RuntimeReport::unimplemented_host_calls() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return static_cast<std::size_t>(host_call_total_);
@@ -309,6 +332,7 @@ std::string RuntimeReport::text() const {
         out += gl_error_function_ + " " + hex;
     }
     out += '\n';
+    for (const auto& [key, value] : gl_details_) out += "gl-" + key + ": " + value + '\n';
     return out;
 }
 
@@ -335,6 +359,7 @@ void RuntimeReport::clear() {
     gl_error_known_ = false;
     gl_error_function_.clear();
     gl_error_value_ = 0;
+    gl_details_.clear();
 }
 
 RuntimeReport& runtime_report() {

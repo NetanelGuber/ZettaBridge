@@ -67,6 +67,7 @@ void check_empty_report() {
     CHECK(report.first_unimplemented_host_call().empty());
     CHECK(report.unimplemented_host_calls() == 0);
     CHECK(line_with(text, "gl-calls:") == "gl-calls: 0");
+    CHECK(text.find("gl-draws:") == std::string::npos);
     CHECK(line_with(text, "gl-first-call:") == "gl-first-call: (none)");
     CHECK(line_with(text, "gl-egl-context-current:") == "gl-egl-context-current: (unknown)");
     CHECK(line_with(text, "gl-first-error:") == "gl-first-error: (none)");
@@ -95,9 +96,18 @@ void check_gl_section() {
     text = report.text();
     CHECK(line_with(text, "gl-first-error:") == "gl-first-error: glGetError 0x0502");
 
+    report.note_gl_detail("draws", "1", false);
+    report.note_gl_detail("draws", "2", false);
+    report.note_gl_detail("viewport", "0 0 10 10", false);
+    report.note_gl_detail("viewport", "0 0 20 20", true);
+    text = report.text();
+    CHECK(line_with(text, "gl-draws:") == "gl-draws: 1");
+    CHECK(line_with(text, "gl-viewport:") == "gl-viewport: 0 0 20 20");
+
     report.clear();
     text = report.text();
     CHECK(line_with(text, "gl-calls:") == "gl-calls: 0");
+    CHECK(text.find("gl-draws:") == std::string::npos);
     CHECK(line_with(text, "gl-first-call:") == "gl-first-call: (none)");
     CHECK(line_with(text, "gl-egl-context-current:") == "gl-egl-context-current: (unknown)");
     CHECK(line_with(text, "gl-first-error:") == "gl-first-error: (none)");
