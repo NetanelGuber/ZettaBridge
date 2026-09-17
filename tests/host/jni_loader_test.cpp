@@ -106,7 +106,8 @@ int main(int argc, char** argv) {
     CHECK(report.jni_onload_calls() == 2);
 
     const auto unknown = loader.load(env, library(argv[3], "libzbloadunknown.so"), ZB_GUEST_RTLD_NOW);
-    CHECK(!unknown.ok && unknown.error.find("no declared native") != std::string::npos);
+    // An export with no matching declared native is skipped, as ART ignores unused exports.
+    CHECK(unknown.ok && unknown.skipped_exports == 1);
 
     vm->fail_native_registration("()I");
     const auto rejected = loader.load(env, library(argv[3], "libzbloadprobe.so"), ZB_GUEST_RTLD_NOW);

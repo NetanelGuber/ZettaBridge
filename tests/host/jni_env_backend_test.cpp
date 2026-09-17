@@ -549,7 +549,7 @@ void check_discovery(JNIEnv* env, zb::JniEnvBackend& backend, bool long_form_fas
     CHECK(fake.pending == nullptr);
 
     // Declared but not native, and not declared at all: Found with nothing to bind, which the
-    // loader reports as "no declared native matches export".
+    // loader skips as an unmatched export.
     found = lookup(backend, env, "zb/Natives", "plain", "(I)");
     CHECK(found.status == NativeLookupStatus::Found && found.methods.empty());
     found = lookup(backend, env, "zb/Natives", "absent", "(I)");

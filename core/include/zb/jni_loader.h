@@ -36,6 +36,7 @@ public:
 private:
     void log_missing_class_once(const std::string& name);
     void log_unresolvable_once(const std::string& symbol, const std::string& name);
+    void log_unmatched_once(const std::string& symbol);
 
     HostJni& host_jni_;
     JniBackend& backend_;

@@ -118,9 +118,9 @@ int main(int argc, char** argv) {
     CHECK(contains(bad.error, "libzbloadbad.so"));
 
     const auto unknown = runtime->on_proxy_loaded(env, proxy("libzbloadunknown.so"));
-    CHECK(!unknown.ok && contains(unknown.error, "no declared native"));
-    CHECK(runtime->load_error(proxy("libzbloadunknown.so")) &&
-          *runtime->load_error(proxy("libzbloadunknown.so")) == unknown.error);
+    // An export with no matching declared native is skipped; the library still loads.
+    CHECK(unknown.ok);
+    CHECK(!runtime->load_error(proxy("libzbloadunknown.so")));
     CHECK(!vm->exception_check(env));
 
     fs::remove_all(base);

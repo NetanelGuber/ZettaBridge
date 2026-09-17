@@ -71,6 +71,13 @@ void JniLoader::log_unresolvable_once(const std::string& symbol, const std::stri
     }
 }
 
+void JniLoader::log_unmatched_once(const std::string& symbol) {
+    std::lock_guard<std::mutex> lock(missing_mutex_);
+    if (unresolvable_exports_.insert(symbol).second) {
+        log("JNI loader: no declared native method matches %s; skipping it", symbol.c_str());
+    }
+}
+
 JniLoadReport JniLoader::load(JniBackend::Env env, const std::string& path,
                               std::uint32_t guest_flags) {
     JniLoadReport report;
@@ -125,9 +132,14 @@ JniLoadReport JniLoader::load(JniBackend::Env env, const std::string& path,
         std::erase_if(methods, [&](const DeclaredNativeMethod& method) {
             return !matches_arguments(method.signature, decoded->arguments);
         });
+        // An export with no matching native method is ignored, as ART does: it resolves natives
+        // lazily and never looks at unused exports. Shrunk (ProGuard) apps drop native methods
+        // their code never calls while the library still exports them (Flappy Bird's
+        // libandengine.so exports GLES20Fix.glDrawElements).
         if (methods.empty()) {
-            report.error = "no declared native matches export " + symbol;
-            return report;
+            log_unmatched_once(symbol);
+            ++report.skipped_exports;
+            continue;
         }
 
         std::string symbol_error;
