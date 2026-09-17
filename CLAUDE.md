@@ -34,6 +34,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   real ART backend, `libzbproxy.so`, process-lifetime guest JNI runtime, and launcher arm32
   import/class loading/runtime bundle. T7 passes on real ART on the OnePlus 13. Next are the
   remaining ART discovery review fix and Task 8 (Orange Roulette smoke test).
+- Phase 4 is accepted on the device (`docs/phase4-acceptance.md`).
+- **Phase 5 accepted on the OnePlus 13 (2026-09-17): Orange Roulette renders and is playable**
+  (warning screen, menu, gameplay; music plays). See `docs/phase5-acceptance.md`. The black
+  screen was texture uploads in `GL_BGRA_EXT`, silently rejected by the GL marshaling.
 - Work is on local branch `codex/phase4d-launcher`, based on `phase1-zbrun`.
 
 Private GitHub repo `ZailoxTT/ZettaBridge` (remote `origin`). Local `phase1-zbrun` tracks

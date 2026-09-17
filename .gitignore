@@ -26,3 +26,6 @@ Screenshot_*.jpg
 !android/launcher/gradlew
 !android/launcher/gradle/wrapper/gradle-wrapper.jar
 !android/launcher/gradle/wrapper/gradle-wrapper.properties
+1.jpg
+2.jpg
+3.jpg
