@@ -14,6 +14,7 @@
 #include "zb/host_assets.h"
 #include "zb/host_egl.h"
 #include "zb/host_gl.h"
+#include "zb/host_looper.h"
 #include "zb/host_native_window.h"
 #include "zb/host_platform_compat.h"
 #include "zb/jni_backend.h"
@@ -164,6 +165,7 @@ public:
     HostEgl* host_egl() { return host_egl_; }
     // nullptr unless a window_backend was passed to the constructor.
     HostNativeWindow* host_native_window() { return host_windows_; }
+    HostLooper* host_looper() { return host_looper_; }
     HostPlatformCompat* host_platform_compat() { return host_compat_; }
 
 protected:
@@ -180,6 +182,7 @@ private:
     HostAssets* host_assets_ = nullptr;
     HostEgl* host_egl_ = nullptr;
     HostNativeWindow* host_windows_ = nullptr;
+    HostLooper* host_looper_ = nullptr;
     HostPlatformCompat* host_compat_ = nullptr;
     JniLoader* loader_;
 };

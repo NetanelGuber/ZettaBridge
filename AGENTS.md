@@ -1178,3 +1178,22 @@ and explicitly keeps NativeActivity/input/configuration out of this phase.
 **NEXT:** execute Task 10 from
 `docs/superpowers/plans/2026-09-17-phase7a-native-surface.md` with RED before production code,
 update this file, and commit locally. Then execute Task 11 in its own commit.
+
+### Phase 7a Flutter ALooper Task 10 done
+
+Task 10 extracts all ALooper handling from `HostPlatformCompat` into the focused `HostLooper`.
+It supplies per-`GuestThread` opaque handles, reference tracking, real host fd polling,
+callback-less results with checked guest output pointers, add/replace/remove, timeout, and an
+internal eventfd for cross-thread wakeups. Registered guest fds are never closed; only internal
+wake fds belong to the bridge. `GuestJniEngine` always chains this handler before the remaining
+loader-only compatibility fallbacks.
+
+TDD evidence: `host_looper_test` first failed to compile because `zb/host_looper.h` did not
+exist. It now passes with real eventfds, two guest threads and mapped guest outputs. Focused
+`platform_compat_test` and `proxy_runtime_test` also pass. The callback-ready branch still
+returns `ALOOPER_POLL_ERROR` deliberately; Task 11 replaces that branch only after the translated
+arm32 callback probe is observed failing.
+
+**NEXT:** execute Task 11: add `libzblooperprobe.so`, observe RED against callback polling,
+dispatch the callback through `LibraryRuntime::call_on_current`, verify callback return-zero
+removal, update this file and commit locally.
