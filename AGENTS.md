@@ -1239,3 +1239,66 @@ Its ZIP contains the generated guest `libandroid.so` and the rebuilt arm64 `libz
 Last run report. Acceptance needs a visible Flutter frame, no guest exit, EGL activity/swaps,
 no thread mismatch and no unimplemented call. If a new first missing function appears, record it
 as a follow-up rather than declaring Phase 7a complete.
+
+## HANDOFF 2026-09-17 late: Flutter crashes in arm32 libc before EGL
+
+The Task 12 APK was installed and the user waited 15 seconds. The screen remained gray. This is
+the real result (the earlier all-zero report was read too soon):
+
+```text
+proxy-loads: 1
+proxy-failures: 0
+proxy-loaded: libflutter.so jni=0x00010004
+jni-onload-calls: 1
+jni-onload: libflutter.so ok jni=0x00010004
+registered-natives: 42
+unimplemented-host-calls: 0
+guest-exit: guest SIGSEGV: read of 0x0000000f, pc 0xfdb3c4c0 in libc.so offset 0x674c0
+gl-calls: 0
+egl-swaps: 0
+```
+
+Thus the loader, `JNI_OnLoad`, native registration and the new callback looper all advance
+without a missing host call. The next failure is inside the guest arm32 bionic before EGL/GLES.
+Do not reopen the ALooper fallback work unless new evidence points there.
+
+### Current evidence and single hypothesis
+
+Disassembly of `sysroot/system/lib/libc.so` places a Thumb `tbh [pc, r1, lsl #1]` at offset
+`0x673f8`; its table starts at `0x673fc`. The reported crash PC `0x674c0` is exactly the table
+halfword selected by `r1 == 98`, not an instruction. That entry is `0x007a`, so the architecturally
+correct branch destination is `0x673fc + 2 * 0x007a == 0x674f0`.
+
+Working hypothesis: either Dynarmic mishandles this PC-relative TBH case, or normal-mode fault-PC
+reporting is stale and a later fault inside `__vfwscanf` merely reports the table address. Do not
+patch `TableBranch` from this coincidence alone. The current implementation in
+`third_party/dynarmic/src/dynarmic/frontend/A32/translate/impl/thumb32_load_store_dual.cpp`
+appears correct on inspection (`PC() + 2 * ZeroExtend(ReadMemory16(...))`).
+
+### Roadmap for Claude/Codex
+
+1. Add a minimal translated arm32 Thumb regression that executes a PC-relative
+   `tbh [pc, index, lsl #1]`, selects a nontrivial/distant table entry (include index 98), and
+   returns a literal unique to the selected target. Exercise the real Dynarmic path, not a model
+   of the instruction. State the mutation it catches: branching to the table address/value rather
+   than `Align(PC, 2) + 2 * entry`. Observe RED before changing production code.
+2. If the regression is RED, reduce it until the failing condition is known, then make one
+   minimal Dynarmic fix and observe GREEN. The Dynarmic submodule already has the required
+   five-file baseline patch (precise faults, ARMv8 acquire/release instructions and CRC); preserve
+   it and do not stage a parent submodule-pointer change accidentally. Document any intentional
+   addition to that baseline.
+3. If the regression is GREEN, reject the TBH hypothesis. Make the launcher run this plugin with
+   `ZB_PRECISE_FAULTS=1` or add bounded register/fault-context fields to `RuntimeReport`, rebuild,
+   and rerun on the phone. Normal execution defaults to imprecise faults, so the current PC alone
+   cannot identify the faulting instruction conclusively.
+4. Once the real failing instruction and bad input are proven, add the smallest regression at
+   that boundary, implement one fix, run focused tests, then the full 46/46 host suite, 9/9 guest
+   suite, generators, Android links, launcher bundle and Gradle APK. Commit the completed task and
+   update this file.
+5. Phase 7a Task 10 remains unaccepted until Flutter renders a visible frame and the report shows
+   no guest exit, EGL context/window-surface activity and rising swaps.
+
+Current branch is `codex/phase4d-launcher`. The only dirty path before this handoff was the
+intentional existing `third_party/dynarmic` submodule baseline. The last known APK is
+`/sdcard/ZettaBridge-debug.apk`, SHA-256
+`956780e0caee29702a903b36c31ca13946cab1918f9d8ec1727d9dfe592ac047`.
