@@ -143,6 +143,21 @@ void check_egl_section() {
     CHECK(line_with(text, "egl-first-error:") == "egl-first-error: (none)");
 }
 
+void check_crash_section() {
+    zb::RuntimeReport report;
+    report.note_crash_detail("pc", "libc.so vaddr 0x674c0");
+    report.note_crash_detail("precise", "no");
+    report.note_crash_detail("precise", "yes");  // overwrites
+    std::string text = report.text();
+    CHECK(line_with(text, "crash-pc:") == "crash-pc: libc.so vaddr 0x674c0");
+    CHECK(line_with(text, "crash-precise:") == "crash-precise: yes");
+
+    report.clear();
+    text = report.text();
+    CHECK(text.find("crash-pc:") == std::string::npos);
+    CHECK(text.find("crash-precise:") == std::string::npos);
+}
+
 void check_unimplemented_host_calls() {
     zb::RuntimeReport report;
     // The first one in order is the one the user must read, however often the others repeat.
@@ -333,6 +348,7 @@ int main() {
     check_threads();
     check_gl_section();
     check_egl_section();
+    check_crash_section();
 
     fs::remove_all(dir);
     std::puts("runtime_report_test PASS");

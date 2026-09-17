@@ -59,6 +59,11 @@ public:
     // kMaxGlDetails keys; later new keys are dropped.
     void note_gl_detail(const std::string& key, const std::string& value, bool overwrite);
 
+    // Crash diagnostics (precise-fault hunt): one "crash-<key>: <value>" line per key, in
+    // first-note order, later notes of the same key overwriting the value. At most
+    // kMaxCrashDetails keys; later new keys are dropped.
+    void note_crash_detail(const std::string& key, const std::string& value);
+
     // EGL section (Phase 7a Task 7): proves or disproves that the guest built an EGL context and
     // surface and is presenting frames on the thread GL calls arrive on.
     // A created EGL object (context or window surface): one "egl-<key>: <value>" line per key,
@@ -136,6 +141,9 @@ private:
     std::uint32_t gl_error_value_ = 0;
     static constexpr std::size_t kMaxGlDetails = 96;
     std::vector<std::pair<std::string, std::string>> gl_details_;
+
+    static constexpr std::size_t kMaxCrashDetails = 32;
+    std::vector<std::pair<std::string, std::string>> crash_details_;
 
     std::vector<std::pair<std::string, std::string>> egl_objects_;
     bool egl_current_known_ = false;

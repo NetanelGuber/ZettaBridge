@@ -97,4 +97,13 @@ public final class ZBridge {
      * @throws IOException for a malformed ELF file or an I/O error
      */
     public static native String fixGuestLibrary(String path) throws IOException;
+
+    /**
+     * Sets ZB_PRECISE_FAULTS in this process's environment (setenv), so a memory fault stops at
+     * the exact faulting instruction with registers committed instead of at the end of the
+     * translated block. Diagnostic only: roughly 2x slower on integer code. Must be called before
+     * the guest runtime/Process for this plugin is constructed, since it is process-lifetime and
+     * reads the variable only once.
+     */
+    public static native void setPreciseFaults(boolean enabled);
 }

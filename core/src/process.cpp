@@ -611,6 +611,44 @@ void Process::crash_report(const Stop& stop, GuestThread& thread) const {
     }
     log("  pc in %s", describe_address(stop.pc).c_str());
     log("  lr in %s", describe_address(r[14]).c_str());
+
+    // Bounded, allocation-light crash detail for RuntimeReport: this must never crash inside
+    // the crash path, since it runs while the process is already dying.
+    char regs_line[256];
+    std::snprintf(regs_line, sizeof regs_line,
+                  "r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x "
+                  "r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x r13=%08x r14=%08x r15=%08x",
+                  r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12],
+                  r[13], r[14], r[15]);
+    runtime_report().note_crash_detail("registers", regs_line);
+
+    char state_line[128];
+    if (thread.tid != 0 && thread.tid != host_tid) {
+        std::snprintf(state_line, sizeof state_line, "cpsr=%08x tls=%08x tid=%ld guest-tid=%d",
+                      thread.cpsr(), thread.tls(), host_tid, thread.tid);
+    } else {
+        std::snprintf(state_line, sizeof state_line, "cpsr=%08x tls=%08x tid=%ld", thread.cpsr(),
+                      thread.tls(), host_tid);
+    }
+    runtime_report().note_crash_detail("state", state_line);
+
+    runtime_report().note_crash_detail("pc", describe_address(stop.pc));
+    runtime_report().note_crash_detail("lr", describe_address(r[14]));
+
+    const std::uint32_t sp = r[13];
+    if (mem_.accessible(sp, 32, kPageRead)) {
+        const std::uint8_t* stack_bytes = mem_.host_ptr(sp, 32, kPageRead);
+        std::uint32_t words[8];
+        std::memcpy(words, stack_bytes, sizeof words);
+        char stack_line[192];
+        std::snprintf(stack_line, sizeof stack_line, "%08x %08x %08x %08x %08x %08x %08x %08x",
+                      words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7]);
+        runtime_report().note_crash_detail("stack", stack_line);
+    } else {
+        runtime_report().note_crash_detail("stack", "(unreadable)");
+    }
+
+    runtime_report().note_crash_detail("precise", precise_faults_ ? "yes" : "no");
 }
 
 }  // namespace zb

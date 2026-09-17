@@ -218,6 +218,27 @@ void RuntimeReport::note_gl_detail(const std::string& key, const std::string& va
     if (observer) (*observer)(structural);
 }
 
+void RuntimeReport::note_crash_detail(const std::string& key, const std::string& value) {
+    bool structural = false;
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const std::string line = one_line(value, 600);
+        auto found = std::find_if(crash_details_.begin(), crash_details_.end(),
+                                  [&](const auto& entry) { return entry.first == key; });
+        if (found != crash_details_.end()) {
+            if (found->second == line) return;
+            found->second = line;
+        } else {
+            if (crash_details_.size() >= kMaxCrashDetails) return;
+            crash_details_.emplace_back(one_line(key, 64), line);
+            structural = true;
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(structural);
+}
+
 void RuntimeReport::note_egl_object(const std::string& key, const std::string& value) {
     bool structural = false;
     std::shared_ptr<Observer> observer;
@@ -419,6 +440,7 @@ std::string RuntimeReport::text() const {
         out += egl_error_function_ + " " + hex;
     }
     out += '\n';
+    for (const auto& [key, value] : crash_details_) out += "crash-" + key + ": " + value + '\n';
     return out;
 }
 
@@ -456,6 +478,7 @@ void RuntimeReport::clear() {
     egl_error_known_ = false;
     egl_error_function_.clear();
     egl_error_value_ = 0;
+    crash_details_.clear();
 }
 
 RuntimeReport& runtime_report() {

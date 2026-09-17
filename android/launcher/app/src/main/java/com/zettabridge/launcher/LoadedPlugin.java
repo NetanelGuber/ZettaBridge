@@ -83,6 +83,9 @@ final class LoadedPlugin {
         LoadedPlugin p = new LoadedPlugin(record, ai, res, cl);
         p.info = info;
         if (record.isTranslated()) {
+            // Must precede activatePlugin: the guest runtime is process-lifetime and reads
+            // ZB_PRECISE_FAULTS only once, at the first Process construction it triggers.
+            ZBridge.setPreciseFaults(record.preciseFaults);
             // Must precede every plugin class initialization, provider and Application callback.
             ZBridge.activatePlugin(record.dir.getCanonicalPath(), record.targetSdk, cl);
         }

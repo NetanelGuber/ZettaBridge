@@ -186,13 +186,16 @@ public class LibraryActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle(r.label)
                 .setItems(new String[] {"Launch", "Last run report", "Pin shortcut",
-                                        r.hideAds ? "Show ads" : "Hide ads", "Delete"},
+                                        r.hideAds ? "Show ads" : "Hide ads",
+                                        r.preciseFaults ? "Precise faults: on" : "Precise faults (slow)",
+                                        "Delete"},
                         (dialog, which) -> {
                             if (which == 0) launch(r);
                             if (which == 1) showRuntimeReport(r);
                             if (which == 2) pinShortcut(r);
                             if (which == 3) toggleAds(r);
-                            if (which == 4) confirmDelete(r);
+                            if (which == 4) togglePreciseFaults(r);
+                            if (which == 5) confirmDelete(r);
                         })
                 .show();
     }
@@ -208,6 +211,22 @@ public class LibraryActivity extends Activity {
         }
         Toast.makeText(this, (r.hideAds ? "Ads hidden for " : "Ads shown for ") + r.label
                 + ". Restart the game to apply.", Toast.LENGTH_LONG).show();
+    }
+
+    /**
+     * Precise memory faults stop at the exact faulting instruction with registers committed,
+     * instead of at the end of the translated block, at roughly 2x cost on integer code. It takes
+     * effect the next time the plugin process starts.
+     */
+    private void togglePreciseFaults(PluginRecord r) {
+        r.preciseFaults = !r.preciseFaults;
+        try {
+            r.save();
+        } catch (IOException e) {
+            Diagnostics.report(this, "cannot save the precise-faults setting of " + r.label, e, false);
+            return;
+        }
+        Toast.makeText(this, "Restart the game to apply.", Toast.LENGTH_LONG).show();
     }
 
     /**

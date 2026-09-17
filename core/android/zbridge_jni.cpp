@@ -1,6 +1,7 @@
 // JNI entry points of libzbridge.so for com.zettabridge.core.ZBridge.
 #include <jni.h>
 
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <vector>
@@ -199,6 +200,13 @@ JNIEXPORT jstring JNICALL Java_com_zettabridge_core_ZBridge_fixGuestLibrary(JNIE
         return nullptr;
     }
     return env->NewStringUTF(summary.c_str());
+}
+
+// static native void setPreciseFaults(boolean enabled)
+// Must be called before the guest runtime/Process is constructed: LibraryRuntime is
+// process-lifetime and reads ZB_PRECISE_FAULTS only at Process construction.
+JNIEXPORT void JNICALL Java_com_zettabridge_core_ZBridge_setPreciseFaults(JNIEnv*, jclass, jboolean enabled) {
+    ::setenv("ZB_PRECISE_FAULTS", enabled ? "1" : "0", 1);
 }
 
 }  // extern "C"
