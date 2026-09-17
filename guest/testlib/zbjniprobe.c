@@ -479,8 +479,15 @@ JNIEXPORT jint JNICALL zbjniprobe_direct_buffers(JNIEnv* env, jobject foreign) {
     CHECK(buffer != NULL);
     CHECK((*env)->GetDirectBufferAddress(env, buffer) == direct_storage);
     CHECK((*env)->GetDirectBufferCapacity(env, buffer) == (jlong)sizeof direct_storage);
-    CHECK((*env)->GetDirectBufferAddress(env, foreign) == NULL);
+    /* A buffer Java allocated lives outside the guest address space; the bridge mirrors it into
+     * guest memory, so the address is usable and holds Java's bytes. The mirror is stable, and
+     * guest writes reach Java when this native call returns. */
+    unsigned char* mirror = (unsigned char*)(*env)->GetDirectBufferAddress(env, foreign);
+    CHECK(mirror != NULL);
     CHECK((*env)->GetDirectBufferCapacity(env, foreign) == 16);
+    CHECK((unsigned char*)(*env)->GetDirectBufferAddress(env, foreign) == mirror);
+    mirror[0] = (unsigned char)(mirror[1] + mirror[2]);
+    mirror[15] = 0x5A;
     return 0;
 }
 

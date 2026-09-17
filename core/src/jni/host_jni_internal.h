@@ -10,6 +10,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "zb/host_jni.h"
@@ -82,6 +83,22 @@ struct HostJni::Impl {
     NativeSlots slots;
     std::atomic<bool> logged_foreign_buffer{false};
 
+    // Mirrors of direct buffers whose memory Java owns, which lies outside the guest's 4 GiB
+    // space and so has no guest address of its own (host_jni_data.cpp). One mirror per host
+    // address, allocated in guest memory and refreshed from Java on every
+    // GetDirectBufferAddress; flushed back guest -> host at the end of every Java -> guest
+    // native call.
+    struct BufferMirror {
+        std::uint32_t guest = 0;   // guest address of the copy
+        std::uint64_t size = 0;    // bytes of the copy
+    };
+    // Total mirrored bytes are capped so a runaway guest cannot exhaust guest memory.
+    static constexpr std::uint64_t kMirrorCapBytes = 64u * 1024u * 1024u;
+    std::mutex mirror_mutex;
+    std::unordered_map<const void*, BufferMirror> mirrors;
+    std::uint64_t mirrored_bytes = 0;
+    unsigned mirror_failures = 0;
+
     // The JniThread of the calling host thread.
     JniThread& thread();
     // Logs, reports through the backend's FatalError (when the thread has a JNIEnv) and aborts.
@@ -110,6 +127,12 @@ struct HostJni::Impl {
     std::optional<GuestResult> invoke(JniThread& state, std::uint32_t function, const GuestCall& args);
     // Allocates the guest JNIEnv of this thread if needed; false if the guest allocation failed.
     bool ensure_guest_env(JniThread& state);
+
+    // Guest address of the mirror of a Java-owned direct buffer, refreshed from host memory
+    // first; 0 when it cannot be mirrored, with failure set to the reason.
+    std::uint32_t mirror_direct_buffer(const void* host, std::int64_t capacity, const char*& failure);
+    // Copies every mirror back into its Java buffer. The one guest -> host sync point.
+    void flush_buffer_mirrors();
 
     // Host-call groups; each returns false for indices it does not serve.
     bool serve_objects(JniCall& call);

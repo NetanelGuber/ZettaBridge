@@ -290,8 +290,24 @@ void check_data(Bridge& bridge) {
     MockJvm& vm = *bridge.vm;
     CHECK(run_probe(bridge, "zbjniprobe_strings") == 0);
     CHECK(run_probe(bridge, "zbjniprobe_arrays") == 0);
-    static char foreign[16];
-    CHECK(run_probe(bridge, "zbjniprobe_direct_buffers", vm.new_direct_buffer_object(foreign, sizeof foreign)) == 0);
+    // A direct buffer Java allocated: its memory is outside the guest space, so the bridge
+    // mirrors it into guest memory. The probe checks the mirror is non-null and stable, reads
+    // Java's bytes through it (mirror[0] = mirror[1] + mirror[2]) and writes 0x5A at the end.
+    static unsigned char foreign[16];
+    std::memset(foreign, 0, sizeof foreign);
+    foreign[1] = 0x20;
+    foreign[2] = 0x03;
+    const auto buffer = vm.new_direct_buffer_object(foreign, sizeof foreign);
+    CHECK(run_probe(bridge, "zbjniprobe_direct_buffers", buffer) == 0);
+    // The guest's writes reached Java when the native call returned.
+    CHECK(foreign[0] == 0x23 && foreign[15] == 0x5A);
+
+    // The same buffer again: the mirror is reused and refreshed from Java first.
+    foreign[1] = 0x11;
+    foreign[2] = 0x11;
+    foreign[15] = 0;
+    CHECK(run_probe(bridge, "zbjniprobe_direct_buffers", buffer) == 0);
+    CHECK(foreign[0] == 0x22 && foreign[15] == 0x5A);
 }
 
 bool wait_thread_count(zb::LibraryRuntime& runtime, std::size_t expected) {

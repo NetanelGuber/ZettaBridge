@@ -431,6 +431,13 @@ std::optional<HostJni::NativeResult> HostJni::call_native(JniBackend::Env env, c
         build(state.guest_env, [&](std::uint64_t ref) { return state.locals.add(ref); });
     std::optional<GuestResult> guest = jni.invoke(state, function, args);
 
+    // The one guest -> host sync point of the direct-buffer mirrors (host_jni_data.cpp): whatever
+    // the guest wrote into a mirrored Java buffer becomes visible to Java here, when the native
+    // method returns. A guest that writes to a mirror outside a Java -> guest native call (from a
+    // guest thread of its own, say) is not seen by Java until the next native call returns, and a
+    // later GetDirectBufferAddress for the same buffer overwrites those writes with Java's bytes.
+    jni.flush_buffer_mirrors();
+
     std::optional<NativeResult> result;
     JniBackend::Ref kept = 0;
     if (guest) {

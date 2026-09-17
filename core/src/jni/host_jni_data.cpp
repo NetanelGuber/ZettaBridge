@@ -1,10 +1,12 @@
 // JNI host calls: strings, arrays, direct buffers.
 #include "host_jni_internal.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <mutex>
 
 #include "zb/log.h"
 #include "zb/runtime_report.h"
@@ -34,6 +36,52 @@ std::size_t element_size(char type) {
 }
 
 }  // namespace
+
+std::uint32_t HostJni::Impl::mirror_direct_buffer(const void* host, std::int64_t capacity,
+                                                  const char*& failure) {
+    if (host == nullptr || capacity <= 0) {
+        failure = "empty";
+        return 0;
+    }
+    if (static_cast<std::uint64_t>(capacity) > kMirrorCapBytes) {
+        failure = "over-cap";
+        return 0;
+    }
+    const auto size = static_cast<std::uint64_t>(capacity);
+    std::lock_guard<std::mutex> lock(mirror_mutex);
+    auto found = mirrors.find(host);
+    if (found == mirrors.end()) {
+        if (mirrored_bytes + size > kMirrorCapBytes) {
+            ++mirror_failures;
+            failure = "over-cap";
+            return 0;
+        }
+        // Guest malloc, run on the guest thread that is serving this host call.
+        GuestCall args;
+        args.regs = {static_cast<std::uint32_t>(size), 0, 0, 0};
+        const auto allocated = runtime.call_on_current(runtime.service_api().malloc_fn, args);
+        if (!allocated || allocated->r0 == 0) {
+            ++mirror_failures;
+            failure = "no-guest-memory";
+            return 0;
+        }
+        found = mirrors.emplace(host, BufferMirror{allocated->r0, size}).first;
+        mirrored_bytes += size;
+    }
+    // Java may have written into the buffer since the last call, so refresh the copy. A guest
+    // write made before this point is overwritten; that is the documented cost of the mirror.
+    const std::uint64_t bytes = std::min(size, found->second.size);
+    std::memcpy(runtime.memory().base() + found->second.guest, host, bytes);
+    return found->second.guest;
+}
+
+void HostJni::Impl::flush_buffer_mirrors() {
+    std::lock_guard<std::mutex> lock(mirror_mutex);
+    const std::uint8_t* base = runtime.memory().base();
+    for (const auto& entry : mirrors) {
+        std::memcpy(const_cast<void*>(entry.first), base + entry.second.guest, entry.second.size);
+    }
+}
 
 bool HostJni::Impl::serve_data(JniCall& call) {
     JniThread& state = call.state();
@@ -137,26 +185,47 @@ bool HostJni::Impl::serve_data(JniCall& call) {
     }
     case ZB_JNI_HC_GetDirectBufferAddress: {
         const JniBackend::Env env = call.env();
-        const auto* host = static_cast<const std::uint8_t*>(backend.get_direct_buffer_address(env, ref(0)));
+        const JniBackend::Ref buffer = ref(0);
+        const auto* host = static_cast<const std::uint8_t*>(backend.get_direct_buffer_address(env, buffer));
         const std::uint8_t* base = runtime.memory().base();
         const bool inside = host != nullptr && host >= base &&
                             static_cast<std::uint64_t>(host - base) < kGuestSpaceSize;
-        if (inside) call.set(static_cast<std::uint32_t>(host - base));
-        // A direct buffer Java allocated lives outside the guest's 4 GiB space, so its address
-        // cannot be handed over; the guest then reads NULL. Record every answer: a guest that
-        // trusts this pointer crashes far away from here (Flutter copies from it at once).
+        std::uint32_t answer = 0;
+        const char* failure = "";
+        bool mirrored = false;
+        if (inside) {
+            // A buffer the guest itself made with NewDirectByteBuffer: hand over its own address.
+            answer = static_cast<std::uint32_t>(host - base);
+        } else if (host != nullptr) {
+            // A direct buffer Java allocated lives outside the guest's 4 GiB space, so its host
+            // address cannot be handed over. Mirror it into guest memory instead; the guest reads
+            // a real copy rather than NULL (Flutter copies from this pointer at once).
+            answer = mirror_direct_buffer(host, backend.get_direct_buffer_capacity(env, buffer), failure);
+            mirrored = answer != 0;
+        }
+        call.set(answer);
+        // Record every answer: a guest that trusts this pointer crashes far away from here.
         static std::atomic<unsigned> answered{0};
         const unsigned seen = answered.fetch_add(1) + 1;
         if (seen <= 4) {
-            char text[160];
-            std::snprintf(text, sizeof text, "buffer=0x%08x host=%p %s guest=0x%08x", call.arg(1),
-                          static_cast<const void*>(host), inside ? "inside" : "outside",
-                          inside ? static_cast<std::uint32_t>(host - base) : 0u);
+            char text[200];
+            std::snprintf(text, sizeof text, "buffer=0x%08x host=%p %s guest=0x%08x mirrored=%s%s",
+                          call.arg(1), static_cast<const void*>(host), inside ? "inside" : "outside",
+                          answer, mirrored ? "yes" : "no", mirrored || inside ? "" : failure);
             runtime_report().note_jni_detail("direct-buffer-" + std::to_string(seen), text, false);
         }
         runtime_report().note_jni_detail("direct-buffer-calls", std::to_string(seen), true);
-        if (!inside && host != nullptr && !logged_foreign_buffer.exchange(true)) {
-            log("GetDirectBufferAddress: the buffer lies outside guest memory; returning NULL (logged once)");
+        {
+            std::lock_guard<std::mutex> lock(mirror_mutex);
+            runtime_report().note_jni_detail("direct-buffer-mirrored-bytes", std::to_string(mirrored_bytes), true);
+            if (mirror_failures != 0) {
+                runtime_report().note_jni_detail("direct-buffer-mirror-failures",
+                                                 std::to_string(mirror_failures), true);
+            }
+        }
+        if (!inside && host != nullptr && !mirrored && !logged_foreign_buffer.exchange(true)) {
+            log("GetDirectBufferAddress: the buffer lies outside guest memory and could not be "
+                "mirrored (%s); returning NULL (logged once)", failure);
         }
         return true;
     }
