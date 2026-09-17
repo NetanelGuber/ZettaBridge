@@ -175,14 +175,15 @@ def checked_surface():
         sys.exit("GLES surface mismatch: registry-only=%s header-only=%s" %
                  (missing_header, missing_registry))
 
+    # Built from every stub library gen_stubs.py knows, so adding a library (libEGL, the
+    # ANativeWindow_* names) does not break this check. What matters here is that the GLES rows
+    # still start at 0 and keep their order.
     expected_rows = []
     index = 0
-    for name in header_names:
-        expected_rows.append((index, "libGLESv2.so", name))
-        index += 1
-    for name in gen_stubs.android_asset_names():
-        expected_rows.append((index, "libandroid.so", name))
-        index += 1
+    for lib, source in gen_stubs.LIBRARIES:
+        for name in source():
+            expected_rows.append((index, lib + ".so", name))
+            index += 1
     actual_rows = committed_hostcalls()
     if actual_rows != expected_rows:
         sys.exit("core/src/gen/hostcalls.inc disagrees with tools/gen_stubs.py")
