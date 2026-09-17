@@ -16,6 +16,7 @@ public class ZbApplication extends Application {
         super.onCreate();
         if (processName().endsWith(GUEST_SUFFIX)) {
             Diagnostics.installCrashRecorder(this);
+            MainLooperGuard.install(this);
             // Before any plugin code runs: a :guest process that dies silently must still leave
             // its runtime report on disk.
             Diagnostics.startRuntimeReport(this);
