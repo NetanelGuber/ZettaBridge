@@ -1144,3 +1144,25 @@ minimal implementation. Fresh verification: generators pass, host 44/44, guest 9
 rerun `com.example.perecup_simulator`, wait about 10 seconds, and send the Last run report. A
 likely next boundary is `ALooper_addFd`; do not implement polling or guest callbacks without the
 device evidence. Phase 7a Task 10 remains open.
+
+## Phase 7a Task 10 fourth device result: real ALooper is required
+
+The per-thread looper APK advanced to exactly one unimplemented call:
+`ALooper_addFd`, then exited with status 134. Loader/JNI state remained healthy: one proxy,
+guest `JNI_OnLoad` 1.4, 42 registered natives, and no GL call yet.
+
+The actual arm32 `libflutter.so` was disassembled rather than guessing. It creates an eventfd,
+registers it as callback-based input, requires `ALooper_addFd` to return 1, then loops in
+`ALooper_pollOnce(-1, NULL, NULL, NULL)`. Its guest callback reads the eventfd and dispatches
+Flutter work. Therefore merely returning success from `addFd` would leave an infinite empty
+poll and a gray screen.
+
+The user approved the real callback-looper approach. The amended design is in
+`docs/superpowers/specs/2026-09-17-native-surface-design.md`: extract a focused `HostLooper`,
+poll shared process fds on the host, use an internal eventfd for `wake`, and invoke callbacks
+through the existing nested `LibraryRuntime::call_on_current` path. This subset is reusable by
+the later NativeActivity bridge; input queues and configuration remain out of Phase 7a.
+
+**NEXT:** review/approve the amended design, amend Task 10 in the Phase 7a implementation plan,
+then implement it with a host poll test and a translated guest callback probe. Commit the plan
+separately before implementation. Phase 7a Task 10 remains open.
