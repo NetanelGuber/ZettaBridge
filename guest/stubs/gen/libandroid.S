@@ -146,3 +146,67 @@ AAsset_seek64:
     svc #0x5a009f
     bx lr
 .size AAsset_seek64, . - AAsset_seek64
+
+.global ANativeWindow_acquire
+.type ANativeWindow_acquire, %function
+.p2align 2
+ANativeWindow_acquire:
+    svc #0x5a00a0
+    bx lr
+.size ANativeWindow_acquire, . - ANativeWindow_acquire
+
+.global ANativeWindow_fromSurface
+.type ANativeWindow_fromSurface, %function
+.p2align 2
+ANativeWindow_fromSurface:
+    svc #0x5a00a1
+    bx lr
+.size ANativeWindow_fromSurface, . - ANativeWindow_fromSurface
+
+.global ANativeWindow_getFormat
+.type ANativeWindow_getFormat, %function
+.p2align 2
+ANativeWindow_getFormat:
+    svc #0x5a00a2
+    bx lr
+.size ANativeWindow_getFormat, . - ANativeWindow_getFormat
+
+.global ANativeWindow_getHeight
+.type ANativeWindow_getHeight, %function
+.p2align 2
+ANativeWindow_getHeight:
+    svc #0x5a00a3
+    bx lr
+.size ANativeWindow_getHeight, . - ANativeWindow_getHeight
+
+.global ANativeWindow_getWidth
+.type ANativeWindow_getWidth, %function
+.p2align 2
+ANativeWindow_getWidth:
+    svc #0x5a00a4
+    bx lr
+.size ANativeWindow_getWidth, . - ANativeWindow_getWidth
+
+.global ANativeWindow_release
+.type ANativeWindow_release, %function
+.p2align 2
+ANativeWindow_release:
+    svc #0x5a00a5
+    bx lr
+.size ANativeWindow_release, . - ANativeWindow_release
+
+.global ANativeWindow_setBuffersGeometry
+.type ANativeWindow_setBuffersGeometry, %function
+.p2align 2
+ANativeWindow_setBuffersGeometry:
+    svc #0x5a00a6
+    bx lr
+.size ANativeWindow_setBuffersGeometry, . - ANativeWindow_setBuffersGeometry
+
+.global ANativeWindow_toSurface
+.type ANativeWindow_toSurface, %function
+.p2align 2
+ANativeWindow_toSurface:
+    svc #0x5a00a7
+    bx lr
+.size ANativeWindow_toSurface, . - ANativeWindow_toSurface

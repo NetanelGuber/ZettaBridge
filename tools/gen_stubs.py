@@ -46,9 +46,33 @@ def android_asset_names():
     return sorted(names)
 
 
+# Appended after the AAsset* names so the hand-written indices in
+# core/include/zb/asset_hostcalls.h (145-157) keep pointing at the same functions.
+ANATIVE_WINDOW = [
+    "ANativeWindow_acquire",
+    "ANativeWindow_fromSurface",
+    "ANativeWindow_getFormat",
+    "ANativeWindow_getHeight",
+    "ANativeWindow_getWidth",
+    "ANativeWindow_release",
+    "ANativeWindow_setBuffersGeometry",
+    "ANativeWindow_toSurface",
+]
+
+
+def android_names():
+    return android_asset_names() + ANATIVE_WINDOW
+
+
+def egl_names():
+    text = open(os.path.join(INCLUDE, "EGL", "egl.h")).read()
+    return sorted(set(re.findall(r"EGLAPI\s+[^;]*?EGLAPIENTRY\s+(egl\w+)\s*\(", text)))
+
+
 LIBRARIES = [
     ("libGLESv2", gles2_names),
-    ("libandroid", android_asset_names),
+    ("libandroid", android_names),
+    ("libEGL", egl_names),
 ]
 
 
