@@ -1,0 +1,196 @@
+#include "zb/host_egl.h"
+
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+
+#include "zb/egl_hostcalls.h"
+#include "zb/guest_memory.h"
+#include "zb/library_protocol.h"
+#include "zb/log.h"
+
+namespace zb {
+
+namespace {
+
+// EGL errors are per-thread and sticky until eglGetError reads them. A call rejected here never
+// reaches the driver, so its error is recorded on this side and shadows the driver's.
+thread_local EGLint t_pending_error = kEglSuccess;
+
+// The object class of handle argument `position` of `index`. Every EGL function that takes a
+// display takes it first; the rest are listed by name. Manual cases pass their class explicitly
+// through Call::handle_of, so only the generated cases need to be covered here.
+EglObject argument_kind(std::uint32_t index, unsigned position) {
+    if (position == 0) return EglObject::Display;
+    if (index == ZB_EGL_HC_eglDestroyContext) return EglObject::Context;
+    if (index == ZB_EGL_HC_eglMakeCurrent && position == 3) return EglObject::Context;
+    return EglObject::Surface;
+}
+
+EglObject result_kind(std::uint32_t index) {
+    if (index == ZB_EGL_HC_eglGetDisplay || index == ZB_EGL_HC_eglGetPlatformDisplay) {
+        return EglObject::Display;
+    }
+    return EglObject::Surface;
+}
+
+const char* kind_name(EglObject kind) {
+    switch (kind) {
+    case EglObject::Display: return "display";
+    case EglObject::Config: return "config";
+    case EglObject::Context: return "context";
+    case EglObject::Surface: return "surface";
+    }
+    return "object";
+}
+
+}  // namespace
+
+EGLint egl_object_error(EglObject kind) {
+    switch (kind) {
+    case EglObject::Display: return kEglBadDisplay;
+    case EglObject::Config: return kEglBadParameter;  // EGL_BAD_CONFIG
+    case EglObject::Context: return kEglBadContext;
+    case EglObject::Surface: return kEglBadSurface;
+    }
+    return kEglBadParameter;
+}
+
+HostEgl::Call::Call(HostEgl& host, GuestThread& thread, std::uint32_t index)
+    : host_(host), thread_(thread), index_(index),
+      regs_{thread.regs()[0], thread.regs()[1], thread.regs()[2], thread.regs()[3]} {
+    // Capture arguments before installing the default zero result.
+    thread_.regs()[0] = 0;
+    thread_.regs()[1] = 0;
+}
+
+std::uint32_t HostEgl::Call::arg(unsigned position) {
+    if (position < 4) return regs_[position];
+    const std::uint64_t address =
+        static_cast<std::uint64_t>(thread_.regs()[13]) + 4u * (position - 4u);
+    if (address > UINT32_MAX) {
+        fail(kEglBadParameter, "argument address overflowed the guest stack");
+        return 0;
+    }
+    const std::uint8_t* source =
+        host_.runtime().memory().host_ptr(static_cast<std::uint32_t>(address), 4, kPageRead);
+    if (source == nullptr) {
+        fail(kEglBadParameter, "argument is not on a readable guest stack");
+        return 0;
+    }
+    std::uint32_t value;
+    std::memcpy(&value, source, sizeof value);
+    return value;
+}
+
+const void* HostEgl::Call::handle_of(unsigned position, EglObject kind) {
+    const std::uint32_t handle = arg(position);
+    if (!valid_) return nullptr;
+    if (handle == 0) return nullptr;  // EGL_NO_DISPLAY / EGL_NO_CONTEXT / EGL_NO_SURFACE
+    const std::optional<const void*> value = host_.lookup(handle, kind);
+    if (!value) {
+        char reason[64];
+        std::snprintf(reason, sizeof reason, "unknown %s handle", kind_name(kind));
+        fail(egl_object_error(kind), reason);
+        return nullptr;
+    }
+    return *value;
+}
+
+const void* HostEgl::Call::resolve_handle(unsigned position) {
+    return handle_of(position, argument_kind(index_, position));
+}
+
+void HostEgl::Call::set_handle(const void* value) { set_handle(value, result_kind(index_)); }
+
+void HostEgl::Call::set_handle(const void* value, EglObject kind) {
+    thread_.regs()[0] = host_.handle_for(value, kind);
+}
+
+void HostEgl::Call::fail(EGLint error, const char* reason) {
+    if (!valid_) return;
+    valid_ = false;
+    host_.reject(*this, error, reason);
+}
+
+void HostEgl::reject(Call& call, EGLint error, const char* reason) {
+    const char* name = "?";
+    if (call.index() >= kEglHostCallFirst && call.index() <= kEglHostCallLast) {
+        name = kEglHostCalls[call.index() - kEglHostCallFirst].name;
+    }
+    log("EGL %s rejected: %s", name, reason);
+    t_pending_error = error;
+}
+
+std::uint32_t HostEgl::handle_for(const void* value, EglObject kind) {
+    if (value == nullptr) return 0;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = by_value_.find(value);
+    if (found != by_value_.end()) return found->second;
+    const std::uint32_t handle = objects_.add(reinterpret_cast<std::uint64_t>(value));
+    if (handle == 0) return 0;
+    by_value_.emplace(value, handle);
+    kinds_.emplace(handle, kind);
+    return handle;
+}
+
+const void* HostEgl::value_for(std::uint32_t handle) const {
+    if (handle == 0) return nullptr;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::optional<std::uint64_t> value = objects_.get(handle);
+    if (!value) return nullptr;
+    return reinterpret_cast<const void*>(static_cast<std::uintptr_t>(*value));
+}
+
+std::optional<const void*> HostEgl::lookup(std::uint32_t handle, EglObject kind) const {
+    if (handle == 0) return static_cast<const void*>(nullptr);
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::optional<std::uint64_t> value = objects_.get(handle);
+    if (!value || *value == 0) return std::nullopt;
+    const auto known = kinds_.find(handle);
+    if (known == kinds_.end() || known->second != kind) return std::nullopt;
+    return reinterpret_cast<const void*>(static_cast<std::uintptr_t>(*value));
+}
+
+std::uint32_t HostEgl::stub_address(const std::string& name) {
+    if (stubs_) return stubs_(name);
+    if (!libegl_tried_) {
+        libegl_tried_ = true;
+        std::string error;
+        libegl_ = runtime_.load_library("libEGL.so", ZB_GUEST_RTLD_NOW, error);
+        if (libegl_ == 0) log("eglGetProcAddress: guest libEGL.so is not loadable: %s", error.c_str());
+    }
+    if (libegl_ == 0) return 0;
+    std::string error;
+    return runtime_.find_symbol(libegl_, name, error);
+}
+
+std::optional<std::uint32_t> HostEgl::allocate_guest(std::size_t size) {
+    if (size == 0 || size > UINT32_MAX) return std::nullopt;
+    if (allocator_) return allocator_(size);
+    GuestCall args;
+    args.regs = {static_cast<std::uint32_t>(size), 0, 0, 0};
+    const auto result = runtime_.call_on_current(runtime_.service_api().malloc_fn, args);
+    if (!result || result->r0 == 0) return std::nullopt;
+    return result->r0;
+}
+
+#include "gen/egl_dispatch.inc"
+
+bool HostEgl::handle_host_call(std::uint32_t index, GuestThread& thread) {
+    if (index < kEglHostCallFirst || index > kEglHostCallLast) return false;
+    // A rejection never reaches the driver, so its error is served from here and takes
+    // precedence over the driver's own sticky error.
+    if (index == ZB_EGL_HC_eglGetError && t_pending_error != kEglSuccess) {
+        thread.regs()[0] = static_cast<std::uint32_t>(t_pending_error);
+        thread.regs()[1] = 0;
+        t_pending_error = kEglSuccess;
+        return true;
+    }
+    Call call(*this, thread, index);
+    if (dispatch(call)) return true;
+    log("EGL host call index %u has no generated handler", index);
+    return true;
+}
+
+}  // namespace zb
