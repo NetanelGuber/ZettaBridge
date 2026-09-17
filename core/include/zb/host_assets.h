@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <unordered_map>
 
 #include "zb/asset_backend.h"
 #include "zb/guest_thread.h"
@@ -34,9 +35,16 @@ private:
     LibraryRuntime& runtime_;
     AssetBackend& backend_;
     HostJni& host_jni_;
+    // AAsset_getBuffer copies, since the NDK buffer lives outside the guest address space. An
+    // asset is read-only, so one copy per asset is enough and never needs writing back.
+    std::uint32_t asset_buffer(std::uint64_t asset);
+
     GlobalHandles managers_{HandleKind::Global};
     GlobalHandles assets_{HandleKind::Global};
     bool logged_overflow_ = false;
+    static constexpr std::uint64_t kMaxBufferedBytes = 64ull << 20;
+    std::unordered_map<std::uint64_t, std::uint32_t> asset_buffers_;
+    std::uint64_t buffered_bytes_ = 0;
 };
 
 }  // namespace zb

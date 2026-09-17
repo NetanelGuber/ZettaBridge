@@ -126,6 +126,13 @@ int main() {
     CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_openFileDescriptor, thread));
     CHECK(static_cast<std::int32_t>(thread.regs()[0]) == -1);
 
+    // AAsset_getBuffer needs guest memory from the guest allocator. Without a started guest
+    // runtime it must answer NULL instead of handing over a host pointer or crashing; the real
+    // copy is exercised on the device.
+    thread.regs()[0] = asset;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_getBuffer, thread));
+    CHECK(thread.regs()[0] == 0);
+
     std::puts("asset_chain_test PASS");
     return 0;
 }

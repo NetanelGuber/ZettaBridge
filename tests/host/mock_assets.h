@@ -35,6 +35,12 @@ public:
         return static_cast<std::int64_t>(it->second.content.size());
     }
 
+    const void* buffer(std::uint64_t asset) override {
+        auto it = open_.find(asset);
+        if (it == open_.end() || it->second.content.empty()) return nullptr;
+        return it->second.content.data();
+    }
+
     std::int64_t read(std::uint64_t asset, void* buffer, std::size_t count) override {
         auto it = open_.find(asset);
         if (it == open_.end()) return -1;

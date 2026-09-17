@@ -36,6 +36,11 @@ std::int64_t AndroidAssetBackend::length(std::uint64_t asset) {
     return static_cast<std::int64_t>(AAsset_getLength(A(asset)));
 }
 
+const void* AndroidAssetBackend::buffer(std::uint64_t asset) {
+    if (asset == 0) return nullptr;
+    return AAsset_getBuffer(A(asset));
+}
+
 std::int64_t AndroidAssetBackend::read(std::uint64_t asset, void* buffer, std::size_t count) {
     if (asset == 0) return -1;
     return static_cast<std::int64_t>(AAsset_read(A(asset), buffer, count));

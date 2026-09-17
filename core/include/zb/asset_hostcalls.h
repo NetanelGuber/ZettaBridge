@@ -13,6 +13,7 @@ namespace zb {
 inline constexpr std::uint32_t ZB_ASSET_HC_AAssetManager_fromJava = 145u;
 inline constexpr std::uint32_t ZB_ASSET_HC_AAssetManager_open = 146u;
 inline constexpr std::uint32_t ZB_ASSET_HC_AAsset_close = 148u;
+inline constexpr std::uint32_t ZB_ASSET_HC_AAsset_getBuffer = 149u;
 inline constexpr std::uint32_t ZB_ASSET_HC_AAsset_getLength = 150u;
 inline constexpr std::uint32_t ZB_ASSET_HC_AAsset_openFileDescriptor = 155u;
 inline constexpr std::uint32_t ZB_ASSET_HC_AAsset_read = 157u;

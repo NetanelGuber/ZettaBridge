@@ -42,6 +42,10 @@ public:
     };
     // AAsset_openFileDescriptor. The fd is valid in the guest process (same process).
     virtual FileDescriptor open_file_descriptor(std::uint64_t asset) = 0;
+
+    // AAsset_getBuffer: the whole asset in host memory, or nullptr. HostAssets copies it into
+    // guest memory; the pointer itself can never cross, being outside the guest's 4 GiB space.
+    virtual const void* buffer(std::uint64_t asset) = 0;
 };
 
 }  // namespace zb

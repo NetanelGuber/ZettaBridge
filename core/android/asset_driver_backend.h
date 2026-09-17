@@ -13,6 +13,7 @@ public:
     std::uint64_t manager_from_java(JniBackend::Env env, JniBackend::Ref java_manager) override;
     std::uint64_t open(std::uint64_t manager, const std::string& filename, std::int32_t mode) override;
     std::int64_t length(std::uint64_t asset) override;
+    const void* buffer(std::uint64_t asset) override;
     std::int64_t read(std::uint64_t asset, void* buffer, std::size_t count) override;
     void close(std::uint64_t asset) override;
     FileDescriptor open_file_descriptor(std::uint64_t asset) override;

@@ -51,6 +51,41 @@ std::uint64_t HostAssets::require_asset(std::uint32_t handle) const {
     return assets_.get(handle).value_or(0);
 }
 
+std::uint32_t HostAssets::asset_buffer(std::uint64_t asset) {
+    const auto cached = asset_buffers_.find(asset);
+    if (cached != asset_buffers_.end()) return cached->second;
+
+    const std::int64_t length = backend_.length(asset);
+    const void* host = backend_.buffer(asset);
+    if (host == nullptr || length <= 0) {
+        log("AAsset_getBuffer: the asset has no buffer (length %lld)", static_cast<long long>(length));
+        return 0;
+    }
+    const auto size = static_cast<std::uint64_t>(length);
+    if (size > kMaxBufferedBytes || buffered_bytes_ + size > kMaxBufferedBytes) {
+        log("AAsset_getBuffer: %llu bytes exceed the buffer budget", static_cast<unsigned long long>(size));
+        return 0;
+    }
+    // Guest malloc runs guest code on this thread; HostAssets holds no lock here.
+    GuestCall args;
+    args.regs = {static_cast<std::uint32_t>(size), 0, 0, 0};
+    const auto allocated = runtime_.call_on_current(runtime_.service_api().malloc_fn, args);
+    if (!allocated || allocated->r0 == 0) {
+        log("AAsset_getBuffer: the guest allocator refused %llu bytes",
+            static_cast<unsigned long long>(size));
+        return 0;
+    }
+    std::uint8_t* destination = runtime_.memory().host_ptr(allocated->r0, size, kPageRead | kPageWrite);
+    if (destination == nullptr) {
+        log("AAsset_getBuffer: the guest allocator returned an unusable buffer");
+        return 0;
+    }
+    std::memcpy(destination, host, size);
+    asset_buffers_.emplace(asset, allocated->r0);
+    buffered_bytes_ += size;
+    return allocated->r0;
+}
+
 bool HostAssets::handle_host_call(std::uint32_t index, GuestThread& thread) {
     auto& regs = thread.regs();
     switch (index) {
@@ -107,6 +142,11 @@ bool HostAssets::handle_host_call(std::uint32_t index, GuestThread& thread) {
             }
         }
         regs[0] = static_cast<std::uint32_t>(static_cast<std::int32_t>(result));
+        return true;
+    }
+    case ZB_ASSET_HC_AAsset_getBuffer: {
+        const std::uint64_t asset = require_asset(regs[0]);
+        regs[0] = asset != 0 ? asset_buffer(asset) : 0;
         return true;
     }
     case ZB_ASSET_HC_AAsset_openFileDescriptor: {
