@@ -232,7 +232,7 @@ final class GuestRuntime {
         if (p.application != null) Reflect.trySet(Activity.class, activity, "mApplication", p.application);
 
         int theme = ai != null ? ai.getThemeResource() : p.appInfo.theme;
-        activity.setTheme(theme != 0 ? theme : android.R.style.Theme_DeviceDefault_Light_DarkActionBar);
+        activity.setTheme(theme != 0 ? theme : GuestWindowStyle.defaultTheme(p.appInfo.targetSdkVersion));
 
         GuestWindowStyle.apply(activity);
         if (p.record != null && p.record.hideAds) AdHider.attach(activity);

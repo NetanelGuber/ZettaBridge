@@ -24,6 +24,34 @@ final class GuestWindowStyle {
 
     private GuestWindowStyle() {}
 
+    /**
+     * The theme the framework would pick for an app that declares none, by its targetSdk. The old
+     * default is a dark, title-bar theme; using a modern light one instead left a grey action bar
+     * above games that never asked for one.
+     */
+    static int defaultTheme(int targetSdk) {
+        if (targetSdk >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) return android.R.style.Theme_DeviceDefault;
+        if (targetSdk >= Build.VERSION_CODES.HONEYCOMB) return android.R.style.Theme_Holo;
+        return android.R.style.Theme;
+    }
+
+    /**
+     * Runs after the plugin's own onCreate. Old games ask for fullscreen there, by the time our
+     * theme pass is long over, so honour what the window says now.
+     */
+    static void afterCreate(Activity activity) {
+        Window window = activity.getWindow();
+        if (window == null) return;
+        final int flags = window.getAttributes().flags;
+        if ((flags & WindowManager.LayoutParams.FLAG_FULLSCREEN) == 0) return;
+        if (activity.getActionBar() != null) activity.getActionBar().hide();
+        hideSystemBars(activity);
+        final View decor = window.getDecorView();
+        decor.getViewTreeObserver().addOnWindowFocusChangeListener(focused -> {
+            if (focused) hideSystemBars(activity);
+        });
+    }
+
     static void apply(Activity activity) {
         Window window = activity.getWindow();
         if (window == null) return;

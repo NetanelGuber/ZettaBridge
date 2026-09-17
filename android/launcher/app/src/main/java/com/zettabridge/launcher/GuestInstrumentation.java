@@ -45,12 +45,14 @@ final class GuestInstrumentation extends Instrumentation {
     public void callActivityOnCreate(Activity activity, Bundle icicle) {
         runtime.prepareActivity(activity, icicle);
         base.callActivityOnCreate(activity, icicle);
+        GuestWindowStyle.afterCreate(activity);
     }
 
     @Override
     public void callActivityOnCreate(Activity activity, Bundle icicle, PersistableBundle persistentState) {
         runtime.prepareActivity(activity, icicle);
         base.callActivityOnCreate(activity, icicle, persistentState);
+        GuestWindowStyle.afterCreate(activity);
     }
 
     @Override
