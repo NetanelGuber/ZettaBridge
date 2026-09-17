@@ -42,6 +42,7 @@
 #include "zb/guest_abi.h"
 #include "zb/guest_memory.h"
 #include "zb/guest_thread.h"
+#include "zb/hang_watchdog.h"
 #include "zb/log.h"
 #include "zb/process.h"
 
@@ -988,6 +989,7 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
     const auto guest_tid = [&] {
         return thread.tid != 0 ? thread.tid : static_cast<std::int32_t>(::syscall(SYS_gettid));
     };
+    record_thread_activity(guest_tid(), ThreadActivityKind::kSyscall, nr);
 
     switch (nr) {
     case NR_exit:

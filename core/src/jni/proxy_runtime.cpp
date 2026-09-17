@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 
+#include "zb/hang_watchdog.h"
 #include "zb/host_jni.h"
 #include "zb/library_protocol.h"
 #include "zb/log.h"
@@ -360,6 +361,8 @@ bool GuestJniEngine::start(const LibraryRuntimeOptions& options, std::string& er
         error = "zbhost reported ready but libzbjni.so did not register the guest JNI API";
         return false;
     }
+    // Process-lifetime, like the runtime itself: no shutdown path, started once.
+    start_hang_watchdog();
     return true;
 }
 

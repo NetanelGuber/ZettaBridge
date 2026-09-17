@@ -9,6 +9,7 @@ add_library(zbcore STATIC
     src/elf_loader.cpp
     src/guest_memory.cpp
     src/guest_thread.cpp
+    src/hang_watchdog.cpp
     src/gl/egl_manual.cpp
     src/gl/gl_diagnostics.cpp
     src/gl/gl_manual.cpp

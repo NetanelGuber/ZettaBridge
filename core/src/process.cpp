@@ -20,6 +20,7 @@
 #include <dynarmic/interface/exclusive_monitor.h>
 
 #include "zb/elf_loader.h"
+#include "zb/hang_watchdog.h"
 #include "zb/initial_stack.h"
 #include "zb/log.h"
 #include "zb/host_jni.h"
@@ -459,6 +460,7 @@ bool Process::dispatch_stop(GuestThread& thread, const Stop& stop) {
         }
         if ((stop.swi & 0xFF0000u) == kHostCallBase) {
             const std::uint32_t index = stop.swi & 0xFFFFu;
+            record_thread_activity(thread.tid, ThreadActivityKind::kHostCall, index);
             if (host_call_handler_ && host_call_handler_(index, thread)) return !exiting_;
             const auto [library, name] = host_call_name(index);
             if (first_time(kSeenHostCall | index)) {

@@ -260,6 +260,27 @@ void RuntimeReport::note_jni_detail(const std::string& key, const std::string& v
     if (observer) (*observer)(structural);
 }
 
+void RuntimeReport::note_watch_detail(const std::string& key, const std::string& value) {
+    bool structural = false;
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const std::string line = one_line(value, 600);
+        auto found = std::find_if(watch_details_.begin(), watch_details_.end(),
+                                  [&](const auto& entry) { return entry.first == key; });
+        if (found != watch_details_.end()) {
+            if (found->second == line) return;
+            found->second = line;
+        } else {
+            if (watch_details_.size() >= kMaxWatchDetails) return;
+            watch_details_.emplace_back(one_line(key, 64), line);
+            structural = true;
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(structural);
+}
+
 void RuntimeReport::note_egl_object(const std::string& key, const std::string& value) {
     bool structural = false;
     std::shared_ptr<Observer> observer;
@@ -463,6 +484,7 @@ std::string RuntimeReport::text() const {
     out += '\n';
     for (const auto& [key, value] : jni_details_) out += "jni-" + key + ": " + value + '\n';
     for (const auto& [key, value] : crash_details_) out += "crash-" + key + ": " + value + '\n';
+    for (const auto& [key, value] : watch_details_) out += "watch-" + key + ": " + value + '\n';
     return out;
 }
 
@@ -502,6 +524,7 @@ void RuntimeReport::clear() {
     egl_error_value_ = 0;
     crash_details_.clear();
     jni_details_.clear();
+    watch_details_.clear();
 }
 
 RuntimeReport& runtime_report() {
