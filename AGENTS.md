@@ -993,3 +993,25 @@ Keep the report additive, rebuild the APK, and ask the user for one more run.
 So the `GLSurfaceView` is created and its frames are presented, but they show nothing. Rule out
 "frames never presented". Focus on shader status, draw calls, the framebuffer bound at draw
 time (an off-screen FBO never resolved to framebuffer 0?) and the clear color and viewport.
+
+## Other guests tried on the device (2026-09-17)
+
+After Orange Roulette rendered, two more games were imported on the OnePlus 13. Each failure was
+a launcher or loader gap, not a translation bug:
+- **Flappy Bird** (`com.dotgears.flappybird`, AndEngine, ProGuard): now runs and is playable.
+  Three fixes: unmatched `Java_*` exports are skipped (`6a68580`), Google Play services
+  exceptions on the guest main thread are swallowed (`efe55d1`), and explicit intents for plugin
+  activities resolve from the plugin's APK so old AdMob finds `AdActivity` (`351c286`).
+- **Lane Racer** (`com.boombit.LaneRacer`, Unity + prime31): blocked. Its activity extends
+  `NativeActivity`, which needs `ANativeActivity_onCreate` in the library ART loads; our arm64
+  proxy has no such symbol. `80a9e6a` fixed the earlier `getActivityInfo` failure (the intent
+  names the plugin's own package), so the run now reaches exactly that point.
+
+**NEXT (needs its own spec): the `NativeActivity` bridge.** The proxy must export
+`ANativeActivity_onCreate`, build a guest-side `ANativeActivity` with its callbacks, and bridge
+`ANativeWindow`, `AInputQueue`/`AInputEvent`, `ALooper`, `AConfiguration` and `AAssetManager`.
+Berberis has prior art (`WrapGuestJNIOnLoad`, `ANativeActivity_onCreate`). That unlocks Unity 4/5
+and pure-NDK guests. Unity also needs `ZB_PRECISE_FAULTS` (Mono uses SIGSEGV for null checks).
+
+Launcher work that came out of these runs: `MainLooperGuard`, `AdHider` (per-plugin, on by
+default, toggled from the long-press menu), and package-manager answers for plugin components.
