@@ -74,4 +74,10 @@ done
 
 "$CC" -shared -O2 -Wall -Wl,-soname,libzbcompat.so -o "$OUT/lib/libzbcompat.so" "$ROOT/guest/compat/zbcompat.c"
 
+# EGL/window probe for egl_chain_test (Phase 7a Task 9). Built as a shared library so
+# LibraryRuntime can dlopen it and call its "main" symbol directly, the same way the
+# guest/testlib/*.c probes are driven; it links against the generated EGL/GLESv2 stubs above.
+"$CC" -shared -fPIC -O2 -Wall -Wl,-soname,libzbeglprobe.so -o "$OUT/lib/libzbeglprobe.so" \
+    "$ROOT/guest/tests/zbeglprobe.c" -L"$OUT/lib" -lEGL -lGLESv2
+
 echo "guest build ok"

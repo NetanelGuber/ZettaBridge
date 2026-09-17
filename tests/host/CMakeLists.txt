@@ -60,6 +60,12 @@ target_link_libraries(egl_chain_test PRIVATE zbcore zbmockjvm)
 foreach(egl_chain_mode no-backend with-backend)
     add_test(NAME egl_chain_test_${egl_chain_mode} COMMAND egl_chain_test ${egl_chain_mode})
 endforeach()
+# window-surface mode (Phase 7a Task 9) runs guest/tests/zbeglprobe.c through a real
+# LibraryRuntime; needs tools/build_guest.sh and the extracted sysroot.
+add_test(NAME egl_chain_test_window_surface COMMAND egl_chain_test window-surface
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/zbhost
+    ${CMAKE_SOURCE_DIR}/build/guest/lib)
 
 # ZBridge.java and core/android/zbridge_jni.cpp declare and define the same native methods.
 add_test(NAME zbridge_natives_check
