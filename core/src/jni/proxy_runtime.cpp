@@ -250,7 +250,11 @@ ProxyLoadResult ProxyRuntime::on_proxy_loaded(JniBackend::Env env, const std::st
         const LibraryRuntimeOptions options = options_;
         lock.unlock();
         std::string start_error;
+        // Phase notes: between "the plugin is known" and "a library loaded" the report was blind,
+        // and a guest process that never gets past zbhost looks identical to one that never ran.
+        runtime_report().note_jni_detail("runtime-start", "starting " + options.zbhost, true);
         const bool started = engine_.start(options, start_error);
+        runtime_report().note_jni_detail("runtime-start", started ? "ok" : "failed: " + start_error, true);
         lock.lock();
         start_state_ = started ? StartState::Started : StartState::Failed;
         start_error_ = started ? std::string() : std::move(start_error);
@@ -263,6 +267,7 @@ ProxyLoadResult ProxyRuntime::on_proxy_loaded(JniBackend::Env env, const std::st
     }
 
     lock.unlock();
+    runtime_report().note_jni_detail("loading", location.library, true);
     const JniLoadReport report = engine_.load(env, location.guest_library);
     lock.lock();
     if (!report.ok) return fail_locked(key, location.library, report.error);
