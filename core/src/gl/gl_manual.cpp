@@ -265,6 +265,7 @@ std::optional<std::uint64_t> gl_pixel_bytes(GLenum format, GLenum type, GLsizei 
             bytes_per_pixel = 3;
             break;
         case 0x1908:  // GL_RGBA
+        case 0x80E1:  // GL_BGRA_EXT (EXT_texture_format_BGRA8888, used by old NME/lime builds)
             bytes_per_pixel = 4;
             break;
         default:

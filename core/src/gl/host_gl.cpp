@@ -3,6 +3,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -48,6 +50,17 @@ void HostGl::Call::fail(GLenum error, const char* reason) {
 void HostGl::reject(Call& call, GLenum error, const char* reason) {
     const char* name = call.index() < kGlHostCalls.size() ? kGlHostCalls[call.index()].name : "?";
     log("GLES %s rejected: %s", name, reason);
+    // Guests rarely call glGetError, so a rejection is otherwise silent (a texture that never
+    // got its pixels renders black). Count them, and keep the first few with their arguments.
+    static std::atomic<std::uint64_t> rejections{0};
+    const std::uint64_t number = ++rejections;
+    runtime_report().note_gl_detail("rejections", std::to_string(number), true);
+    if (number <= 4) {
+        char text[256];
+        std::snprintf(text, sizeof text, "%s: %s args=0x%x,0x%x,0x%x,0x%x", name, reason, call.arg(0),
+                      call.arg(1), call.arg(2), call.arg(3));
+        runtime_report().note_gl_detail("rejection-" + std::to_string(number), text, false);
+    }
     backend_.set_error(error);
 }
 

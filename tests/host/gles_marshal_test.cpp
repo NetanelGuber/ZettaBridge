@@ -218,6 +218,8 @@ int main() {
     CHECK(zb::gl_pixel_bytes(0x1907, 0x1401, 1, 2, 4) == 7);   // RGB/U8: 3 + pad + 3
     CHECK(zb::gl_pixel_bytes(0x1907, 0x8363, 3, 2, 8) == 14);  // RGB/565: 6 + pad + 6
     CHECK(zb::gl_pixel_bytes(0x1908, 0x1401, 2, 2, 1) == 16);  // RGBA/U8
+    CHECK(zb::gl_pixel_bytes(0x80E1, 0x1401, 2, 2, 1) == 16);  // BGRA_EXT/U8
+    CHECK(!zb::gl_pixel_bytes(0x80E1, 0x8033, 1, 1, 4));       // BGRA_EXT/4444 is invalid
     CHECK(!zb::gl_pixel_bytes(0x1907, 0x8033, 1, 1, 4));       // RGB/4444 is invalid
     struct PixelCase {
         std::uint32_t format;
