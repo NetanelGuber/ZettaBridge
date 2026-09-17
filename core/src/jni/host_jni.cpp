@@ -329,6 +329,11 @@ JniBackend::Ref HostJni::resolve_ref(std::uint32_t handle, const char* function)
     return impl_->resolve(impl_->thread(), handle, function);
 }
 
+std::uint32_t HostJni::new_local_handle(JniBackend::Ref ref) {
+    if (ref == 0) return 0;
+    return impl_->local(impl_->thread(), ref);
+}
+
 std::uint32_t HostJni::load_library_on_current(JniBackend::Env env, const std::string& path,
                                                std::uint32_t guest_flags, std::string& error) {
     return loader_operation(*impl_, env, false, guest_flags, path, error);

@@ -1,4 +1,5 @@
 add_library(zbcore STATIC
+    src/android/host_native_window.cpp
     src/assets/host_assets.cpp
     src/cp15.cpp
     src/elf_fixups.cpp

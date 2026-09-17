@@ -54,6 +54,10 @@ public:
     // calling thread; 0 for the null handle. Fatal for an invalid handle, like every JNI reference
     // operation. function names the caller for the error message.
     JniBackend::Ref resolve_ref(std::uint32_t handle, const char* function);
+    // The reverse of resolve_ref: wraps a host reference as a guest JNI local handle of the
+    // calling thread's current frame. 0 for a null ref. Lets another host-call dispatcher
+    // (HostNativeWindow) hand a Java object back to the guest as a jobject.
+    std::uint32_t new_local_handle(JniBackend::Ref ref);
 
     // Runs a guest function as native code called from Java on the calling host thread, whose
     // host JNIEnv is env. Uses the guest thread this host thread already runs, or else this host

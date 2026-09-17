@@ -48,6 +48,19 @@ add_executable(asset_chain_test asset_chain_test.cpp)
 target_link_libraries(asset_chain_test PRIVATE zbcore zbmockjvm)
 add_test(NAME asset_chain_test COMMAND asset_chain_test)
 
+# ANativeWindow_* host calls against the mock NativeWindowBackend (Phase 7a Task 5).
+add_executable(native_window_test native_window_test.cpp)
+target_link_libraries(native_window_test PRIVATE zbcore zbmockjvm)
+add_test(NAME native_window_test COMMAND native_window_test)
+
+# Proves GuestJniEngine chains EglBackend/NativeWindowBackend alongside HostGl/HostAssets/HostJni
+# (Phase 7a Task 6). Each mode is its own process, like gl_chain_test.cpp.
+add_executable(egl_chain_test egl_chain_test.cpp mock_egl.cpp)
+target_link_libraries(egl_chain_test PRIVATE zbcore zbmockjvm)
+foreach(egl_chain_mode no-backend with-backend)
+    add_test(NAME egl_chain_test_${egl_chain_mode} COMMAND egl_chain_test ${egl_chain_mode})
+endforeach()
+
 # ZBridge.java and core/android/zbridge_jni.cpp declare and define the same native methods.
 add_test(NAME zbridge_natives_check
     COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/check_zbridge_natives.py)
