@@ -1275,27 +1275,25 @@ patch `TableBranch` from this coincidence alone. The current implementation in
 `third_party/dynarmic/src/dynarmic/frontend/A32/translate/impl/thumb32_load_store_dual.cpp`
 appears correct on inspection (`PC() + 2 * ZeroExtend(ReadMemory16(...))`).
 
+The first hypothesis is now rejected. `guest/tests/tbh_static.c` executes a real Thumb
+PC-relative TBH through zbrun, checks both entry zero and the distant entry at index 98, and
+returns the literal associated with each target. The focused translated run passed exactly:
+`tbh near=17 distant=98`, exit 0. Keep this regression, but do not change Dynarmic's
+`TableBranch`. The device PC was imprecise; the next APK must obtain the real faulting instruction.
+
 ### Roadmap for Claude/Codex
 
-1. Add a minimal translated arm32 Thumb regression that executes a PC-relative
-   `tbh [pc, index, lsl #1]`, selects a nontrivial/distant table entry (include index 98), and
-   returns a literal unique to the selected target. Exercise the real Dynarmic path, not a model
-   of the instruction. State the mutation it catches: branching to the table address/value rather
-   than `Align(PC, 2) + 2 * entry`. Observe RED before changing production code.
-2. If the regression is RED, reduce it until the failing condition is known, then make one
-   minimal Dynarmic fix and observe GREEN. The Dynarmic submodule already has the required
-   five-file baseline patch (precise faults, ARMv8 acquire/release instructions and CRC); preserve
-   it and do not stage a parent submodule-pointer change accidentally. Document any intentional
-   addition to that baseline.
-3. If the regression is GREEN, reject the TBH hypothesis. Make the launcher run this plugin with
-   `ZB_PRECISE_FAULTS=1` or add bounded register/fault-context fields to `RuntimeReport`, rebuild,
-   and rerun on the phone. Normal execution defaults to imprecise faults, so the current PC alone
-   cannot identify the faulting instruction conclusively.
-4. Once the real failing instruction and bad input are proven, add the smallest regression at
-   that boundary, implement one fix, run focused tests, then the full 46/46 host suite, 9/9 guest
+1. Make the launcher guest runtime enable `ZB_PRECISE_FAULTS=1` before `Process` construction (or
+   add an equivalent explicit engine option) and persist the bounded guest register/fault context
+   in `RuntimeReport`. Do this as a diagnostic build, because precise memory stops cost runtime
+   performance. Rebuild and rerun the same Flutter plugin on the phone.
+2. Symbolize the new exact PC in the bundled arm32 object and disassemble the surrounding basic
+   block. Record the guest registers needed to trace the `0x0000000f` read back to its source.
+3. Once the real failing instruction and bad input are proven, add the smallest regression at
+   that boundary, implement one fix, run focused tests, then the full 46/46 host suite, 10/10 guest
    suite, generators, Android links, launcher bundle and Gradle APK. Commit the completed task and
    update this file.
-5. Phase 7a Task 10 remains unaccepted until Flutter renders a visible frame and the report shows
+4. Phase 7a Task 10 remains unaccepted until Flutter renders a visible frame and the report shows
    no guest exit, EGL context/window-surface activity and rising swaps.
 
 Current branch is `codex/phase4d-launcher`. The only dirty path before this handoff was the

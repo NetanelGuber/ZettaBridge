@@ -34,6 +34,7 @@ run_case() {
 
 CASE_ARGS=""
 run_case hello_static 7 world
+run_case tbh_static 0
 run_case hello_dynamic 3 "$GUEST/zb_io.tmp"
 run_case threads_dynamic 0
 run_case kuser_dynamic 0
