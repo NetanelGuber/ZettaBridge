@@ -354,3 +354,19 @@ eglWaitSync:
     svc #0x5a00d3
     bx lr
 .size eglWaitSync, . - eglWaitSync
+
+.global eglCreateImageKHR
+.type eglCreateImageKHR, %function
+.p2align 2
+eglCreateImageKHR:
+    svc #0x5a00d6
+    bx lr
+.size eglCreateImageKHR, . - eglCreateImageKHR
+
+.global eglDestroyImageKHR
+.type eglDestroyImageKHR, %function
+.p2align 2
+eglDestroyImageKHR:
+    svc #0x5a00d7
+    bx lr
+.size eglDestroyImageKHR, . - eglDestroyImageKHR

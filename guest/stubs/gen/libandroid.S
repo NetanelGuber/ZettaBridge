@@ -210,3 +210,83 @@ ANativeWindow_toSurface:
     svc #0x5a00a7
     bx lr
 .size ANativeWindow_toSurface, . - ANativeWindow_toSurface
+
+.global ANativeWindow_lock
+.type ANativeWindow_lock, %function
+.p2align 2
+ANativeWindow_lock:
+    svc #0x5a00d4
+    bx lr
+.size ANativeWindow_lock, . - ANativeWindow_lock
+
+.global ANativeWindow_unlockAndPost
+.type ANativeWindow_unlockAndPost, %function
+.p2align 2
+ANativeWindow_unlockAndPost:
+    svc #0x5a00d5
+    bx lr
+.size ANativeWindow_unlockAndPost, . - ANativeWindow_unlockAndPost
+
+.global ALooper_acquire
+.type ALooper_acquire, %function
+.p2align 2
+ALooper_acquire:
+    svc #0x5a00dc
+    bx lr
+.size ALooper_acquire, . - ALooper_acquire
+
+.global ALooper_addFd
+.type ALooper_addFd, %function
+.p2align 2
+ALooper_addFd:
+    svc #0x5a00dd
+    bx lr
+.size ALooper_addFd, . - ALooper_addFd
+
+.global ALooper_forThread
+.type ALooper_forThread, %function
+.p2align 2
+ALooper_forThread:
+    svc #0x5a00de
+    bx lr
+.size ALooper_forThread, . - ALooper_forThread
+
+.global ALooper_pollOnce
+.type ALooper_pollOnce, %function
+.p2align 2
+ALooper_pollOnce:
+    svc #0x5a00df
+    bx lr
+.size ALooper_pollOnce, . - ALooper_pollOnce
+
+.global ALooper_prepare
+.type ALooper_prepare, %function
+.p2align 2
+ALooper_prepare:
+    svc #0x5a00e0
+    bx lr
+.size ALooper_prepare, . - ALooper_prepare
+
+.global ALooper_release
+.type ALooper_release, %function
+.p2align 2
+ALooper_release:
+    svc #0x5a00e1
+    bx lr
+.size ALooper_release, . - ALooper_release
+
+.global ALooper_removeFd
+.type ALooper_removeFd, %function
+.p2align 2
+ALooper_removeFd:
+    svc #0x5a00e2
+    bx lr
+.size ALooper_removeFd, . - ALooper_removeFd
+
+.global ALooper_wake
+.type ALooper_wake, %function
+.p2align 2
+ALooper_wake:
+    svc #0x5a00e3
+    bx lr
+.size ALooper_wake, . - ALooper_wake

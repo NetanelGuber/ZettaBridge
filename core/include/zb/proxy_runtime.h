@@ -15,6 +15,7 @@
 #include "zb/host_egl.h"
 #include "zb/host_gl.h"
 #include "zb/host_native_window.h"
+#include "zb/host_platform_compat.h"
 #include "zb/jni_backend.h"
 #include "zb/jni_loader.h"
 #include "zb/library_runtime.h"
@@ -163,6 +164,7 @@ public:
     HostEgl* host_egl() { return host_egl_; }
     // nullptr unless a window_backend was passed to the constructor.
     HostNativeWindow* host_native_window() { return host_windows_; }
+    HostPlatformCompat* host_platform_compat() { return host_compat_; }
 
 protected:
     // Clears a Java exception left pending by a failed load and describes it for the error
@@ -178,6 +180,7 @@ private:
     HostAssets* host_assets_ = nullptr;
     HostEgl* host_egl_ = nullptr;
     HostNativeWindow* host_windows_ = nullptr;
+    HostPlatformCompat* host_compat_ = nullptr;
     JniLoader* loader_;
 };
 

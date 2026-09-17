@@ -1138,3 +1138,11 @@ glViewport:
     svc #0x5a008d
     bx lr
 .size glViewport, . - glViewport
+
+.global glEGLImageTargetTexture2DOES
+.type glEGLImageTargetTexture2DOES, %function
+.p2align 2
+glEGLImageTargetTexture2DOES:
+    svc #0x5a00d8
+    bx lr
+.size glEGLImageTargetTexture2DOES, . - glEGLImageTargetTexture2DOES

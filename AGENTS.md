@@ -1089,3 +1089,32 @@ final APK contains `assets/zb/guest/lib/libEGL.so`.
 `8c196fbc9ed682d3cf4d364a4e51404c856a8297651cfdb7dbac80a8c8af2db2`), force-stop or reimport
 `com.example.perecup_simulator`, rerun it, and send the Last run report. Task 10 remains open
 until that report is recorded in `docs/phase7a-acceptance.md`.
+
+## Phase 7a Task 10 second device result: Flutter loader compatibility
+
+After `libEGL.so` was bundled, the next device report stopped at missing
+`libjnigraphics.so`. Inspection of avtobuy's armeabi-v7a `libflutter.so` found sixteen direct
+Android platform imports outside the Phase 7a core surface: three `AndroidBitmap_*`, two
+software `ANativeWindow_*`, two EGLImage KHR functions, one GLES OES function and eight
+`ALooper_*` functions. Three unresolved `OPENSSL_memory_*` names are weak and legally remain
+null; the real guest linker confirmed they do not block loading.
+
+The append-only compatibility surface now occupies indices 212-227 without moving any old
+index. `tools/gen_stubs.py` can append later groups to an existing stub library and generates a
+new arm32 `libjnigraphics.so`. `HostPlatformCompat` claims these indices, records every use as an
+unimplemented host call, and returns safe failure values: `-ENOSYS` for window locking,
+`ANDROID_BITMAP_RESULT_BAD_PARAMETER` for bitmap access, `ALOOPER_POLL_ERROR`/failure values for
+loopers, and null/false for EGLImage/OES calls. This is deliberately loader-first; the next report
+will identify which full pointer bridge is actually needed.
+
+TDD evidence: `platform_compat_test` failed first on the absent handler and again on absent looper
+constants, then passed all sixteen result/report cases. The bundle validator failed first on
+missing `libjnigraphics.so`. A real translated `dlopen(RTLD_NOW)` of avtobuy's arm32
+`libflutter.so` now succeeds against the generated guest libraries. Fresh verification: host
+44/44, guest 9/9, GLES/EGL/JNI generators pass, Android `zbridge`/`zbproxy` link, bundle validator
+passes and the Gradle debug APK builds.
+
+**NEXT:** install `/sdcard/ZettaBridge-debug.apk` (SHA-256
+`1781da56accd7c25698805a5dd1f15a8b4112d063af2f79d1cea7c1971847455`), force-stop or reimport
+`com.example.perecup_simulator`, rerun it, and send the Last run report. If it reaches one of the
+safe fallbacks, implement only the first path it actually uses. Task 10 is still open.

@@ -143,7 +143,9 @@ def checked_surface():
 
     base = len(gen_stubs.gles2_names()) + len(gen_stubs.android_names())
     expected_rows = [(base + index, "libEGL.so", name) for index, name in enumerate(header_names)]
-    actual_rows = [row for row in committed_hostcalls() if row[1] == "libEGL.so"]
+    core_names = set(header_names)
+    actual_rows = [row for row in committed_hostcalls()
+                   if row[1] == "libEGL.so" and row[2] in core_names]
     if actual_rows != expected_rows:
         sys.exit("core/src/gen/hostcalls.inc disagrees with tools/gen_stubs.py for libEGL.so")
 
