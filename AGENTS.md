@@ -1215,3 +1215,27 @@ replacement is preserved. Unit and translated modes both pass.
 **NEXT:** Task 12: full generators/host/guest/Android regression, build and copy the launcher
 APK, record its hash here, then ask for the Flutter device run. Do not write Phase 7a acceptance
 until a visible frame and the runtime report satisfy the device gate.
+
+### Phase 7a Flutter ALooper Task 12 local gate ready
+
+Fresh verification after Tasks 10-11:
+
+```text
+gen_gles.py --check, gen_egl.py --check, gen_jni.py --check   PASS
+ctest --test-dir build/host                                  46/46 PASS
+tools/build_guest.sh                                         PASS
+tools/run_guest_tests.sh                                     9/9 PASS
+Android arm64 zbridge/zbproxy                                PASS
+tools/make_launcher_bundle.sh                                PASS (7.1 MiB)
+Gradle :app:assembleDebug                                    PASS
+```
+
+The ready APK is `/sdcard/ZettaBridge-debug.apk`, 9,226,800 bytes, SHA-256
+`956780e0caee29702a903b36c31ca13946cab1918f9d8ec1727d9dfe592ac047`.
+Its ZIP contains the generated guest `libandroid.so` and the rebuilt arm64 `libzbridge.so`.
+
+**NEXT/device gate:** install this APK over the current launcher, force-stop it, launch
+`com.example.perecup_simulator`, wait at least 10 seconds, and send both the visible result and
+Last run report. Acceptance needs a visible Flutter frame, no guest exit, EGL activity/swaps,
+no thread mismatch and no unimplemented call. If a new first missing function appears, record it
+as a follow-up rather than declaring Phase 7a complete.
