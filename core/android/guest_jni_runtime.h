@@ -5,8 +5,10 @@
 #include <string>
 
 #include "asset_driver_backend.h"
+#include "egl_driver_backend.h"
 #include "gl_driver_backend.h"
 #include "jni_env_backend.h"
+#include "native_window_driver_backend.h"
 #include "zb/proxy_runtime.h"
 
 namespace zb {
@@ -26,8 +28,10 @@ public:
 private:
     class Engine final : public GuestJniEngine {
     public:
-        Engine(JniEnvBackend& backend, GlBackend& gl_backend, AssetBackend& asset_backend)
-            : GuestJniEngine(backend, &gl_backend, gl_egl_context_current, &asset_backend),
+        Engine(JniEnvBackend& backend, GlBackend& gl_backend, AssetBackend& asset_backend,
+               EglBackend& egl_backend, NativeWindowBackend& window_backend)
+            : GuestJniEngine(backend, &gl_backend, gl_egl_context_current, &asset_backend,
+                             &egl_backend, &window_backend),
               jni_backend_(backend) {
             enable_gl_diagnostics();
         }
@@ -45,6 +49,8 @@ private:
     JniEnvBackend backend_;
     GlDriverBackend gl_backend_;
     AndroidAssetBackend asset_backend_;
+    EglDriverBackend egl_backend_;
+    AndroidNativeWindowBackend window_backend_;
     Engine engine_;
     ProxyRuntime proxies_;
 };

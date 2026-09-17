@@ -32,7 +32,8 @@ GuestJniRuntime* GuestJniRuntime::peek() {
 }
 
 GuestJniRuntime::GuestJniRuntime(JavaVM* vm)
-    : backend_(vm), engine_(backend_, gl_backend_, asset_backend_), proxies_(engine_) {}
+    : backend_(vm), engine_(backend_, gl_backend_, asset_backend_, egl_backend_, window_backend_),
+      proxies_(engine_) {}
 
 bool GuestJniRuntime::Engine::bind_class_loader(JniBackend::Env env, JniBackend::Ref loader, std::string& error) {
     JNIEnv* e = E(env);
