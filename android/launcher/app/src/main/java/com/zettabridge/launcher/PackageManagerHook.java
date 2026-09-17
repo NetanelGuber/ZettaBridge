@@ -137,13 +137,19 @@ final class PackageManagerHook implements InvocationHandler {
     private Object pluginComponent(String method, Object arg) {
         if (!(arg instanceof ComponentName)) return null;
         ComponentName cn = (ComponentName) arg;
-        if (!hostPackage.equals(cn.getPackageName())) return null;
+        if (!hostPackage.equals(cn.getPackageName()) && !isCurrentPluginPackage(cn.getPackageName())) return null;
         ComponentInfo info = runtime.findComponent(method, cn.getClassName());
         if (info == null) return null;
         if (info instanceof ServiceInfo) return new ServiceInfo((ServiceInfo) info);
         if (info instanceof ActivityInfo) return new ActivityInfo((ActivityInfo) info);
         if (info instanceof ProviderInfo) return new ProviderInfo((ProviderInfo) info);
         return info;
+    }
+
+    /** NativeActivity asks for its own intent's component, which names the plugin's package. */
+    private boolean isCurrentPluginPackage(String packageName) {
+        LoadedPlugin p = runtime.current();
+        return p != null && p.info != null && p.info.packageName.equals(packageName);
     }
 
     private ResolveInfo pluginActivityResolve(Object arg) {
