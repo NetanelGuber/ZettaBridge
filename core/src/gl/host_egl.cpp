@@ -182,6 +182,36 @@ std::optional<std::uint32_t> HostEgl::allocate_guest(std::size_t size) {
 
 #include "gen/egl_dispatch.inc"
 
+namespace {
+
+// The last EGL calls with their results. A guest that dies inside its own code usually died
+// because an EGL call answered zero, and there is no logcat on the device.
+constexpr std::size_t kRecentEglCalls = 24;
+struct RecentEgl {
+    std::atomic<std::uint32_t> index{0};
+    std::atomic<std::uint32_t> result{0};
+};
+RecentEgl g_recent_egl[kRecentEglCalls];
+std::atomic<std::uint64_t> g_recent_egl_next{0};
+
+}  // namespace
+
+std::string egl_recent_calls() {
+    const std::uint64_t next = g_recent_egl_next.load(std::memory_order_relaxed);
+    if (next == 0) return "(none)";
+    const std::uint64_t first = next > kRecentEglCalls ? next - kRecentEglCalls : 0;
+    std::string out;
+    for (std::uint64_t i = first; i < next; ++i) {
+        const std::uint32_t index = g_recent_egl[i % kRecentEglCalls].index.load(std::memory_order_relaxed);
+        const std::uint32_t result = g_recent_egl[i % kRecentEglCalls].result.load(std::memory_order_relaxed);
+        const char* name = index < kEglHostCalls.size() ? kEglHostCalls[index].name : "?";
+        char text[96];
+        std::snprintf(text, sizeof text, "%s%s=0x%x", out.empty() ? "" : " ", name, result);
+        out += text;
+    }
+    return out;
+}
+
 bool HostEgl::handle_host_call(std::uint32_t index, GuestThread& thread) {
     if (index < kEglHostCallFirst || index > kEglHostCallLast) return false;
     // A rejection never reaches the driver, so its error is served from here and takes
@@ -196,7 +226,12 @@ bool HostEgl::handle_host_call(std::uint32_t index, GuestThread& thread) {
         runtime_report().note_egl_current(static_cast<std::uint64_t>(::syscall(SYS_gettid)));
     }
     Call call(*this, thread, index);
-    if (dispatch(call)) return true;
+    if (dispatch(call)) {
+        const std::uint64_t slot = g_recent_egl_next.fetch_add(1, std::memory_order_relaxed) % kRecentEglCalls;
+        g_recent_egl[slot].index.store(index, std::memory_order_relaxed);
+        g_recent_egl[slot].result.store(thread.regs()[0], std::memory_order_relaxed);
+        return true;
+    }
     log("EGL host call index %u has no generated handler", index);
     return true;
 }

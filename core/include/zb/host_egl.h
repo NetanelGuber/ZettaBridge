@@ -37,6 +37,9 @@ EGLint egl_object_error(EglObject kind);
 // exactly as HostGl does for GLES. Every EGL object crosses as a 32-bit handle: handle 0 is
 // never allocated, so guest comparisons against EGL_NO_DISPLAY/EGL_NO_CONTEXT/EGL_NO_SURFACE
 // (all 0) keep working.
+// The last EGL host calls this process served with their results, newest last, for a crash report.
+std::string egl_recent_calls();
+
 class HostEgl {
 public:
     using GuestAllocator = std::function<std::optional<std::uint32_t>(std::size_t)>;

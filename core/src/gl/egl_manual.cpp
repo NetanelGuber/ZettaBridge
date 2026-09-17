@@ -178,7 +178,22 @@ bool zbegl_manual_eglChooseConfig(HostEgl& host, HostEgl::Call& call) {
     if (!call.valid()) return true;
     std::vector<EGLint> attribs;
     if (!read_attribs(host, call, 1, attribs)) return true;
-    return serve_configs(host, call, dpy, &attribs, 2);
+    const bool served = serve_configs(host, call, dpy, &attribs, 2);
+    // Flutter chooses one configuration per context (onscreen, then offscreen) and does not check
+    // the second for failure, so record what each request asked for and how many it got.
+    static std::atomic<unsigned> chosen{0};
+    const unsigned seen = chosen.fetch_add(1) + 1;
+    if (seen <= 4) {
+        std::string text;
+        char word[24];
+        for (std::size_t i = 0; i + 1 < attribs.size() && i < 24; i += 2) {
+            std::snprintf(word, sizeof word, "%s0x%x=%d", text.empty() ? "" : " ", attribs[i], attribs[i + 1]);
+            text += word;
+        }
+        // The outcome itself shows up in crash-recent-egl-calls (eglChooseConfig=0x1 or 0x0).
+        runtime_report().note_egl_object("choose-" + std::to_string(seen), text);
+    }
+    return served;
 }
 
 bool zbegl_manual_eglGetConfigs(HostEgl& host, HostEgl::Call& call) {
