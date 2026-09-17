@@ -73,6 +73,7 @@ final class RuntimeBundle {
                 && new File(root, "guest/lib/libzbcompat.so").isFile()
                 && new File(root, "guest/lib/libzbjni.so").isFile()
                 && new File(root, "guest/lib/libGLESv2.so").isFile()
+                && new File(root, "guest/lib/libEGL.so").isFile()
                 && new File(root, "guest/lib/libandroid.so").isFile()
                 && new File(root, "host/libzbproxy.so").isFile();
     }

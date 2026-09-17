@@ -1071,3 +1071,21 @@ patch to this one.
 Open risks: contexts follow the **host** thread, so a Java thread borrowing a carrier can take a
 context somewhere unexpected - the mismatch line exists to catch exactly that. `ANativeWindow_lock`
 is deliberately unimplemented (the buffer lives outside the guest's 4 GiB space).
+
+## Phase 7a Task 10 first device result: launcher omitted `libEGL.so`
+
+The first Flutter rerun did not exercise the Phase 7a bridge. Its report stopped before
+`JNI_OnLoad` with `libflutter.so guest dlopen failed: library "libEGL.so" not found`. Root cause
+was the launcher packaging path: `build/guest/lib/libEGL.so` existed, but
+`tools/make_launcher_bundle.sh`, `tools/check_launcher_bundle.py` and
+`RuntimeBundle.requiredFilesPresent` still listed only the older guest runtime libraries.
+
+The bundle validator was changed first and observed failing with exactly the missing `libEGL.so`.
+The packaging script and runtime completeness check now require it. Launcher contracts, the
+bundle validator, Android `zbridge`/`zbproxy` targets and the Gradle debug APK build pass; the
+final APK contains `assets/zb/guest/lib/libEGL.so`.
+
+**NEXT:** install `/sdcard/ZettaBridge-debug.apk` (SHA-256
+`8c196fbc9ed682d3cf4d364a4e51404c856a8297651cfdb7dbac80a8c8af2db2`), force-stop or reimport
+`com.example.perecup_simulator`, rerun it, and send the Last run report. Task 10 remains open
+until that report is recorded in `docs/phase7a-acceptance.md`.

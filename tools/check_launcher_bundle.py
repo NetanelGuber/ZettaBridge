@@ -26,6 +26,7 @@ RUNTIME = {
     "assets/zb/guest/lib/libzbcompat.so",
     "assets/zb/guest/lib/libzbjni.so",
     "assets/zb/guest/lib/libGLESv2.so",
+    "assets/zb/guest/lib/libEGL.so",
     "assets/zb/guest/lib/libandroid.so",
     "assets/zb/host/libzbproxy.so",
     "assets/zb-files.txt",
@@ -62,6 +63,7 @@ def main() -> None:
         "assets/zb/guest/lib/libzbcompat.so",
         "assets/zb/guest/lib/libzbjni.so",
         "assets/zb/guest/lib/libGLESv2.so",
+        "assets/zb/guest/lib/libEGL.so",
         "assets/zb/guest/lib/libandroid.so",
     ]:
         elf(root / relative, 1, 40)
