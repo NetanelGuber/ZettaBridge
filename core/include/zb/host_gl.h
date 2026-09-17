@@ -16,6 +16,11 @@ namespace zb {
 
 // GLES 2.0 host-call dispatcher. Guest code passes AAPCS32 words in r0-r3 and on its stack;
 // HostGl translates those words to the portable GlBackend seam after Dynarmic has stopped.
+// GL visibility diagnostics in the runtime report (gl_diagnostics.cpp). Off by default: they
+// add driver queries to the call stream. The Android runtime turns them on.
+void enable_gl_diagnostics();
+bool gl_diagnostics_enabled();
+
 class HostGl {
 public:
     using GuestAllocator = std::function<std::optional<std::uint32_t>(std::size_t)>;

@@ -112,7 +112,7 @@ private:
     bool gl_error_known_ = false;
     std::string gl_error_function_;
     std::uint32_t gl_error_value_ = 0;
-    static constexpr std::size_t kMaxGlDetails = 48;
+    static constexpr std::size_t kMaxGlDetails = 96;
     std::vector<std::pair<std::string, std::string>> gl_details_;
 };
 

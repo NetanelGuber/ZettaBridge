@@ -28,7 +28,9 @@ private:
     public:
         Engine(JniEnvBackend& backend, GlBackend& gl_backend, AssetBackend& asset_backend)
             : GuestJniEngine(backend, &gl_backend, gl_egl_context_current, &asset_backend),
-              jni_backend_(backend) {}
+              jni_backend_(backend) {
+            enable_gl_diagnostics();
+        }
         bool bind_class_loader(JniBackend::Env env, JniBackend::Ref loader, std::string& error) override;
 
     protected:

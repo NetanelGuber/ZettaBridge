@@ -81,9 +81,9 @@ bool HostGl::handle_host_call(std::uint32_t index, GuestThread& thread) {
     }
     Call call(*this, thread, index);
     if (dispatch(call)) {
-        // Visibility diagnostics query the driver, so they run only on a real driver (the one
-        // configuration with an EGL probe); mock-backend tests keep exact call logs.
-        if (call.valid() && egl_context_probe_) gl_diagnose(*this, call);
+        // Visibility diagnostics query the driver, so they run only once the Android runtime
+        // enables them; mock-backend tests keep exact call logs.
+        if (call.valid() && gl_diagnostics_enabled()) gl_diagnose(*this, call);
         if (call.valid() && std::strcmp(name, "glGetError") == 0) {
             const std::uint32_t error = thread.regs()[0];
             if (error != 0) runtime_report().note_gl_error(name, error);

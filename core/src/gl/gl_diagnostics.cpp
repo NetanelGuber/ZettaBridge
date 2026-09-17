@@ -5,6 +5,8 @@
 
 #include "gl/gl_diagnostics.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -33,6 +35,23 @@ constexpr GLenum kStencilTest = 0x0B90;
 constexpr GLenum kFramebuffer = 0x8D40;
 constexpr GLenum kRgba = 0x1908;
 constexpr GLenum kUnsignedByte = 0x1401;
+constexpr GLenum kFloat = 0x1406;
+constexpr GLenum kTextureBinding2d = 0x8069;
+constexpr GLenum kActiveTexture = 0x84E0;
+constexpr GLenum kTexture2d = 0x0DE1;
+constexpr GLenum kMagFilter = 0x2800;
+constexpr GLenum kMinFilter = 0x2801;
+constexpr GLenum kWrapS = 0x2802;
+constexpr GLenum kWrapT = 0x2803;
+constexpr GLenum kAttribEnabled = 0x8622;
+
+struct Attrib {
+    bool set = false;
+    GLint size = 0;
+    GLenum type = 0;
+    GLint stride = 0;
+    std::uint32_t pointer = 0;
+};
 
 // Draw numbers at which the state and a 3x3 pixel grid are sampled after the draw.
 constexpr std::uint64_t kSampleDraws[] = {1, 300, 3000, 30000};
@@ -53,7 +72,16 @@ struct State {
     std::uint64_t buffer_datas = 0;
     std::uint64_t matrices = 0;
     std::uint64_t use_programs = 0;
+    std::uint64_t tex_uploads = 0;
+    std::uint64_t tex_sub_images = 0;
+    std::uint64_t tex_parameters = 0;
+    std::uint64_t mipmaps = 0;
+    std::uint64_t uniform_ints = 0;
+    std::uint64_t pixel_stores = 0;
+    std::uint64_t shader_sources = 0;
+    std::uint64_t clear_samples = 0;
     GLuint bound_framebuffer = 0;
+    Attrib attribs[8];
 };
 
 State& state() {
@@ -123,6 +151,49 @@ void sample(HostGl& host, std::uint64_t draw, GLenum mode, GLsizei count) {
     const std::string key = "sample-draw-" + std::to_string(draw);
     detail(key.c_str(), text);
 
+    GLint texture = -1, active = -1;
+    GLint params[4] = {-1, -1, -1, -1};
+    gl.glGetIntegerv(kTextureBinding2d, &texture);
+    gl.glGetIntegerv(kActiveTexture, &active);
+    gl.glGetTexParameteriv(kTexture2d, kMinFilter, &params[0]);
+    gl.glGetTexParameteriv(kTexture2d, kMagFilter, &params[1]);
+    gl.glGetTexParameteriv(kTexture2d, kWrapS, &params[2]);
+    gl.glGetTexParameteriv(kTexture2d, kWrapT, &params[3]);
+    const std::string texture_key = key + "-texture";
+    detail(texture_key.c_str(), format("active=0x%x bound=%d min=0x%x mag=0x%x wrap-s=0x%x wrap-t=0x%x",
+                                       active, texture, params[0], params[1], params[2], params[3]));
+
+    std::string vertices;
+    for (GLuint index = 0; index < 8; ++index) {
+        GLint enabled = 0;
+        gl.glGetVertexAttribiv(index, kAttribEnabled, &enabled);
+        if (!enabled) continue;
+        const Attrib& attrib = state().attribs[index];
+        vertices += format("%sa%u:", vertices.empty() ? "" : " | ", index);
+        if (!attrib.set) {
+            vertices += "(no pointer)";
+            continue;
+        }
+        const GLint step = attrib.stride != 0 ? attrib.stride
+                                              : attrib.size * (attrib.type == kFloat ? 4 : 1);
+        for (int vertex = 0; vertex < 3; ++vertex) {
+            const std::uint32_t at = attrib.pointer + static_cast<std::uint32_t>(step * vertex);
+            if (attrib.type == kFloat) {
+                vertices += " [" + float_words(host, at, static_cast<std::uint32_t>(attrib.size)) + "]";
+            } else {
+                const std::uint8_t* bytes = host.runtime().memory().host_ptr(
+                    at, static_cast<std::uint64_t>(attrib.size), kPageRead);
+                vertices += " [";
+                for (GLint i = 0; bytes != nullptr && i < attrib.size; ++i) {
+                    vertices += format(i == 0 ? "%u" : " %u", bytes[i]);
+                }
+                vertices += "]";
+            }
+        }
+    }
+    const std::string vertex_key = key + "-vertices";
+    detail(vertex_key.c_str(), vertices);
+
     if (viewport[2] <= 0 || viewport[3] <= 0) return;
     std::string pixels;
     for (int row = 1; row <= 3; ++row) {
@@ -139,7 +210,13 @@ void sample(HostGl& host, std::uint64_t draw, GLenum mode, GLsizei count) {
     detail(pixel_key.c_str(), pixels);
 }
 
+std::atomic<bool> g_enabled{false};
+
 }  // namespace
+
+void enable_gl_diagnostics() { g_enabled.store(true, std::memory_order_relaxed); }
+
+bool gl_diagnostics_enabled() { return g_enabled.load(std::memory_order_relaxed); }
 
 void gl_diagnose(HostGl& host, HostGl::Call& call) {
     GlBackend& gl = host.backend();
@@ -151,7 +228,10 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
         GLint status = -1;
         gl.glGetShaderiv(shader, kCompileStatus, &status);
         if (status == 1) {
-            if (++s.shaders_ok == 1) detail("first-shader-source", shader_text(gl, shader, true));
+            if (++s.shaders_ok <= 4) {
+                const std::string key = "shader-source-" + std::to_string(s.shaders_ok);
+                detail(key.c_str(), shader_text(gl, shader, true));
+            }
         } else if (++s.shaders_failed == 1) {
             detail("first-shader-failure", format("status=%d log=", status) + shader_text(gl, shader, false));
             detail("first-shader-failure-source", shader_text(gl, shader, true));
@@ -207,6 +287,55 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
     }
     case ZB_GL_HC_glClear:
         if (++s.clears == 1) detail("first-clear-mask", format("0x%x", call.arg(0)));
+        if ((s.clears == 1 || s.clears == 200) && s.bound_framebuffer == 0) {
+            std::uint8_t rgba[4] = {};
+            GLint viewport[4] = {0, 0, 0, 0};
+            gl.glGetIntegerv(kViewport, viewport);
+            gl.glReadPixels(viewport[0] + viewport[2] / 2, viewport[1] + viewport[3] / 2, 1, 1, kRgba,
+                            kUnsignedByte, rgba);
+            const std::string key = "clear-" + std::to_string(s.clears) + "-center-pixel";
+            detail(key.c_str(), format("%02x%02x%02x%02x", rgba[0], rgba[1], rgba[2], rgba[3]));
+        }
+        break;
+    case ZB_GL_HC_glShaderSource:
+        ++s.shader_sources;
+        break;
+    case ZB_GL_HC_glTexSubImage2D:
+        if (++s.tex_sub_images == 1) {
+            detail("first-texsubimage", format("level=%d at=%d,%d %dx%d format=0x%x type=0x%x pixels=0x%x",
+                                               static_cast<GLint>(call.arg(1)), static_cast<GLint>(call.arg(2)),
+                                               static_cast<GLint>(call.arg(3)), static_cast<GLint>(call.arg(4)),
+                                               static_cast<GLint>(call.arg(5)), call.arg(6), call.arg(7), call.arg(8)));
+        }
+        detail("texsubimages", std::to_string(s.tex_sub_images), true);
+        break;
+    case ZB_GL_HC_glTexParameteri:
+    case ZB_GL_HC_glTexParameterf: {
+        const bool is_float = call.index() == ZB_GL_HC_glTexParameterf;
+        if (++s.tex_parameters <= 8) {
+            const std::string key = "texparameter-" + std::to_string(s.tex_parameters);
+            detail(key.c_str(), is_float ? format("f target=0x%x pname=0x%x param=%g", call.arg(0), call.arg(1),
+                                                  static_cast<double>(call.scalar<GLfloat>(2)))
+                                         : format("i target=0x%x pname=0x%x param=0x%x", call.arg(0), call.arg(1),
+                                                  call.arg(2)));
+        }
+        break;
+    }
+    case ZB_GL_HC_glGenerateMipmap:
+        detail("generate-mipmap", std::to_string(++s.mipmaps), true);
+        break;
+    case ZB_GL_HC_glUniform1i:
+        if (++s.uniform_ints <= 3) {
+            const std::string key = "uniform1i-" + std::to_string(s.uniform_ints);
+            detail(key.c_str(), format("location=%d value=%d", static_cast<GLint>(call.arg(0)),
+                                       static_cast<GLint>(call.arg(1))));
+        }
+        break;
+    case ZB_GL_HC_glPixelStorei:
+        if (++s.pixel_stores <= 3) {
+            const std::string key = "pixelstore-" + std::to_string(s.pixel_stores);
+            detail(key.c_str(), format("pname=0x%x param=%d", call.arg(0), static_cast<GLint>(call.arg(1))));
+        }
         break;
     case ZB_GL_HC_glClearColor:
         detail("last-clear-color", format("%g %g %g %g", static_cast<double>(call.scalar<GLfloat>(0)),
@@ -226,6 +355,29 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
                                       static_cast<GLint>(call.arg(2)), static_cast<GLint>(call.arg(3))), true);
         break;
     case ZB_GL_HC_glTexImage2D:
+        if (call.arg(8) != 0 && ++s.tex_uploads <= 3) {
+            const GLint width = static_cast<GLint>(call.arg(3));
+            const GLint height = static_cast<GLint>(call.arg(4));
+            const std::uint64_t bytes = (width > 0 && height > 0 && call.arg(7) == kUnsignedByte)
+                                            ? std::uint64_t(width) * std::uint64_t(height) *
+                                                  (call.arg(6) == kRgba ? 4 : 3)
+                                            : 0;
+            const std::uint8_t* data = bytes != 0 ? host.runtime().memory().host_ptr(call.arg(8), bytes, kPageRead)
+                                                  : nullptr;
+            std::uint64_t nonzero = 0;
+            for (std::uint64_t i = 0; data != nullptr && i < bytes; ++i) nonzero += data[i] != 0;
+            std::string head;
+            for (std::uint64_t i = 0; data != nullptr && i < std::min<std::uint64_t>(bytes, 16); ++i) {
+                head += format("%02x", data[i]);
+            }
+            const std::string key = "texupload-" + std::to_string(s.tex_uploads);
+            detail(key.c_str(), format("level=%d internal=0x%x %dx%d format=0x%x type=0x%x pixels=0x%x "
+                                       "readable=%d nonzero-bytes=%llu/%llu head=",
+                                       static_cast<GLint>(call.arg(1)), call.arg(2), width, height, call.arg(6),
+                                       call.arg(7), call.arg(8), data != nullptr ? 1 : 0,
+                                       (unsigned long long)nonzero, (unsigned long long)bytes) + head);
+        }
+        detail("teximages", std::to_string(s.tex_images + 1), true);
         if (++s.tex_images <= 2) {
             const std::string key = "teximage-" + std::to_string(s.tex_images);
             detail(key.c_str(), format("target=0x%x level=%d internal=0x%x %dx%d format=0x%x type=0x%x pixels=0x%x",
@@ -235,6 +387,14 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
         }
         break;
     case ZB_GL_HC_glVertexAttribPointer:
+        if (call.arg(0) < 8) {
+            Attrib& attrib = s.attribs[call.arg(0)];
+            attrib.set = true;
+            attrib.size = static_cast<GLint>(call.arg(1));
+            attrib.type = call.arg(2);
+            attrib.stride = static_cast<GLint>(call.arg(4));
+            attrib.pointer = call.arg(5);
+        }
         if (++s.attrib_pointers <= 3) {
             const std::string key = "attrib-pointer-" + std::to_string(s.attrib_pointers);
             detail(key.c_str(), format("index=%u size=%d type=0x%x normalized=%u stride=%d pointer=0x%x",
