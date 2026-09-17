@@ -1015,3 +1015,59 @@ and pure-NDK guests. Unity also needs `ZB_PRECISE_FAULTS` (Mono uses SIGSEGV for
 
 Launcher work that came out of these runs: `MainLooperGuard`, `AdHider` (per-plugin, on by
 default, toggled from the long-press menu), and package-manager answers for plugin components.
+
+## HANDOFF 2026-09-17 (evening): Phase 5 accepted, Phase 7a code complete
+
+**Orange Roulette renders and is playable on the OnePlus 13** (`docs/phase5-acceptance.md`). The
+black screen was texture uploads in `GL_BGRA_EXT`, which `gl_pixel_bytes` rejected silently
+because the guest never calls `glGetError`. Two lessons now enforced in code: rejected GL calls
+are recorded in the report (`gl-rejections`, first 4 with arguments), and marshaling tables built
+from the core GLES2 spec must also accept widely used extensions.
+
+Guests tried after that, each failure a launcher/loader gap, not a translation bug:
+- **Flappy Bird runs and is playable.** Fixes: unmatched `Java_*` exports are skipped as ART does
+  (`6a68580`), Google Play services exceptions on the guest main thread are swallowed
+  (`efe55d1`, `MainLooperGuard`), explicit intents for plugin activities resolve from the plugin
+  APK so old AdMob finds `AdActivity` (`351c286`), component queries naming the plugin's own
+  package are answered (`80a9e6a`).
+- **Lane Racer (Unity)** needs `ANativeActivity_onCreate`: part 2 of Phase 7.
+- **A Flutter guest** failed at guest `dlopen` with `libEGL.so not found`: that is what Phase 7a
+  builds.
+
+Launcher work from these runs: `AdHider` (per-plugin, on by default, toggled in the long-press
+menu), `GuestWindowStyle` (default theme picked by the plugin's targetSdk, `FEATURE_NO_TITLE` for
+translated plugins before their content is set, immersive system bars for fullscreen guests).
+
+### Phase 7a (EGL + ANativeWindow): tasks 1-9 done, task 10 open
+
+Spec `docs/superpowers/specs/2026-09-17-native-surface-design.md`, plan
+`docs/superpowers/plans/2026-09-17-phase7a-native-surface.md`. Commits `a4cade4`, `b1f930a`,
+`eb6cd42`, `ec52fa6`, `c651666`, `0e04845`, `63377b7`, `0962702`, `6f0e201`, `b83c4ae`.
+Host suite is 43/43; guest suite 9/9; `libzbridge.so` links `libEGL.so`.
+
+What exists now:
+- guest `libEGL.so` (44 entry points) and `ANativeWindow_*` in guest `libandroid.so`;
+- `tools/gen_egl.py` from `third_party/registry/egl.xml`, checked by `gen_egl_check`;
+- `HostEgl` (`core/src/gl/host_egl.cpp`, `egl_manual.cpp`): 32-bit handles for every EGL object,
+  21 hand-written cases, a thread-local pending error served through `eglGetError`;
+- `HostNativeWindow` (`core/src/android/host_native_window.cpp`) plus `HostJni::new_local_handle`;
+- report section `egl-*` with the `eglMakeCurrent`/`gl*` thread mismatch check;
+- real backends in `core/android/`, wired through `guest_jni_runtime`;
+- `zbeglprobe`: window handle -> window surface -> make current -> clear -> swap, end to end.
+
+**Host-call index ranges are now GLES 0-141, AAsset 142-159, ANativeWindow 160-167, EGL 168-211,
+JNI 0xFB00+.** New stub names must be **appended**, never merged into an existing sorted list:
+`core/include/zb/asset_hostcalls.h` and `core/include/zb/window_hostcalls.h` hold hand-written
+literal indices. `gen_gles.py`'s index check now rebuilds its expectation from every stub library
+(`eb6cd42`), so adding a library no longer breaks it.
+
+**NEXT (task 10):** the APK at `/sdcard/ZettaBridge-debug.apk` (built 2026-09-17 19:28 UTC)
+carries all of this. Ask the user to run the Flutter guest, then write `docs/phase7a-acceptance.md`
+from the report and update `CLAUDE.md`. Expected in the report: a created context and window
+surface, `egl-swaps` rising, no `egl-thread-mismatch`, `unimplemented-host-calls: 0`. If the guest
+needs GLES 3.0 (Impeller), the report names the missing functions; that is the next plan, not a
+patch to this one.
+
+Open risks: contexts follow the **host** thread, so a Java thread borrowing a carrier can take a
+context somewhere unexpected - the mismatch line exists to catch exactly that. `ANativeWindow_lock`
+is deliberately unimplemented (the buffer lives outside the guest's 4 GiB space).
