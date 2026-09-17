@@ -1118,3 +1118,29 @@ passes and the Gradle debug APK builds.
 `1781da56accd7c25698805a5dd1f15a8b4112d063af2f79d1cea7c1971847455`), force-stop or reimport
 `com.example.perecup_simulator`, rerun it, and send the Last run report. If it reaches one of the
 safe fallbacks, implement only the first path it actually uses. Task 10 is still open.
+
+## Phase 7a Task 10 third device result: minimal Flutter looper bootstrap
+
+The loader-first APK reached a gray Flutter surface. The report proved that `libflutter.so`
+loaded successfully (`JNI_OnLoad` 1.4, 42 natives registered), then called
+`ALooper_forThread`, `ALooper_prepare` and `ALooper_acquire` before aborting with status 134.
+The compatibility fallback violated the NDK contract by returning null from
+`ALooper_prepare`, whose successful return must be a non-null per-thread looper.
+
+`HostPlatformCompat` now assigns a stable non-null opaque handle to each `GuestThread` on its
+first `ALooper_prepare`; `ALooper_forThread` returns null before prepare and the same handle
+afterward. Concurrent guest threads receive distinct handles. `ALooper_acquire` and
+`ALooper_release` maintain a synchronized reference count while preserving the thread-owned
+base reference. The remaining fd operations (`addFd`, `pollOnce`, `removeFd`, `wake`) remain
+safe reported fallbacks on purpose, so the next device run will show whether Flutter needs a
+real fd/callback event loop.
+
+TDD: the expanded `platform_compat_test` first failed at `looper != 0`, then passed with the
+minimal implementation. Fresh verification: generators pass, host 44/44, guest 9/9, Android
+`zbridge`/`zbproxy` link, launcher bundle validation passes, and Gradle `assembleDebug` passes.
+
+**NEXT:** install `/sdcard/ZettaBridge-debug.apk` (SHA-256
+`24a7c18c0dd81ae3ea6639efcd8d9b258c00c3dd912162e21e70dd2ea5cdb21a`), force-stop the launcher,
+rerun `com.example.perecup_simulator`, wait about 10 seconds, and send the Last run report. A
+likely next boundary is `ALooper_addFd`; do not implement polling or guest callbacks without the
+device evidence. Phase 7a Task 10 remains open.
