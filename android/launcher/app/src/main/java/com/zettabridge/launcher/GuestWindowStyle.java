@@ -52,7 +52,7 @@ final class GuestWindowStyle {
         });
     }
 
-    static void apply(Activity activity) {
+    static void apply(Activity activity, boolean translated) {
         Window window = activity.getWindow();
         if (window == null) return;
         boolean noTitle = false;
@@ -72,11 +72,14 @@ final class GuestWindowStyle {
             Log.w(TAG, "cannot read the plugin window theme: " + e);
         }
 
-        if (noTitle || !actionBar) {
+        // Requesting it here is the only thing that works: the feature has to be set before the
+        // plugin's onCreate calls setContentView. A translated plugin is an old game, and those
+        // expect no title bar at all; a 64-bit plugin keeps whatever its theme asks for.
+        if (noTitle || !actionBar || translated) {
             try {
                 window.requestFeature(Window.FEATURE_NO_TITLE);
             } catch (RuntimeException e) {
-                // The window already has content: hiding the bar below is then the only option.
+                Log.w(TAG, "cannot drop the title bar: " + e);
             }
             if (activity.getActionBar() != null) activity.getActionBar().hide();
         }
