@@ -2,6 +2,9 @@
 // access, native calls, and the host-call switch.
 #include "host_jni_internal.h"
 
+#include <atomic>
+#include <string>
+
 #include <array>
 #include <cstdarg>
 #include <cstdio>
@@ -344,8 +347,37 @@ std::uint32_t HostJni::find_symbol_on_current(JniBackend::Env env, std::uint32_t
     return loader_operation(*impl_, env, true, handle, name, error);
 }
 
+namespace {
+
+// The last JNI host calls, for a crash report. A guest that dies inside its own code usually died
+// because of what the previous call answered, and there is no logcat on the device.
+constexpr std::size_t kRecentJniCalls = 24;
+std::atomic<std::uint32_t> g_recent[kRecentJniCalls];
+std::atomic<std::uint64_t> g_recent_next{0};
+
+void note_recent(std::uint32_t index) {
+    const std::uint64_t slot = g_recent_next.fetch_add(1, std::memory_order_relaxed);
+    g_recent[slot % kRecentJniCalls].store(index, std::memory_order_relaxed);
+}
+
+}  // namespace
+
+std::string jni_recent_calls() {
+    const std::uint64_t next = g_recent_next.load(std::memory_order_relaxed);
+    if (next == 0) return "(none)";
+    const std::uint64_t first = next > kRecentJniCalls ? next - kRecentJniCalls : 0;
+    std::string out;
+    for (std::uint64_t i = first; i < next; ++i) {
+        const std::uint32_t index = g_recent[i % kRecentJniCalls].load(std::memory_order_relaxed);
+        if (!out.empty()) out += " ";
+        out += jni_host_call_name(index);
+    }
+    return out;
+}
+
 bool HostJni::handle_host_call(std::uint32_t index, GuestThread& thread) {
     if (index < ZB_JNI_SLOT_STUB_FIRST || index > ZB_JNI_HOST_CALL_LAST) return false;
+    note_recent(index);
     Impl& jni = *impl_;
     if (index == ZB_JNI_HC_Register) {
         zb_jni_guest_api api{};

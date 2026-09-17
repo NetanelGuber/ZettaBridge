@@ -21,6 +21,9 @@ namespace zb {
 //
 // One instance per process: the constructor installs the process-wide native dispatcher. Like
 // the LibraryRuntime it is process-lifetime and must outlive every guest thread.
+// The last JNI host calls this process served, newest last, for a crash report.
+std::string jni_recent_calls();
+
 class HostJni {
 public:
     // Builds the arguments of a native call. guest_env is the guest JNIEnv* of the calling host

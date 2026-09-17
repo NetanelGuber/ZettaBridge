@@ -22,6 +22,7 @@
 #include "zb/elf_loader.h"
 #include "zb/initial_stack.h"
 #include "zb/log.h"
+#include "zb/host_jni.h"
 #include "zb/runtime_report.h"
 #include "zb/syscalls.h"
 
@@ -609,6 +610,7 @@ void Process::crash_report(const Stop& stop, GuestThread& thread) const {
     } else {
         log("  cpsr %08x  tls %08x  tid %ld", thread.cpsr(), thread.tls(), host_tid);
     }
+    runtime_report().note_crash_detail("recent-jni-calls", jni_recent_calls());
     log("  pc in %s", describe_address(stop.pc).c_str());
     log("  lr in %s", describe_address(r[14]).c_str());
 

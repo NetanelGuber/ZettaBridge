@@ -1,10 +1,13 @@
 // JNI host calls: strings, arrays, direct buffers.
 #include "host_jni_internal.h"
 
+#include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -136,10 +139,23 @@ bool HostJni::Impl::serve_data(JniCall& call) {
         const JniBackend::Env env = call.env();
         const auto* host = static_cast<const std::uint8_t*>(backend.get_direct_buffer_address(env, ref(0)));
         const std::uint8_t* base = runtime.memory().base();
-        if (host == nullptr) return true;
-        if (host >= base && static_cast<std::uint64_t>(host - base) < kGuestSpaceSize) {
-            call.set(static_cast<std::uint32_t>(host - base));
-        } else if (!logged_foreign_buffer.exchange(true)) {
+        const bool inside = host != nullptr && host >= base &&
+                            static_cast<std::uint64_t>(host - base) < kGuestSpaceSize;
+        if (inside) call.set(static_cast<std::uint32_t>(host - base));
+        // A direct buffer Java allocated lives outside the guest's 4 GiB space, so its address
+        // cannot be handed over; the guest then reads NULL. Record every answer: a guest that
+        // trusts this pointer crashes far away from here (Flutter copies from it at once).
+        static std::atomic<unsigned> answered{0};
+        const unsigned seen = answered.fetch_add(1) + 1;
+        if (seen <= 4) {
+            char text[160];
+            std::snprintf(text, sizeof text, "buffer=0x%08x host=%p %s guest=0x%08x", call.arg(1),
+                          static_cast<const void*>(host), inside ? "inside" : "outside",
+                          inside ? static_cast<std::uint32_t>(host - base) : 0u);
+            runtime_report().note_jni_detail("direct-buffer-" + std::to_string(seen), text, false);
+        }
+        runtime_report().note_jni_detail("direct-buffer-calls", std::to_string(seen), true);
+        if (!inside && host != nullptr && !logged_foreign_buffer.exchange(true)) {
             log("GetDirectBufferAddress: the buffer lies outside guest memory; returning NULL (logged once)");
         }
         return true;
