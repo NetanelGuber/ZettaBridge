@@ -17,6 +17,15 @@ EGL and window object crosses to the guest only as a 32-bit handle. This mirrors
 
 **Spec:** `docs/superpowers/specs/2026-09-17-native-surface-design.md`.
 
+## Global constraints
+
+- Host-call indices are append-only. ALooper keeps indices 220-227.
+- Guest fds are real fds in the launcher process; never translate or close registered fds.
+- Never hold the looper mutex across `poll()` or a nested guest callback.
+- Guest callbacks run only through `LibraryRuntime::call_on_current`.
+- Keep NativeActivity lifecycle, input queues and `AConfiguration` out of this plan.
+- Every task updates `AGENTS.md` and ends in its own local commit; do not push.
+
 ---
 
 ## File structure
@@ -656,37 +665,264 @@ git add guest/tests/zbeglprobe.c tools/build_guest.sh tests/host/egl_chain_test.
 
 ---
 
-### Task 10: Device run and documentation
+### Task 10: HostLooper state and host fd polling
 
 **Files:**
-- Create: `docs/phase7a-acceptance.md`
-- Modify: `AGENTS.md`, `CLAUDE.md`
+- Create: `core/include/zb/host_looper.h`
+- Create: `core/src/android/host_looper.cpp`
+- Create: `tests/host/host_looper_test.cpp`
+- Modify: `core/CMakeLists.txt`
+- Modify: `tests/host/CMakeLists.txt`
+- Modify: `core/include/zb/host_platform_compat.h`
+- Modify: `core/src/android/host_platform_compat.cpp`
+- Modify: `core/include/zb/proxy_runtime.h`
+- Modify: `core/src/jni/proxy_runtime.cpp`
+- Modify: `tests/host/platform_compat_test.cpp`
+- Modify: `AGENTS.md`
 
-- [ ] **Step 1: Build the APK**
+**Interfaces:**
+- Consumes: host-call constants 220-227 from `zb/platform_compat_hostcalls.h`,
+  `LibraryRuntime::call_on_current(uint32_t, const GuestCall&)`, and guest memory bounds checks.
+- Produces: `HostLooper::HostLooper(LibraryRuntime&)` and
+  `bool HostLooper::handle_host_call(uint32_t, GuestThread&)`. `GuestJniEngine::host_looper()`
+  always returns the process-lifetime instance.
 
-```bash
-ninja -C build/android-arm64 zbridge zbproxy; tools/make_launcher_bundle.sh; cd android/launcher; ANDROID_HOME=$HOME/android-sdk ANDROID_SDK_ROOT=$HOME/android-sdk ./gradlew --no-daemon assembleDebug; cd -; cp android/launcher/app/build/outputs/apk/debug/app-debug.apk /sdcard/ZettaBridge-debug.apk
+- [ ] **Step 1: Write the failing host test**
+
+Create `host_looper_test.cpp`. Use a real `LibraryRuntime`, two `GuestThread`s and real
+`eventfd()` descriptors. Drive the ABI through registers and a mapped guest stack. Assert these
+literal behaviors:
+
+```cpp
+CHECK(call(looper, first, ZB_COMPAT_HC_ALooper_forThread) == 0);
+const uint32_t a = call(looper, first, ZB_COMPAT_HC_ALooper_prepare, 1);
+CHECK(a != 0);
+CHECK(call(looper, first, ZB_COMPAT_HC_ALooper_forThread) == a);
+CHECK(call(looper, first, ZB_COMPAT_HC_ALooper_prepare, 0) == a);
+const uint32_t b = call(looper, second, ZB_COMPAT_HC_ALooper_prepare, 1);
+CHECK(b != 0 && b != a);
+
+// No-callback registration: fd, ident=42, INPUT, callback=0, data=0x12345678.
+CHECK(add_fd(looper, first, a, fd, 42, 1, 0, 0x12345678) == 1);
+CHECK(write(fd, &one, sizeof one) == sizeof one);
+CHECK(poll_once(looper, first, 1000, out_fd, out_events, out_data) == 42);
+CHECK(guest_u32(out_fd) == static_cast<uint32_t>(fd));
+CHECK(guest_u32(out_events) == 1);
+CHECK(guest_u32(out_data) == 0x12345678);
+CHECK(remove_fd(looper, first, a, fd) == 1);
+CHECK(remove_fd(looper, first, a, fd) == 0);
+
+CHECK(poll_once(looper, first, 0, 0, 0, 0) == -3);  // TIMEOUT
+CHECK(wake(looper, first, a) == 0);
+CHECK(poll_once(looper, first, 0, 0, 0, 0) == -1);  // WAKE
 ```
 
-- [ ] **Step 2: Ask the user for one run**
+Also assert `-1` from `addFd` for an unknown handle, negative fd, a callback-less registration
+without `ALLOW_NON_CALLBACKS`, and invalid ident; assert `ALOOPER_POLL_ERROR` for unreadable
+non-null output pointers. The production mutations this catches are: a global rather than
+per-thread looper, fake `addFd` success, missing readiness, wrong event mapping, and unchecked
+guest writes.
 
-The user installs the APK and launches the Flutter guest, then sends the run report. Expected in
-the report: a created context and window surface, `egl-swaps` counting up, no
-`egl-thread-mismatch`, and `unimplemented-host-calls: 0`.
-
-- [ ] **Step 3: Record the result**
-
-Write `docs/phase7a-acceptance.md` with the report, what worked and what did not, in the shape of
-`docs/phase5-acceptance.md`. If the guest needs GLES 3, record the exact functions the report
-names; that is the input to the next plan, not a fix in this one.
-
-- [ ] **Step 4: Update the state docs**
-
-Add the phase result to `CLAUDE.md`'s state list, and to `AGENTS.md` the new gotchas: the index
-append rule, EGL handles, and the carrier-thread context rule.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 2: Run RED**
 
 ```bash
-git add docs/phase7a-acceptance.md AGENTS.md CLAUDE.md; git commit -m "docs: Phase 7 part 1 device result"
+ninja -C build/host host_looper_test && build/host/tests/host/host_looper_test
+```
+
+Expected: compile failure because `zb/host_looper.h` does not exist. Do not create production
+files before observing this failure.
+
+- [ ] **Step 3: Implement the state and non-callback path**
+
+Define focused private records in `HostLooper`:
+
+```cpp
+struct Registration {
+    int fd;
+    int ident;
+    int events;
+    uint32_t callback;
+    uint32_t data;
+    uint64_t serial;
+};
+struct Looper {
+    uint32_t handle;
+    int options;
+    uint32_t references;
+    int wake_fd;
+    std::unordered_map<int, Registration> registrations;
+};
+```
+
+Use `eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)` for `wake_fd`. `pollOnce` copies a registration
+snapshot under the mutex, unlocks, calls host `poll`, drains the wake eventfd, and maps
+`POLLIN/POLLOUT/POLLERR/POLLHUP/POLLNVAL` to ALooper bits 1/2/4/8/16. Before writing no-callback
+outputs, validate every non-null address with `GuestMemory::host_ptr(..., 4, kPageWrite)`.
+Use `memcpy`, not a cast, for guest writes. A destructor closes only internal wake fds.
+
+Move all eight ALooper indices out of `HostPlatformCompat`; that class returns `false` for them.
+Construct `HostLooper` in `GuestJniEngine`, place it before `HostPlatformCompat` in the chain, and
+expose `host_looper()` for tests. Do not move or regenerate the indices.
+
+- [ ] **Step 4: Run GREEN and the adjacent tests**
+
+```bash
+ninja -C build/host host_looper_test platform_compat_test proxy_runtime_test
+build/host/tests/host/host_looper_test
+build/host/tests/host/platform_compat_test
+build/host/tests/host/proxy_runtime_test
+```
+
+Expected: all pass. `platform_compat_test` now expects eight remaining non-looper fallbacks, not
+the ALooper bootstrap behavior.
+
+- [ ] **Step 5: Update handoff and commit**
+
+Record the RED/GREEN evidence and the still-missing callback path in `AGENTS.md`.
+
+```bash
+git add AGENTS.md core/CMakeLists.txt core/include/zb/host_looper.h \
+  core/src/android/host_looper.cpp core/include/zb/host_platform_compat.h \
+  core/src/android/host_platform_compat.cpp core/include/zb/proxy_runtime.h \
+  core/src/jni/proxy_runtime.cpp tests/host/CMakeLists.txt \
+  tests/host/host_looper_test.cpp tests/host/platform_compat_test.cpp
+git commit -m "platform: poll guest looper file descriptors"
+```
+
+---
+
+### Task 11: Translated guest callback probe
+
+**Files:**
+- Create: `guest/testlib/zblooperprobe.c`
+- Modify: `tools/build_guest.sh`
+- Modify: `tests/host/host_looper_test.cpp`
+- Modify: `tests/host/CMakeLists.txt`
+- Modify: `core/src/android/host_looper.cpp`
+- Modify: `AGENTS.md`
+
+**Interfaces:**
+- Consumes: Task 10's registration snapshot and `LibraryRuntime::call_on_current`.
+- Produces: callback registrations invoke `int callback(int fd, int events, void* data)` in
+  translated arm32 code; zero removes the exact registration serial and nonzero retains it.
+
+- [ ] **Step 1: Write and build the guest probe before callback dispatch exists**
+
+Create `zblooperprobe.c`, linked against the generated guest `libandroid.so`. Export
+`int zb_looper_probe(void)`. It must:
+
+```c
+static int calls;
+static int callback(int fd, int events, void* data) {
+    uint64_t value = 0;
+    if (!(events & ALOOPER_EVENT_INPUT)) return 0;
+    if (read(fd, &value, sizeof(value)) != sizeof(value)) return 0;
+    calls += (int)value + (data == (void*)0x1234);
+    return 1;
+}
+```
+
+The exported probe prepares a looper, creates a nonblocking eventfd, registers the callback,
+writes 1, requires `ALooper_pollOnce(1000, NULL, NULL, NULL) == ALOOPER_POLL_CALLBACK`, requires
+`calls == 2`, removes the fd, releases the looper and closes only its own fd. Return a distinct
+positive line number on each failure and 0 on success.
+
+Add its clang command to `tools/build_guest.sh` with `-Lbuild/guest/lib -landroid`. Extend the
+host test with a `guest` mode that starts `GuestJniEngine`, loads `libzblooperprobe.so`, resolves
+`zb_looper_probe`, calls it on the service thread, and checks result 0.
+
+- [ ] **Step 2: Run RED**
+
+```bash
+tools/build_guest.sh
+ctest --test-dir build/host -R host_looper_guest --output-on-failure
+```
+
+Expected: the probe reaches polling but fails because Task 10 does not invoke its guest callback.
+
+- [ ] **Step 3: Implement nested callback dispatch**
+
+For every ready callback registration, build this literal call and invoke outside the mutex:
+
+```cpp
+GuestCall call;
+call.regs = {static_cast<uint32_t>(registration.fd),
+             static_cast<uint32_t>(events), registration.data, 0};
+const auto result = runtime_.call_on_current(registration.callback, call);
+```
+
+Return `ALOOPER_POLL_ERROR` if nested invocation fails. If `result->r0 == 0`, erase only when the
+current fd registration still has the snapshot's serial; otherwise preserve a concurrent
+replacement. Invoke all callback registrations returned ready by one `poll`, then return
+`ALOOPER_POLL_CALLBACK`.
+
+- [ ] **Step 4: Add the callback-removal case and run GREEN**
+
+Extend the guest probe with a second callback that returns zero. After one ready poll,
+`ALooper_removeFd` must return 0 because the bridge already removed it. Rebuild and run:
+
+```bash
+tools/build_guest.sh
+ctest --test-dir build/host -R host_looper --output-on-failure
+```
+
+Expected: unit and translated guest modes pass.
+
+- [ ] **Step 5: Update handoff and commit**
+
+```bash
+git add AGENTS.md guest/testlib/zblooperprobe.c tools/build_guest.sh \
+  tests/host/host_looper_test.cpp tests/host/CMakeLists.txt core/src/android/host_looper.cpp
+git commit -m "platform: dispatch guest ALooper callbacks"
+```
+
+---
+
+### Task 12: Regression, APK and device acceptance
+
+**Files:**
+- Create after a successful device run: `docs/phase7a-acceptance.md`
+- Modify: `AGENTS.md`, `CLAUDE.md`
+
+- [ ] **Step 1: Run the full local regression**
+
+```bash
+python3 tools/gen_gles.py --check
+python3 tools/gen_egl.py --check
+python3 tools/gen_jni.py --check
+ninja -C build/host
+ctest --test-dir build/host --output-on-failure
+tools/build_guest.sh
+tools/run_guest_tests.sh
+ninja -C build/android-arm64 zbridge zbproxy
+tools/make_launcher_bundle.sh
+```
+
+Expected: all commands pass.
+
+- [ ] **Step 2: Build the APK**
+
+```bash
+cd android/launcher
+ANDROID_HOME=$HOME/android-sdk ANDROID_SDK_ROOT=$HOME/android-sdk ./gradlew --no-daemon assembleDebug
+cd ../..
+cp android/launcher/app/build/outputs/apk/debug/app-debug.apk /sdcard/ZettaBridge-debug.apk
+sha256sum /sdcard/ZettaBridge-debug.apk
+```
+
+- [ ] **Step 3: Ask the user for one run**
+
+The user installs the APK, force-stops the launcher, launches the Flutter guest and sends the
+Last run report. Acceptance requires a visible Flutter frame, `guest-exit: (none)`, EGL context
+and window surface activity, rising `egl-swaps`, no thread mismatch and no unimplemented host
+call. A new first missing function becomes a separately designed follow-up; do not disguise it.
+
+- [ ] **Step 4: Record and commit acceptance**
+
+Write `docs/phase7a-acceptance.md` in the shape of `docs/phase5-acceptance.md`, update state and
+gotchas in `CLAUDE.md` and `AGENTS.md`, then run `git diff --check`.
+
+```bash
+git add docs/phase7a-acceptance.md AGENTS.md CLAUDE.md
+git commit -m "docs: accept the native surface phase"
 ```

@@ -1166,3 +1166,15 @@ the later NativeActivity bridge; input queues and configuration remain out of Ph
 **NEXT:** review/approve the amended design, amend Task 10 in the Phase 7a implementation plan,
 then implement it with a host poll test and a translated guest callback probe. Commit the plan
 separately before implementation. Phase 7a Task 10 remains open.
+
+### Update: Flutter ALooper plan approved and written
+
+The user approved the amended design. The Phase 7a plan now has three remaining tasks:
+Task 10 extracts `HostLooper` and implements real fd polling/non-callback results; Task 11 adds
+the translated arm32 callback probe and nested callback dispatch; Task 12 runs regression,
+builds the APK and records the device acceptance result. The plan preserves indices 220-227
+and explicitly keeps NativeActivity/input/configuration out of this phase.
+
+**NEXT:** execute Task 10 from
+`docs/superpowers/plans/2026-09-17-phase7a-native-surface.md` with RED before production code,
+update this file, and commit locally. Then execute Task 11 in its own commit.
