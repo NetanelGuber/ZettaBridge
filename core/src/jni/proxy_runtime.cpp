@@ -298,7 +298,7 @@ std::optional<std::string> ProxyRuntime::last_load_error() const {
 }
 
 GuestJniEngine::GuestJniEngine(JniBackend& backend, GlBackend* gl_backend, HostGl::EglContextProbe egl_context_probe,
-                               AssetBackend* asset_backend)
+                               AssetBackend* asset_backend, EglBackend* egl_backend, NativeWindowBackend* window_backend)
     : backend_(backend),
       runtime_(new LibraryRuntime()),
       host_jni_(new HostJni(*runtime_, backend)),
@@ -309,14 +309,31 @@ GuestJniEngine::GuestJniEngine(JniBackend& backend, GlBackend* gl_backend, HostG
     if (asset_backend != nullptr) {
         host_assets_ = new HostAssets(*runtime_, *asset_backend, *host_jni_);
     }
+    if (window_backend != nullptr) {
+        host_windows_ = new HostNativeWindow(*runtime_, *window_backend, *host_jni_);
+    }
+    if (egl_backend != nullptr) {
+        HostEgl::WindowResolver windows;
+        HostNativeWindow* host_windows = host_windows_;
+        if (host_windows != nullptr) {
+            windows = [host_windows](std::uint32_t handle) { return host_windows->value_for(handle); };
+        }
+        host_egl_ = new HostEgl(*runtime_, *egl_backend, HostEgl::GuestAllocator{}, std::move(windows));
+    }
     HostJni* host_jni = host_jni_;
     HostGl* host_gl = host_gl_;
     HostAssets* host_assets = host_assets_;
-    // GL, asset and JNI host-call index ranges never overlap (0-141, 142-160, 0xFB00+), so the
-    // chain order is free; GL first since it is by far the hotter path during rendering.
-    runtime_->set_host_call_handler([host_jni, host_gl, host_assets](std::uint32_t index, GuestThread& thread) {
+    HostNativeWindow* host_windows = host_windows_;
+    HostEgl* host_egl = host_egl_;
+    // GL, asset, window, EGL and JNI host-call index ranges never overlap (GLES 0-141, assets
+    // 142-159, windows 160-167, EGL 168-211, JNI 0xFB00+), so the chain order is free; GL first
+    // since it is by far the hotter path during rendering.
+    runtime_->set_host_call_handler([host_jni, host_gl, host_assets, host_windows, host_egl](
+                                        std::uint32_t index, GuestThread& thread) {
         if (host_gl != nullptr && host_gl->handle_host_call(index, thread)) return true;
         if (host_assets != nullptr && host_assets->handle_host_call(index, thread)) return true;
+        if (host_windows != nullptr && host_windows->handle_host_call(index, thread)) return true;
+        if (host_egl != nullptr && host_egl->handle_host_call(index, thread)) return true;
         return host_jni->handle_host_call(index, thread);
     });
 }

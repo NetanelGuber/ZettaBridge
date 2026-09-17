@@ -9,12 +9,16 @@
 #include <thread>
 
 #include "zb/asset_backend.h"
+#include "zb/egl_backend.h"
 #include "zb/gl_backend.h"
 #include "zb/host_assets.h"
+#include "zb/host_egl.h"
 #include "zb/host_gl.h"
+#include "zb/host_native_window.h"
 #include "zb/jni_backend.h"
 #include "zb/jni_loader.h"
 #include "zb/library_runtime.h"
+#include "zb/native_window_backend.h"
 
 namespace zb {
 
@@ -134,10 +138,12 @@ class GuestJniEngine : public ProxyLoadEngine {
 public:
     // gl_backend is optional: nullptr (the host build) chains only HostJni. Android supplies the
     // real driver backend (and an EGL-current probe) so GLES host calls reach the driver too.
-    // asset_backend is likewise optional: nullptr leaves AAsset* host calls unimplemented.
+    // asset_backend, egl_backend and window_backend are likewise optional: nullptr leaves the
+    // corresponding host-call range unimplemented.
     explicit GuestJniEngine(JniBackend& backend, GlBackend* gl_backend = nullptr,
                             HostGl::EglContextProbe egl_context_probe = {},
-                            AssetBackend* asset_backend = nullptr);
+                            AssetBackend* asset_backend = nullptr, EglBackend* egl_backend = nullptr,
+                            NativeWindowBackend* window_backend = nullptr);
     ~GuestJniEngine() override;
     GuestJniEngine(const GuestJniEngine&) = delete;
     GuestJniEngine& operator=(const GuestJniEngine&) = delete;
@@ -153,6 +159,10 @@ public:
     HostGl* host_gl() { return host_gl_; }
     // nullptr unless an asset_backend was passed to the constructor.
     HostAssets* host_assets() { return host_assets_; }
+    // nullptr unless an egl_backend was passed to the constructor.
+    HostEgl* host_egl() { return host_egl_; }
+    // nullptr unless a window_backend was passed to the constructor.
+    HostNativeWindow* host_native_window() { return host_windows_; }
 
 protected:
     // Clears a Java exception left pending by a failed load and describes it for the error
@@ -166,6 +176,8 @@ private:
     HostJni* host_jni_;
     HostGl* host_gl_ = nullptr;
     HostAssets* host_assets_ = nullptr;
+    HostEgl* host_egl_ = nullptr;
+    HostNativeWindow* host_windows_ = nullptr;
     JniLoader* loader_;
 };
 
