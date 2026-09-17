@@ -27,6 +27,8 @@ final class PluginRecord {
     int targetSdk;
     /** ABI extracted into lib/, or null for Java-only/unsupported/legacy imports. */
     String selectedAbi;
+    /** Hide the views of bundled ad SDKs: they cannot work for a plugin and only leave banners. */
+    boolean hideAds = true;
     /** Every ABI directory found under lib/ in the APK. */
     final Set<String> abis = new TreeSet<>();
 
@@ -99,6 +101,7 @@ final class PluginRecord {
         p.setProperty("targetSdk", Integer.toString(targetSdk));
         p.setProperty("abis", String.join(",", abis));
         if (selectedAbi != null) p.setProperty("selectedAbi", selectedAbi);
+        p.setProperty("hideAds", Boolean.toString(hideAds));
         try (OutputStream out = new FileOutputStream(new File(dir, "meta.properties"))) {
             p.store(out, "ZettaBridge plugin");
         }
@@ -128,6 +131,7 @@ final class PluginRecord {
             if (!abi.isEmpty()) r.abis.add(abi);
         }
         r.selectedAbi = p.getProperty("selectedAbi");
+        r.hideAds = !"false".equals(p.getProperty("hideAds"));
         // Phase 0 arm64 imports are already complete. Old 32-bit records must be reimported so
         // every library passes through the non-atomic ELF fixer before metadata says ready.
         if (r.selectedAbi == null && r.abis.contains(ABI_ARM64)) r.selectedAbi = ABI_ARM64;

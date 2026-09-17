@@ -26,6 +26,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -184,14 +185,29 @@ public class LibraryActivity extends Activity {
     private void showActions(PluginRecord r) {
         new AlertDialog.Builder(this)
                 .setTitle(r.label)
-                .setItems(new String[] {"Launch", "Last run report", "Pin shortcut", "Delete"},
+                .setItems(new String[] {"Launch", "Last run report", "Pin shortcut",
+                                        r.hideAds ? "Show ads" : "Hide ads", "Delete"},
                         (dialog, which) -> {
                             if (which == 0) launch(r);
                             if (which == 1) showRuntimeReport(r);
                             if (which == 2) pinShortcut(r);
-                            if (which == 3) confirmDelete(r);
+                            if (which == 3) toggleAds(r);
+                            if (which == 4) confirmDelete(r);
                         })
                 .show();
+    }
+
+    /** Ads are hidden per plugin; it takes effect the next time the plugin process starts. */
+    private void toggleAds(PluginRecord r) {
+        r.hideAds = !r.hideAds;
+        try {
+            r.save();
+        } catch (IOException e) {
+            Diagnostics.report(this, "cannot save the ad setting of " + r.label, e, false);
+            return;
+        }
+        Toast.makeText(this, (r.hideAds ? "Ads hidden for " : "Ads shown for ") + r.label
+                + ". Restart the game to apply.", Toast.LENGTH_LONG).show();
     }
 
     /**

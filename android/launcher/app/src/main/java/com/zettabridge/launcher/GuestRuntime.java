@@ -234,6 +234,8 @@ final class GuestRuntime {
         int theme = ai != null ? ai.getThemeResource() : p.appInfo.theme;
         activity.setTheme(theme != 0 ? theme : android.R.style.Theme_DeviceDefault_Light_DarkActionBar);
 
+        if (p.record != null && p.record.hideAds) AdHider.attach(activity);
+
         Intent original = activity.getIntent().getParcelableExtra(EXTRA_INTENT);
         if (original != null) {
             original.setExtrasClassLoader(p.classLoader);
