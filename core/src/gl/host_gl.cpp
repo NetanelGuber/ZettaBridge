@@ -87,7 +87,13 @@ bool HostGl::handle_host_call(std::uint32_t index, GuestThread& thread) {
         log("GLES trace: %s(0x%x, 0x%x, 0x%x, 0x%x)", name, thread.regs()[0], thread.regs()[1],
             thread.regs()[2], thread.regs()[3]);
     }
-    runtime_report().note_gl_call(name, static_cast<std::uint64_t>(::syscall(SYS_gettid)));
+    const std::uint64_t host_tid = static_cast<std::uint64_t>(::syscall(SYS_gettid));
+    runtime_report().note_gl_call(name, host_tid);
+    const std::uint64_t egl_generation = runtime_report().egl_current_generation();
+    if (egl_generation != gl_thread_sampled_generation_) {
+        gl_thread_sampled_generation_ = egl_generation;
+        runtime_report().note_gl_thread(host_tid);
+    }
     if (!egl_context_checked_) {
         egl_context_checked_ = true;
         if (egl_context_probe_) runtime_report().note_gl_egl_context(egl_context_probe_());

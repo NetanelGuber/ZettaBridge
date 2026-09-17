@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -58,6 +59,27 @@ public:
     // kMaxGlDetails keys; later new keys are dropped.
     void note_gl_detail(const std::string& key, const std::string& value, bool overwrite);
 
+    // EGL section (Phase 7a Task 7): proves or disproves that the guest built an EGL context and
+    // surface and is presenting frames on the thread GL calls arrive on.
+    // A created EGL object (context or window surface): one "egl-<key>: <value>" line per key,
+    // in first-note order, later notes of the same key overwriting the value. At most
+    // kMaxGlDetails keys; later new keys are dropped.
+    void note_egl_object(const std::string& key, const std::string& value);
+    // The host tid of the most recent eglMakeCurrent. Bumps a generation counter HostGl polls
+    // (egl_current_generation()) to know when to sample the thread of the next gl* call.
+    void note_egl_current(std::uint64_t host_tid);
+    // The host tid of the first gl* call sampled after an eglMakeCurrent. Compared against the
+    // eglMakeCurrent thread in text(); a mismatch means GL calls are not landing on the thread
+    // that made the context current.
+    void note_gl_thread(std::uint64_t host_tid);
+    // One eglSwapBuffers call, always counted.
+    void note_egl_swap();
+    // The first EGL_BAD_* result from an EGL call. Recorded once.
+    void note_egl_error(const char* function, std::uint32_t error);
+    // Bumped by note_egl_current; lets HostGl notice a new eglMakeCurrent with one relaxed atomic
+    // load per gl* call instead of any locking.
+    std::uint64_t egl_current_generation() const;
+
     std::size_t unimplemented_host_calls() const;
     std::size_t proxy_loads() const;
     std::size_t jni_onload_calls() const;
@@ -114,6 +136,17 @@ private:
     std::uint32_t gl_error_value_ = 0;
     static constexpr std::size_t kMaxGlDetails = 96;
     std::vector<std::pair<std::string, std::string>> gl_details_;
+
+    std::vector<std::pair<std::string, std::string>> egl_objects_;
+    bool egl_current_known_ = false;
+    std::uint64_t egl_current_tid_ = 0;
+    std::atomic<std::uint64_t> egl_current_generation_{0};
+    bool gl_thread_known_ = false;
+    std::uint64_t gl_thread_tid_ = 0;
+    std::uint64_t egl_swap_total_ = 0;
+    bool egl_error_known_ = false;
+    std::string egl_error_function_;
+    std::uint32_t egl_error_value_ = 0;
 };
 
 // The one report of this process.

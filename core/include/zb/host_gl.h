@@ -134,6 +134,10 @@ private:
     GuestAllocator allocator_;
     EglContextProbe egl_context_probe_;
     bool egl_context_checked_ = false;
+    // The last runtime_report().egl_current_generation() this HostGl sampled a gl* call's thread
+    // for. Compared with one relaxed atomic load per call; a mismatch means a new eglMakeCurrent
+    // happened and the next gl* call's host tid is worth recording.
+    std::uint64_t gl_thread_sampled_generation_ = UINT64_MAX;
 };
 
 std::uint64_t gl_pname_count(GlBackend& backend, GLenum pname);

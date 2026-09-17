@@ -10,6 +10,7 @@
 #include "zb/egl_hostcalls.h"
 #include "zb/host_egl.h"
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -18,6 +19,12 @@ namespace {
 constexpr std::uint64_t kMaxAttribs = 512;      // 255 pairs plus EGL_NONE
 constexpr std::uint64_t kMaxGuestString = 4096;
 constexpr std::size_t kMaxDriverString = 64u << 20;
+
+// Local to the runtime-report annotations below; not part of the generated protocol.
+constexpr EGLint kEglConfigIdAttrib = 0x3028;
+constexpr EGLint kEglContextClientVersionAttrib = 0x3098;
+constexpr EGLint kEglWidthAttrib = 0x3057;
+constexpr EGLint kEglHeightAttrib = 0x3056;
 
 void* as_pointer(const void* value) { return const_cast<void*>(value); }
 
@@ -96,6 +103,15 @@ bool query_attribute(HostEgl& host, HostEgl::Call& call, EglObject kind) {
         break;
     case EglObject::Surface:
         result = host.backend().eglQuerySurface(dpy, object, attribute, value);
+        // Records the surface size the first time the guest asks for it (Task 7): free
+        // visibility into what got created, at the cost of no extra backend calls.
+        if (result != 0 && (attribute == kEglWidthAttrib || attribute == kEglHeightAttrib)) {
+            char detail[32];
+            std::snprintf(detail, sizeof detail, "%s=%d",
+                          attribute == kEglWidthAttrib ? "width" : "height", *value);
+            runtime_report().note_egl_object(
+                attribute == kEglWidthAttrib ? "surface-width" : "surface-height", detail);
+        }
         break;
     case EglObject::Context:
         result = host.backend().eglQueryContext(dpy, object, attribute, value);
@@ -249,9 +265,21 @@ bool zbegl_manual_eglCreateContext(HostEgl& host, HostEgl::Call& call) {
     if (!call.valid()) return true;
     std::vector<EGLint> attribs;
     if (!read_attribs(host, call, 3, attribs)) return true;
-    call.set_handle(host.backend().eglCreateContext(dpy, config, share,
-                                                    attribs.empty() ? nullptr : attribs.data()),
-                    EglObject::Context);
+    EGLContext context = host.backend().eglCreateContext(
+        dpy, config, share, attribs.empty() ? nullptr : attribs.data());
+    if (context != nullptr) {
+        EGLint config_id = -1;
+        host.backend().eglGetConfigAttrib(dpy, config, kEglConfigIdAttrib, &config_id);
+        EGLint client_version = 1;
+        for (std::size_t i = 0; i + 1 < attribs.size(); i += 2) {
+            if (attribs[i] == kEglContextClientVersionAttrib) client_version = attribs[i + 1];
+        }
+        char detail[64];
+        std::snprintf(detail, sizeof detail, "config=%d client-version=%d", config_id,
+                      client_version);
+        runtime_report().note_egl_object("context", detail);
+    }
+    call.set_handle(context, EglObject::Context);
     return true;
 }
 
@@ -271,10 +299,12 @@ bool zbegl_manual_eglCreateWindowSurface(HostEgl& host, HostEgl::Call& call) {
     }
     std::vector<EGLint> attribs;
     if (!read_attribs(host, call, 3, attribs)) return true;
-    call.set_handle(host.backend().eglCreateWindowSurface(dpy, config, window,
-                                                          attribs.empty() ? nullptr
-                                                                          : attribs.data()),
-                    EglObject::Surface);
+    EGLSurface surface = host.backend().eglCreateWindowSurface(
+        dpy, config, window, attribs.empty() ? nullptr : attribs.data());
+    // Size is not queried here: eglQuerySurface is a separate driver call the guest may not make
+    // for a while, and this note must not add a call the guest did not ask for.
+    if (surface != nullptr) runtime_report().note_egl_object("surface", "created");
+    call.set_handle(surface, EglObject::Surface);
     return true;
 }
 
@@ -352,7 +382,7 @@ bool zbegl_manual_eglSwapBuffers(HostEgl& host, HostEgl::Call& call) {
     if (!call.valid()) return true;
     EGLSurface surface = as_pointer(call.handle_of(1, EglObject::Surface));
     if (!call.valid()) return true;
-    // Task 7 counts presented frames in the runtime report from here.
+    runtime_report().note_egl_swap();
     call.set_result(host.backend().eglSwapBuffers(dpy, surface));
     return true;
 }

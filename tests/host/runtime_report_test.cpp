@@ -113,6 +113,36 @@ void check_gl_section() {
     CHECK(line_with(text, "gl-first-error:") == "gl-first-error: (none)");
 }
 
+void check_egl_section() {
+    zb::RuntimeReport report;
+    report.note_egl_object("context", "config=3 client-version=2");
+    report.note_egl_current(4242);      // eglMakeCurrent on host tid 4242
+    report.note_gl_thread(4243);        // a gl* call arrived on another thread
+    report.note_egl_error("eglCreateWindowSurface", 0x300B);
+    std::string text = report.text();
+    CHECK(line_with(text, "egl-context:") == "egl-context: config=3 client-version=2");
+    CHECK(line_with(text, "egl-thread-mismatch:") == "egl-thread-mismatch: current=4242 gl=4243");
+    CHECK(line_with(text, "egl-first-error:") == "egl-first-error: eglCreateWindowSurface 0x300b");
+
+    // Swaps count, and a matching thread produces no mismatch line.
+    report.note_egl_swap();
+    report.note_egl_swap();
+    text = report.text();
+    CHECK(line_with(text, "egl-swaps:") == "egl-swaps: 2");
+
+    zb::RuntimeReport matched;
+    matched.note_egl_current(7);
+    matched.note_gl_thread(7);
+    CHECK(matched.text().find("egl-thread-mismatch:") == std::string::npos);
+
+    report.clear();
+    text = report.text();
+    CHECK(text.find("egl-context:") == std::string::npos);
+    CHECK(line_with(text, "egl-swaps:") == "egl-swaps: 0");
+    CHECK(text.find("egl-thread-mismatch:") == std::string::npos);
+    CHECK(line_with(text, "egl-first-error:") == "egl-first-error: (none)");
+}
+
 void check_unimplemented_host_calls() {
     zb::RuntimeReport report;
     // The first one in order is the one the user must read, however often the others repeat.
@@ -302,6 +332,7 @@ int main() {
     check_process_wide_instance();
     check_threads();
     check_gl_section();
+    check_egl_section();
 
     fs::remove_all(dir);
     std::puts("runtime_report_test PASS");

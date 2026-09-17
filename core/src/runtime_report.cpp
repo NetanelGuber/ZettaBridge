@@ -218,6 +218,76 @@ void RuntimeReport::note_gl_detail(const std::string& key, const std::string& va
     if (observer) (*observer)(structural);
 }
 
+void RuntimeReport::note_egl_object(const std::string& key, const std::string& value) {
+    bool structural = false;
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const std::string line = one_line(value, 600);
+        auto found = std::find_if(egl_objects_.begin(), egl_objects_.end(),
+                                  [&](const auto& entry) { return entry.first == key; });
+        if (found != egl_objects_.end()) {
+            found->second = line;
+        } else {
+            if (egl_objects_.size() >= kMaxGlDetails) return;
+            egl_objects_.emplace_back(one_line(key, 64), line);
+            structural = true;
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(structural);
+}
+
+void RuntimeReport::note_egl_current(std::uint64_t host_tid) {
+    egl_current_generation_.fetch_add(1, std::memory_order_relaxed);
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        egl_current_known_ = true;
+        egl_current_tid_ = host_tid;
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
+void RuntimeReport::note_gl_thread(std::uint64_t host_tid) {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        gl_thread_known_ = true;
+        gl_thread_tid_ = host_tid;
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
+void RuntimeReport::note_egl_swap() {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++egl_swap_total_;
+        observer = take_observer();
+    }
+    if (observer) (*observer)(false);
+}
+
+void RuntimeReport::note_egl_error(const char* function, std::uint32_t error) {
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (egl_error_known_) return;
+        egl_error_known_ = true;
+        egl_error_function_ = function != nullptr ? function : "?";
+        egl_error_value_ = error;
+        observer = take_observer();
+    }
+    if (observer) (*observer)(true);
+}
+
+std::uint64_t RuntimeReport::egl_current_generation() const {
+    return egl_current_generation_.load(std::memory_order_relaxed);
+}
+
 std::size_t RuntimeReport::unimplemented_host_calls() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return static_cast<std::size_t>(host_call_total_);
@@ -333,6 +403,22 @@ std::string RuntimeReport::text() const {
     }
     out += '\n';
     for (const auto& [key, value] : gl_details_) out += "gl-" + key + ": " + value + '\n';
+
+    for (const auto& [key, value] : egl_objects_) out += "egl-" + key + ": " + value + '\n';
+    append_count(out, "egl-swaps", egl_swap_total_);
+    if (egl_current_known_ && gl_thread_known_ && egl_current_tid_ != gl_thread_tid_) {
+        out += "egl-thread-mismatch: current=" + std::to_string(egl_current_tid_) +
+               " gl=" + std::to_string(gl_thread_tid_) + '\n';
+    }
+    out += "egl-first-error: ";
+    if (!egl_error_known_) {
+        out += "(none)";
+    } else {
+        char hex[11];
+        std::snprintf(hex, sizeof hex, "0x%04x", egl_error_value_);
+        out += egl_error_function_ + " " + hex;
+    }
+    out += '\n';
     return out;
 }
 
@@ -360,6 +446,16 @@ void RuntimeReport::clear() {
     gl_error_function_.clear();
     gl_error_value_ = 0;
     gl_details_.clear();
+    egl_objects_.clear();
+    egl_current_known_ = false;
+    egl_current_tid_ = 0;
+    egl_current_generation_.store(0, std::memory_order_relaxed);
+    gl_thread_known_ = false;
+    gl_thread_tid_ = 0;
+    egl_swap_total_ = 0;
+    egl_error_known_ = false;
+    egl_error_function_.clear();
+    egl_error_value_ = 0;
 }
 
 RuntimeReport& runtime_report() {

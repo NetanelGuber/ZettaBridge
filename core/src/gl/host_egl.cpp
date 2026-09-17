@@ -1,5 +1,8 @@
 #include "zb/host_egl.h"
 
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -8,6 +11,7 @@
 #include "zb/guest_memory.h"
 #include "zb/library_protocol.h"
 #include "zb/log.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -120,6 +124,7 @@ void HostEgl::reject(Call& call, EGLint error, const char* reason) {
     }
     log("EGL %s rejected: %s", name, reason);
     t_pending_error = error;
+    runtime_report().note_egl_error(name, static_cast<std::uint32_t>(error));
 }
 
 std::uint32_t HostEgl::handle_for(const void* value, EglObject kind) {
@@ -186,6 +191,9 @@ bool HostEgl::handle_host_call(std::uint32_t index, GuestThread& thread) {
         thread.regs()[1] = 0;
         t_pending_error = kEglSuccess;
         return true;
+    }
+    if (index == ZB_EGL_HC_eglMakeCurrent) {
+        runtime_report().note_egl_current(static_cast<std::uint64_t>(::syscall(SYS_gettid)));
     }
     Call call(*this, thread, index);
     if (dispatch(call)) return true;
