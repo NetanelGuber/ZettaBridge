@@ -48,24 +48,38 @@ std::uint32_t HostJni::Impl::mirror_direct_buffer(const void* host, std::int64_t
         return 0;
     }
     const auto size = static_cast<std::uint64_t>(capacity);
-    std::lock_guard<std::mutex> lock(mirror_mutex);
-    auto found = mirrors.find(host);
-    if (found == mirrors.end()) {
-        if (mirrored_bytes + size > kMirrorCapBytes) {
+    std::uint32_t guest = 0;
+    {
+        std::lock_guard<std::mutex> lock(mirror_mutex);
+        auto found = mirrors.find(host);
+        if (found != mirrors.end()) guest = found->second.guest;
+        if (guest == 0 && mirrored_bytes + size > kMirrorCapBytes) {
             ++mirror_failures;
             failure = "over-cap";
             return 0;
         }
-        // Guest malloc, run on the guest thread that is serving this host call.
+    }
+    if (guest == 0) {
+        // Guest malloc runs guest code on this thread, so it must never run under mirror_mutex:
+        // another thread holding the guest allocator's own lock and waiting here would deadlock.
+        runtime_report().note_jni_detail("direct-buffer-allocating", "size=" + std::to_string(size), true);
         GuestCall args;
         args.regs = {static_cast<std::uint32_t>(size), 0, 0, 0};
         const auto allocated = runtime.call_on_current(runtime.service_api().malloc_fn, args);
         if (!allocated || allocated->r0 == 0) {
+            std::lock_guard<std::mutex> lock(mirror_mutex);
             ++mirror_failures;
             failure = "no-guest-memory";
             return 0;
         }
-        found = mirrors.emplace(host, BufferMirror{allocated->r0, size}).first;
+        guest = allocated->r0;
+    }
+    std::lock_guard<std::mutex> lock(mirror_mutex);
+    auto found = mirrors.find(host);
+    if (found == mirrors.end()) {
+        // A concurrent call may have mirrored the same buffer first; then its allocation wins and
+        // ours is simply left unused (the guest heap keeps it, which is bounded by the cap).
+        found = mirrors.emplace(host, BufferMirror{guest, size}).first;
         mirrored_bytes += size;
     }
     // Java may have written into the buffer since the last call, so refresh the copy. A guest
@@ -200,6 +214,10 @@ bool HostJni::Impl::serve_data(JniCall& call) {
             // A direct buffer Java allocated lives outside the guest's 4 GiB space, so its host
             // address cannot be handed over. Mirror it into guest memory instead; the guest reads
             // a real copy rather than NULL (Flutter copies from this pointer at once).
+            // Recorded before mirroring: if the guest allocation below never returns, the report
+            // still shows how far this call got.
+            runtime_report().note_jni_detail("direct-buffer-last-request",
+                                             "host=" + std::to_string(reinterpret_cast<std::uintptr_t>(host)), true);
             answer = mirror_direct_buffer(host, backend.get_direct_buffer_capacity(env, buffer), failure);
             mirrored = answer != 0;
         }
