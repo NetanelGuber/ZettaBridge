@@ -1197,3 +1197,21 @@ arm32 callback probe is observed failing.
 **NEXT:** execute Task 11: add `libzblooperprobe.so`, observe RED against callback polling,
 dispatch the callback through `LibraryRuntime::call_on_current`, verify callback return-zero
 removal, update this file and commit locally.
+
+### Phase 7a Flutter ALooper Task 11 done
+
+Task 11 adds `guest/testlib/zblooperprobe.c`, built as `libzblooperprobe.so` against the real
+generated arm32 `libandroid.so` stubs. The translated probe prepares a looper, registers an
+eventfd callback, writes the fd, polls, and proves that the guest callback reads the event and
+returns `ALOOPER_POLL_CALLBACK`. A second callback returns zero and proves exact automatic
+registration removal.
+
+TDD evidence: before callback dispatch, `host_looper_guest` failed at guest probe line 44, the
+literal `ALooper_pollOnce(...) == ALOOPER_POLL_CALLBACK` check. `HostLooper` now calls ready
+callbacks through `LibraryRuntime::call_on_current(fd, events, data)` with no mutex held. A zero
+result removes only the registration whose serial matches the poll snapshot, so a concurrent
+replacement is preserved. Unit and translated modes both pass.
+
+**NEXT:** Task 12: full generators/host/guest/Android regression, build and copy the launcher
+APK, record its hash here, then ask for the Flutter device run. Do not write Phase 7a acceptance
+until a visible frame and the runtime report satisfy the device gate.

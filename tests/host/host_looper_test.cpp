@@ -4,16 +4,21 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include <dynarmic/interface/exclusive_monitor.h>
 
 #include "check.h"
+#include "mock_jvm.h"
 #include "zb/guest_memory.h"
 #include "zb/guest_thread.h"
 #include "zb/host_looper.h"
 #include "zb/library_runtime.h"
+#include "zb/library_protocol.h"
 #include "zb/platform_compat_hostcalls.h"
+#include "zb/proxy_runtime.h"
 
 namespace {
 
@@ -59,7 +64,7 @@ std::uint32_t add_fd(zb::HostLooper& looper, zb::GuestThread& thread, zb::GuestM
 
 }  // namespace
 
-int main() {
+void run_unit() {
     zb::LibraryRuntime runtime;
     CHECK(runtime.memory().map_anon(kGuestPage, 0x1000, PROT_READ | PROT_WRITE));
     Dynarmic::ExclusiveMonitor monitor(2);
@@ -131,5 +136,42 @@ int main() {
     CHECK(close(fd) == 0);
 
     std::puts("host_looper_test PASS");
-    return 0;
+}
+
+void run_guest(int argc, char** argv) {
+    CHECK(argc == 4);
+    auto* vm = new zb::mock::MockJvm();
+    auto* engine = new zb::GuestJniEngine(*vm);
+    zb::LibraryRuntimeOptions options;
+    options.sysroot = argv[1];
+    options.zbhost = argv[2];
+    options.target_sdk = 16;
+    options.guest_environment = {std::string("LD_LIBRARY_PATH=") + argv[3]};
+    options.preload = "libzbjni.so";
+    std::string error;
+    CHECK(engine->start(options, error));
+
+    zb::LibraryRuntime& runtime = engine->runtime();
+    const std::uint32_t library = runtime.load_library(
+        std::string(argv[3]) + "/libzblooperprobe.so", ZB_GUEST_RTLD_NOW, error);
+    if (library == 0) std::fprintf(stderr, "looper probe load failed: %s\n", error.c_str());
+    CHECK(library != 0);
+    const std::uint32_t probe = runtime.find_symbol(library, "zb_looper_probe", error);
+    CHECK(probe != 0);
+    const auto result = runtime.call_on_service(probe, zb::GuestCall{});
+    CHECK(result.has_value());
+    if (result->r0 != 0) std::fprintf(stderr, "looper probe failed at guest line %u\n", result->r0);
+    CHECK(result->r0 == 0);
+
+    std::puts("host_looper_test guest PASS");
+    std::fflush(stdout);
+    std::_Exit(0);
+}
+
+int main(int argc, char** argv) {
+    if (argc == 1) {
+        run_unit();
+        return 0;
+    }
+    run_guest(argc, argv);
 }

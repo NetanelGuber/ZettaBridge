@@ -121,6 +121,12 @@ add_library(zbmockjvm STATIC mock_jvm.cpp)
 target_link_libraries(zbmockjvm PUBLIC zbcore)
 target_compile_options(zbmockjvm PRIVATE -Wall -Wextra)
 
+target_link_libraries(host_looper_test PRIVATE zbmockjvm)
+add_test(NAME host_looper_guest COMMAND host_looper_test
+    ${CMAKE_SOURCE_DIR}/sysroot
+    ${CMAKE_SOURCE_DIR}/build/guest/zbhost
+    ${CMAKE_SOURCE_DIR}/build/guest/lib)
+
 add_executable(mock_jvm_test mock_jvm_test.cpp)
 target_link_libraries(mock_jvm_test PRIVATE zbmockjvm)
 add_test(NAME mock_jvm_test COMMAND mock_jvm_test)

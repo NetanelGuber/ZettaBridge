@@ -25,6 +25,7 @@ namespace {
 
 constexpr int kAllowNonCallbacks = 1;
 constexpr int kPollWake = -1;
+constexpr int kPollCallback = -2;
 constexpr int kPollTimeout = -3;
 constexpr int kPollError = -4;
 constexpr int kEventInput = 1;
@@ -211,6 +212,7 @@ struct HostLooper::Impl {
 
     int poll_once(GuestThread& thread, int timeout, std::uint32_t out_fd,
                   std::uint32_t out_events, std::uint32_t out_data) {
+        std::uint32_t looper_handle = 0;
         int wake_fd = -1;
         std::vector<Registration> registrations;
         {
@@ -219,6 +221,7 @@ struct HostLooper::Impl {
             if (thread_it == thread_loopers.end()) return kPollError;
             const auto looper_it = loopers.find(thread_it->second);
             if (looper_it == loopers.end()) return kPollError;
+            looper_handle = thread_it->second;
             wake_fd = looper_it->second->wake_fd;
             registrations.reserve(looper_it->second->registrations.size());
             for (const auto& [fd, registration] : looper_it->second->registrations) {
@@ -243,23 +246,47 @@ struct HostLooper::Impl {
 
         const bool woke = poll_fds[0].revents != 0;
         if (woke) drain_eventfd(wake_fd);
-        bool callback_ready = false;
+        bool callback_invoked = false;
+        const Registration* non_callback = nullptr;
+        int non_callback_events = 0;
         for (std::size_t i = 0; i < registrations.size(); ++i) {
             const int events = looper_events(poll_fds[i + 1].revents);
             if (events == 0) continue;
             const Registration& registration = registrations[i];
             if (registration.callback != 0) {
-                callback_ready = true;
+                GuestCall call;
+                call.regs = {static_cast<std::uint32_t>(registration.fd),
+                             static_cast<std::uint32_t>(events), registration.data, 0};
+                const auto result = runtime.call_on_current(registration.callback, call);
+                if (!result) return kPollError;
+                callback_invoked = true;
+                if (result->r0 == 0) {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    const auto looper_it = loopers.find(looper_handle);
+                    if (looper_it != loopers.end()) {
+                        auto current = looper_it->second->registrations.find(registration.fd);
+                        if (current != looper_it->second->registrations.end() &&
+                            current->second.serial == registration.serial) {
+                            looper_it->second->registrations.erase(current);
+                        }
+                    }
+                }
                 continue;
             }
-            if (!write_guest(out_fd, static_cast<std::uint32_t>(registration.fd)) ||
-                !write_guest(out_events, static_cast<std::uint32_t>(events)) ||
-                !write_guest(out_data, registration.data)) {
+            if (non_callback == nullptr) {
+                non_callback = &registration;
+                non_callback_events = events;
+            }
+        }
+        if (callback_invoked) return kPollCallback;
+        if (non_callback != nullptr) {
+            if (!write_guest(out_fd, static_cast<std::uint32_t>(non_callback->fd)) ||
+                !write_guest(out_events, static_cast<std::uint32_t>(non_callback_events)) ||
+                !write_guest(out_data, non_callback->data)) {
                 return kPollError;
             }
-            return registration.ident;
+            return non_callback->ident;
         }
-        if (callback_ready) return kPollError;  // Task 11 adds translated callback dispatch.
         return woke ? kPollWake : kPollError;
     }
 
