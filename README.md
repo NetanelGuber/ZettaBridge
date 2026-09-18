@@ -96,7 +96,7 @@ Requirements:
 - Android NDK r29.
 
 ```
-git submodule update --init; git -C third_party/dynarmic apply ../patches/dynarmic-0001-thumb32-armv8.patch
+git submodule update --init; git -C third_party/dynarmic apply ../patches/dynarmic-0001-thumb32-armv8.patch ../patches/dynarmic-0002-asimd-narrowing.patch
 ```
 ```
 cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++; ninja -C build/host

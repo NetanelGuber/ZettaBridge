@@ -1358,3 +1358,35 @@ all pass. `/sdcard/ZettaBridge-debug.apk` is 9,344,152 bytes, SHA-256
 **NEXT/device gate:** install it, launch the Flutter plugin, and check the report for
 `looper-attached` at least 1, `looper-host-callbacks` with `guest` rising, a `1.ui` thread in the
 census, and rising `egl-swaps`.
+
+## Done 2026-09-18: A32 ASIMD narrowing instructions (VADDHN/VRADDHN/VSUBHN/VRSUBHN)
+
+Flutter rendered 9 frames and 512 draws but died decoding PNGs with `guest SIGILL: undefined
+instruction`; the faulting instruction at `libflutter.so+0x3cd85e` is `vraddhn.i16 d24, q10, q11`
+in an alpha-premultiply loop (crash `r11 = 0x49444154`, "IDAT"). Dynarmic's A32 decoder had the
+whole "add/subtract returning high half" family commented out.
+
+`HighNarrowingOperation` in
+`third_party/dynarmic/src/dynarmic/frontend/A32/translate/impl/asimd_three_regs.cpp` implements
+all four, following the A64 frontend's `simd_three_same.cpp`: `VectorAdd`/`VectorSub` at
+`2 * esize`, then for the rounding variants a `VectorBroadcast` of `1 << (esize - 1)` added at
+`2 * esize`, then `VectorLogicalShiftRight` by `esize` and `VectorNarrow`. Sources are Q
+registers (low bit of `Vn`/`Vm` must be clear), the destination is a D register, `sz == 0b11` is a
+decode error, and the carry out of the `2 * esize` sum is discarded, which is what the ARM ARM's
+unbounded-integer pseudocode specifies once bits `<2N-1:N>` are extracted.
+
+Captured as `third_party/patches/dynarmic-0002-asimd-narrowing.patch` (the submodule pointer is
+never staged). Still commented out in the A32 decoder: `VQRSHL`, `VQDMLAL`, `VQDMULL`,
+`VQDMLAL_scalar`.
+
+`guest/tests/asimd_narrow_static.c` runs each instruction at `.i16`, `.i32` and `.i64` with
+hand-computed expected values covering the rounding boundary (a low half of exactly
+`1 << (N-1)`), the rounding carry that wraps the whole `2N`-bit value to zero, a carry out of the
+sum and a borrow. It is `run_case asimd_narrow_static 0` in `tools/run_guest_tests.sh`.
+
+Local gate: 47/47 host tests, 11/11 guest tests, Android `zbridge`/`zbproxy`, launcher bundle and
+Gradle debug APK all pass. `/sdcard/ZettaBridge-debug.apk` is 9,353,448 bytes, SHA-256
+`e3855dcbaf9c4f2ea0a4d1e893263782244d36b0032c3b5316b10369cbc75e06`.
+
+**NEXT/device gate:** install it and run the Flutter plugin past PNG decoding; the previous SIGILL
+at `libflutter.so+0x3cd85e` must be gone.

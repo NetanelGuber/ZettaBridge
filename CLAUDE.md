@@ -255,6 +255,11 @@ functions. Accept: the game is playable start to finish.
   appears, decode it with `llvm-objdump -d --triple=thumbv8a` at the offset printed by
   the crash report. Get exact encodings by assembling a probe with
   `clang --target=armv8a-linux-androideabi`, not from memory.
+- **Dynarmic's A32 decoder has ASIMD instructions commented out.**
+  `third_party/patches/dynarmic-0002-asimd-narrowing.patch` implements `VADDHN`,
+  `VRADDHN`, `VSUBHN` and `VRSUBHN` (Flutter premultiplies PNG alpha with
+  `vraddhn.i16`); `guest/tests/asimd_narrow_static.c` covers them. Still missing:
+  `VQRSHL`, `VQDMLAL`, `VQDMULL`, `VQDMLAL_scalar`.
 - **zbrun never passes the host's `LD_PRELOAD`/`LD_LIBRARY_PATH` to the guest.** They
   name 64-bit host libraries. Termux always sets `LD_PRELOAD`, and before this filter
   every dynamic guest died with exit 1 on the phone.

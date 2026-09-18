@@ -10,7 +10,7 @@
 Apply after cloning or updating the submodule:
 
 ```
-git submodule update --init; git -C third_party/dynarmic apply ../patches/dynarmic-0001-thumb32-armv8.patch
+git submodule update --init; git -C third_party/dynarmic apply ../patches/dynarmic-0001-thumb32-armv8.patch ../patches/dynarmic-0002-asimd-narrowing.patch
 ```
 
 ### dynarmic-0001-thumb32-armv8.patch
@@ -47,3 +47,23 @@ Other ARMv8 instructions found in the sysroot and their Dynarmic status:
 - SHA1 is decoded as UNDEFINED; it is only used when `AT_HWCAP2` advertises it, and zbrun
   reports `AT_HWCAP2 = 0`.
 - T32 `HLT` is missing; it appears only on fatal-error paths.
+
+### dynarmic-0002-asimd-narrowing.patch
+
+Implements the four Advanced SIMD "add/subtract returning high half" instructions the A32
+decoder listed but had commented out: `VADDHN`, `VRADDHN`, `VSUBHN`, `VRSUBHN`.
+
+Each reads two 128-bit sources of 2N-bit elements and writes a 64-bit result of N-bit
+elements, where the result element is bits `<2N-1:N>` of the 2N-bit sum or difference; the
+rounding variants add `1 << (N-1)` to that 2N-bit value first. `HighNarrowingOperation` in
+`asimd_three_regs.cpp` builds this from `VectorAdd`/`VectorSub`, an optional broadcast
+round constant, `VectorLogicalShiftRight` and `VectorNarrow`, the same way the A64 frontend
+implements `ADDHN`/`RADDHN`/`SUBHN`/`RSUBHN`.
+
+Flutter's Skia premultiplies decoded PNG alpha with `vraddhn.i16`, so without this patch
+image decoding dies with an undefined instruction. `guest/tests/asimd_narrow_static.c`
+covers all four at every element size, including the rounding boundary, the carry out of
+the 2N-bit sum and a borrow.
+
+The remaining commented-out A32 ASIMD entries are `VQRSHL`, `VQDMLAL`, `VQDMULL` and
+`VQDMLAL_scalar`.
