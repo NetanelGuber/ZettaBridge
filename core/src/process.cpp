@@ -462,7 +462,10 @@ bool Process::dispatch_stop(GuestThread& thread, const Stop& stop) {
         if ((stop.swi & 0xFF0000u) == kHostCallBase) {
             const std::uint32_t index = stop.swi & 0xFFFFu;
             record_thread_activity(thread.tid, ThreadActivityKind::kHostCall, index);
-            if (host_call_handler_ && host_call_handler_(index, thread)) return !exiting_;
+            if (host_call_handler_ && host_call_handler_(index, thread)) {
+                record_thread_activity_done(thread.tid);
+                return !exiting_;
+            }
             const auto [library, name] = host_call_name(index);
             if (first_time(kSeenHostCall | index)) {
                 log("host call %s:%s is not implemented yet", library, name);

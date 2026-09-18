@@ -25,11 +25,17 @@ enum class ThreadActivityKind : std::uint8_t {
 // every syscall and every host call, so it must stay cheap.
 void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint32_t id);
 
+// The host call recorded last for this thread has returned. A thread whose last recorded event is
+// still in progress is blocked inside our own code, which reads very differently from a guest
+// that simply stopped calling out.
+void record_thread_activity_done(std::int32_t tid);
+
 struct ThreadActivitySample {
     std::int32_t tid = 0;
     ThreadActivityKind kind = ThreadActivityKind::kNone;
     std::uint32_t id = 0;
     std::uint64_t counter = 0;
+    bool in_progress = false;  // still inside the recorded host call or syscall
 };
 
 // A snapshot of every guest thread slot touched so far.

@@ -31,7 +31,13 @@ int main() {
             CHECK(sample.kind == zb::ThreadActivityKind::kHostCall);
             CHECK(sample.id == 0x2a);
             CHECK(sample.counter == 3);
-            CHECK(zb::describe_thread_activity(sample) == "host:0x2a");
+            // Recorded calls start as in progress; the marker says so until they finish.
+            CHECK(zb::describe_thread_activity(sample) == "host:0x2a(inside)");
+            zb::record_thread_activity_done(9001);
+            auto after = zb::snapshot_thread_activity();
+            for (const auto& done : after) {
+                if (done.tid == 9001) CHECK(zb::describe_thread_activity(done) == "host:0x2a");
+            }
         }
         CHECK(found);
     }

@@ -5,6 +5,8 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <thread>
 
 #include "zb/host_jni.h"
@@ -21,6 +23,7 @@ namespace {
 constexpr std::size_t kMaxSlots = 256;
 
 struct Slot {
+    std::atomic<bool> in_progress{false};
     std::atomic<std::int32_t> tid{0};
     std::atomic<std::uint8_t> kind{static_cast<std::uint8_t>(ThreadActivityKind::kNone)};
     std::atomic<std::uint32_t> id{0};
@@ -41,6 +44,7 @@ void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint
         mine->kind.store(static_cast<std::uint8_t>(kind), std::memory_order_relaxed);
         mine->id.store(id, std::memory_order_relaxed);
         mine->counter.fetch_add(1, std::memory_order_relaxed);
+        mine->in_progress.store(true, std::memory_order_relaxed);
         return;
     }
     // Find an existing slot for this tid, or claim the first free one. A relaxed CAS race
@@ -53,6 +57,7 @@ void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint
             slot.kind.store(static_cast<std::uint8_t>(kind), std::memory_order_relaxed);
             slot.id.store(id, std::memory_order_relaxed);
             slot.counter.fetch_add(1, std::memory_order_relaxed);
+            slot.in_progress.store(true, std::memory_order_relaxed);
             mine = &slot;
             mine_tid = tid;
             return;
@@ -72,6 +77,15 @@ void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint
     mine_tid = tid;
 }
 
+void record_thread_activity_done(std::int32_t tid) {
+    for (Slot& slot : g_slots) {
+        if (slot.tid.load(std::memory_order_relaxed) == tid) {
+            slot.in_progress.store(false, std::memory_order_relaxed);
+            return;
+        }
+    }
+}
+
 std::vector<ThreadActivitySample> snapshot_thread_activity() {
     std::vector<ThreadActivitySample> out;
     for (Slot& slot : g_slots) {
@@ -82,19 +96,44 @@ std::vector<ThreadActivitySample> snapshot_thread_activity() {
         sample.kind = static_cast<ThreadActivityKind>(slot.kind.load(std::memory_order_relaxed));
         sample.id = slot.id.load(std::memory_order_relaxed);
         sample.counter = slot.counter.load(std::memory_order_relaxed);
+        sample.in_progress = slot.in_progress.load(std::memory_order_relaxed);
         out.push_back(sample);
     }
     return out;
+}
+
+// Ticks of CPU this thread has burned, from /proc/self/task/<tid>/stat, or 0 when unreadable.
+// A thread whose activity never changes but whose CPU keeps climbing is spinning in translated
+// code; one whose CPU stands still is blocked.
+std::uint64_t thread_cpu_ticks(std::int32_t tid) {
+    char path[64];
+    std::snprintf(path, sizeof path, "/proc/self/task/%d/stat", tid);
+    std::FILE* file = std::fopen(path, "re");
+    if (file == nullptr) return 0;
+    char line[1024];
+    const char* read = std::fgets(line, sizeof line, file);
+    std::fclose(file);
+    if (read == nullptr) return 0;
+    const char* cursor = std::strrchr(line, ')');
+    if (cursor == nullptr) return 0;
+    unsigned long long utime = 0, stime = 0;
+    // Fields after "comm": state, ppid, pgrp, session, tty, tpgid, flags, min_flt, cmin_flt,
+    // maj_flt, cmaj_flt, utime, stime.
+    if (std::sscanf(cursor + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &utime, &stime) != 2) {
+        return 0;
+    }
+    return utime + stime;
 }
 
 std::string describe_thread_activity(const ThreadActivitySample& sample) {
     char text[64];
     switch (sample.kind) {
     case ThreadActivityKind::kSyscall:
-        std::snprintf(text, sizeof text, "sys:%s", syscall_name(sample.id));
+        std::snprintf(text, sizeof text, "sys:%s%s", syscall_name(sample.id),
+                      sample.in_progress ? "(inside)" : "");
         return text;
     case ThreadActivityKind::kHostCall:
-        std::snprintf(text, sizeof text, "host:0x%x", sample.id);
+        std::snprintf(text, sizeof text, "host:0x%x%s", sample.id, sample.in_progress ? "(inside)" : "");
         return text;
     case ThreadActivityKind::kNone:
     default:
@@ -155,7 +194,8 @@ bool HangWatchdog::sample(Clock::time_point now) {
         const auto seconds =
             std::chrono::duration_cast<std::chrono::seconds>(now - state->since).count();
         value += std::to_string(state->tid) + "=" + describe_thread_activity(sample) +
-                 " x" + std::to_string(state->counter) + " stuck=" + std::to_string(seconds);
+                 " x" + std::to_string(state->counter) + " stuck=" + std::to_string(seconds) +
+                 " cpu=" + std::to_string(thread_cpu_ticks(state->tid));
         ++shown;
     }
     value += " | recent-jni: " + jni_recent_calls();
