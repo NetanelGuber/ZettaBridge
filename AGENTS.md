@@ -1495,3 +1495,48 @@ send the complete Last run report. The decisive lines are `gl-buffer-upload-*` a
 `gl-ubo-bind-*-data`. `captured=no/partial` identifies a missed upload path; `captured=yes` gives
 the real uniform bytes' checksum and rules out pointer loss in the bridge. Keep the four broken
 raster assets as a separate decoder issue unless the new evidence links them.
+
+### Device result: combined buffer and UBO marshaling are correct
+
+The next report still had no text, but all first eight UBO bindings were `captured=yes`. In
+particular, program 1's 64-byte `FrameInfo` and 32-byte `FragInfo` ranges were wholly contained in
+the preceding `glBufferSubData(GL_ARRAY_BUFFER)` upload. Buffer id, offsets, sizes and checksums
+were stable. This rules out pointer loss, missed sub-data calls and the combined-buffer target
+alias as the text cause.
+
+The remaining concrete lead is the glyph texture format. The exact Impeller shader embedded in
+avtobuy's arm32 `libflutter.so` samples `_21.w` (alpha) because
+`use_alpha_color_channel == 1.0`. The report shows texture 4 allocated and updated as legacy
+`GL_ALPHA` (`0x1906`) in an ES3 context. Khronos' registry classifies `GL_ALPHA` only as a pixel
+format, not an ES3 internal format; a strict driver can reject the allocation. Flutter's release
+build does not call `glGetError`, so that would leave an empty atlas with no report error and make
+all text transparent, exactly the symptom.
+
+**NEXT:** extend the existing host test first, then report (a) the first 32 UBO bytes as hex and
+(b) the immediate driver error after the first legacy alpha/luminance texture allocation, while
+re-queuing that error for guest semantics. If the device reports `GL_INVALID_ENUM`/`VALUE`, add a
+tested GLES2-on-GLES3 compatibility translation: `ALPHA -> R8/RED` plus swizzle `(0,0,0,R)`,
+`LUMINANCE -> R8/RED` plus `(R,R,R,1)`, and `LUMINANCE_ALPHA -> RG8/RG` plus `(R,R,R,G)`; translate
+matching sub-images too. This likely also explains some missing raster assets, but do not land the
+translation until the immediate error proves it.
+
+### Ready 2026-09-18: text uniform and legacy texture diagnostic
+
+The diagnostic above is implemented without changing rendering semantics. The first eight captured
+UBO ranges now include their first 32 bytes as hex. Immediately after the first legacy
+`ALPHA`/`LUMINANCE`/`LUMINANCE_ALPHA` allocation, diagnostics query the real driver error, report
+it as `gl-legacy-texture-error`, and re-queue a nonzero error so the guest still observes it.
+
+TDD evidence: the focused GLES test first failed on the absent UBO `head`; it now verifies the exact
+bytes, an injected `GL_INVALID_ENUM`, its report line, and that the error remains observable. Fresh
+gate: focused test PASS, host 47/47, Android `zbridge`/`zbproxy` link, launcher bundle and Gradle
+debug APK build all pass.
+
+Ready APK: `/sdcard/ZettaBridge-debug.apk`, 9,377,080 bytes, SHA-256
+`f2b7a3a35a3b153ba9c0e68a36b44be2db6a932378ed6b4b0b1ed14e325f7110`.
+
+**NEXT/device gate:** install this APK, force-stop the launcher, reproduce the missing text and send
+`gl-legacy-texture-error`, `gl-ubo-bind-1-data` and `gl-ubo-bind-2-data` (the full report is still
+preferred). A nonzero legacy texture error authorizes the tested compatibility translation above;
+an error of zero means decode the two `head` fields as little-endian float uniforms before changing
+texture formats.

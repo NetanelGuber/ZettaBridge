@@ -158,6 +158,7 @@ struct State {
 
     std::uint64_t map_calls = 0;
     std::uint64_t map_collisions = 0;
+    bool legacy_texture_error_checked = false;
 
     // Bounded shadow of buffers fed through glBufferData/SubData. Impeller uploads one combined
     // vertex/uniform buffer as GL_ARRAY_BUFFER, then binds slices of it as GL_UNIFORM_BUFFER.
@@ -374,9 +375,13 @@ void record_bound_ubo_data(HostGl::Call& call, State& s, std::uint64_t bind_numb
         return;
     }
     const std::uint8_t* bytes = snapshot.bytes.data() + offset;
-    detail(key.c_str(), format("buffer=%u offset=%llu size=%llu captured=yes fnv=%016llx", buffer,
-                              (unsigned long long)offset, (unsigned long long)size,
-                              (unsigned long long)fnv1a(bytes, size)));
+    std::string value = format("buffer=%u offset=%llu size=%llu captured=yes fnv=%016llx head=",
+                               buffer, (unsigned long long)offset, (unsigned long long)size,
+                               (unsigned long long)fnv1a(bytes, size));
+    for (std::uint64_t i = 0; i < std::min<std::uint64_t>(size, 32); ++i) {
+        value += format("%02x", bytes[i]);
+    }
+    detail(key.c_str(), value);
 }
 
 void sample(HostGl& host, std::uint64_t draw, GLenum mode, GLsizei count) {
@@ -743,6 +748,17 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
                                       static_cast<GLint>(call.arg(2)), static_cast<GLint>(call.arg(3))), true);
         break;
     case ZB_GL_HC_glTexImage2D:
+        if (!s.legacy_texture_error_checked &&
+            (call.arg(2) == kAlpha || call.arg(2) == kLuminance ||
+             call.arg(2) == kLuminanceAlpha)) {
+            s.legacy_texture_error_checked = true;
+            const GLenum error = gl.glGetError();
+            detail("legacy-texture-error",
+                   format("internal=0x%x format=0x%x error=0x%x", call.arg(2), call.arg(6),
+                          error));
+            // Diagnostics must not consume an error that guest glGetError would have observed.
+            if (error != 0) gl.set_error(error);
+        }
         if (call.arg(8) != 0 && ++s.tex_uploads <= 3) {
             const GLint width = static_cast<GLint>(call.arg(3));
             const GLint height = static_cast<GLint>(call.arg(4));

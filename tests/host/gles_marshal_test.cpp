@@ -608,7 +608,19 @@ int main() {
     CHECK(upload_report.find("gl-buffer-upload-1: target=0x8892 buffer=91 offset=0 size=64 "
                              "fnv=8368214f77995ee5") != std::string::npos);
     CHECK(upload_report.find("gl-ubo-bind-1-data: buffer=91 offset=16 size=16 captured=yes "
-                             "fnv=f091c81ae28d2c75") != std::string::npos);
+                             "fnv=f091c81ae28d2c75 head=101112131415161718191a1b1c1d1e1f") !=
+          std::string::npos);
+
+    // GLES3 does not accept the GLES2 legacy alpha format as a sized texture allocation on all
+    // drivers. Preserve the driver's error for the guest while making it visible in the report.
+    backend.set_result("glGetError", 0x0500);
+    pointer_words = {0x0DE1, 0, 0x1906, 1, 1, 0, 0x1906, 0x1401, kData + 0x700};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glTexImage2D, thread));
+    const std::string legacy_report = zb::runtime_report().text();
+    CHECK(legacy_report.find("gl-legacy-texture-error: internal=0x1906 format=0x1906 "
+                             "error=0x500") != std::string::npos);
+    CHECK(backend.error() == 0x0500);
 
     // The asset range is deliberately not swallowed by HostGl.
     CHECK(!host.handle_host_call(142, thread));
