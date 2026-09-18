@@ -35,6 +35,7 @@
 #include <ctime>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "gen/syscall_nrs_arm.h"
@@ -45,6 +46,7 @@
 #include "zb/hang_watchdog.h"
 #include "zb/log.h"
 #include "zb/process.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -116,6 +118,28 @@ const char* guest_cstr(GuestMemory& m, std::uint32_t addr) {
         }
     }
     return nullptr;
+}
+
+// Whether an opened path is worth recording in the runtime report: guest binaries and data
+// files (import surface / asset-loading diagnostics), or anything under flutter_assets.
+bool open_worth_watching(const char* path) {
+    if (path == nullptr) return false;
+    const std::string_view name(path);
+    if (name.find("flutter_assets") != std::string_view::npos) return true;
+    auto ends_with = [&](std::string_view suffix) {
+        return name.size() >= suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    return ends_with(".so") || ends_with(".dat") || ends_with(".bin");
+}
+
+// Records an openat() of a watched path in the runtime report. Only called after a matching
+// path has already been opened successfully or failed, never on every syscall.
+void note_watched_open(const char* path, std::int32_t result) {
+    if (result >= 0) {
+        runtime_report().note_guest_open(path);
+    } else {
+        runtime_report().note_guest_open_failed(path, -result);
+    }
 }
 
 void fill_stat64(g::stat64& out, const struct stat& st) {
@@ -1030,10 +1054,15 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
 
     case NR_openat: {
         const char* guest_path = guest_cstr(c.mem, c.a[1]);
-        if (guest_path != nullptr && proc.open_synthetic_file(guest_path, static_cast<int>(c.a[2]), res)) break;
+        const bool watched = open_worth_watching(guest_path);
+        if (guest_path != nullptr && proc.open_synthetic_file(guest_path, static_cast<int>(c.a[2]), res)) {
+            if (watched) note_watched_open(guest_path, res);
+            break;
+        }
         res = sys_path_call(c, 1, [](Ctx& x, const char* p) -> long {
             return ::syscall(SYS_openat, static_cast<int>(x.a[0]), p, static_cast<int>(x.a[2]), static_cast<mode_t>(x.a[3]));
         });
+        if (watched) note_watched_open(guest_path, res);
         break;
     }
     case NR_faccessat:

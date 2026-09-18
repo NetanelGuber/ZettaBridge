@@ -12,6 +12,14 @@
 
 namespace zb {
 
+// A stable per-bound-native-method call counter (Java -> guest native-call census). HostJni
+// creates one per method when it is bound (register_native) and caches the pointer in the
+// method's thunk slot, so every later Java -> guest call costs one relaxed atomic add and no
+// lock. RuntimeReport owns the counters so they outlive the HostJni slot table in reports.
+struct NativeCallCounter {
+    std::atomic<std::uint64_t> count{0};
+};
+
 // Diagnostics that must survive a silent :guest death. OxygenOS drops third-party logcat
 // output, so everything a device run has to prove is collected here and rendered as short
 // plain text by text(); the Android side persists that text to a file on every change.
@@ -41,8 +49,26 @@ public:
     void note_proxy_failed(const std::string& library, const std::string& error);
     void note_jni_onload(const std::string& library, bool ok, std::int32_t jni_version);
     void note_registered_native();
+    // The counter for a bound native method's display name ("Class.method", or just "method"
+    // when the class name was not available at registration). Creates it (locked, rare) the
+    // first time this exact name is seen; at most kMaxNativeCalls distinct names are tracked
+    // separately, later ones share one overflow counter. Call once, at registration; cache the
+    // returned pointer and increment it with a relaxed atomic add per call, never through this
+    // method again.
+    static constexpr std::size_t kMaxNativeCalls = 32;
+    NativeCallCounter& native_call_counter(const std::string& name);
     // The first reason wins: a crash report says more than the exit status that follows it.
     void note_guest_exit(const std::string& reason);
+
+    // Guest file opens worth knowing about (did the guest find its .so/.dat/.bin payloads and
+    // flutter_assets): the most recent kMaxOpenedPaths distinct paths successfully opened that
+    // matched the syscall layer's narrow filter, most-recent last, and the first
+    // kMaxFailedOpens failed opens of such paths with their errno. Both are only called after a
+    // matching open, never on every syscall.
+    static constexpr std::size_t kMaxOpenedPaths = 16;
+    static constexpr std::size_t kMaxFailedOpens = 4;
+    void note_guest_open(const std::string& path);
+    void note_guest_open_failed(const std::string& path, int error);
 
     // GLES section (Phase 5 Task 8): proves or disproves that guest GL calls arrive on a host
     // thread with an EGL context current.
@@ -143,6 +169,16 @@ private:
     std::uint64_t registered_natives_ = 0;
     std::string exit_reason_;
 
+    struct NativeCallEntry {
+        std::string name;
+        std::unique_ptr<NativeCallCounter> counter{std::make_unique<NativeCallCounter>()};
+    };
+    std::vector<NativeCallEntry> native_calls_;
+    NativeCallCounter native_calls_overflow_;
+
+    std::vector<std::string> opened_paths_;
+    std::vector<std::pair<std::string, int>> failed_opens_;
+
     std::uint64_t gl_call_total_ = 0;
     std::string gl_first_call_function_;
     std::uint64_t gl_first_call_tid_ = 0;
@@ -164,11 +200,15 @@ private:
     std::vector<std::pair<std::string, std::string>> looper_details_;
 
     std::vector<std::pair<std::string, std::string>> egl_objects_;
-    bool egl_current_known_ = false;
-    std::uint64_t egl_current_tid_ = 0;
+    // Host tids that have made an EGL context current (note_egl_current), and host tids a gl*
+    // call has been sampled on (note_gl_thread), each bounded and in first-seen order. A
+    // mismatch is a tid in the second set absent from the first: a thread issuing gl* calls
+    // that never made a context current on itself. A raster thread and a resource thread each
+    // running their own (correct) EGL context both land in the first set, so no mismatch.
+    static constexpr std::size_t kMaxEglThreads = 8;
+    std::vector<std::uint64_t> egl_current_tids_;
     std::atomic<std::uint64_t> egl_current_generation_{0};
-    bool gl_thread_known_ = false;
-    std::uint64_t gl_thread_tid_ = 0;
+    std::vector<std::uint64_t> gl_thread_tids_;
     std::uint64_t egl_swap_total_ = 0;
     bool egl_error_known_ = false;
     std::string egl_error_function_;

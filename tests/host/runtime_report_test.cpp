@@ -135,6 +135,20 @@ void check_egl_section() {
     matched.note_gl_thread(7);
     CHECK(matched.text().find("egl-thread-mismatch:") == std::string::npos);
 
+    // A resource thread and a raster thread, each with its own EGL context: both make current on
+    // themselves before issuing gl* calls, and a later eglMakeCurrent on a third thread that has
+    // not gl'd yet must not by itself trigger a mismatch. This is the false positive fixed for
+    // the device report ("egl-thread-mismatch: current=22216 gl=22214" with two live contexts).
+    zb::RuntimeReport multi;
+    multi.note_egl_current(100);  // resource thread makes its context current
+    multi.note_gl_thread(100);    // ...and issues gl* calls on itself
+    multi.note_egl_current(200);  // raster thread makes its own context current
+    CHECK(multi.text().find("egl-thread-mismatch:") == std::string::npos);
+    multi.note_gl_thread(200);  // raster thread's first gl* call: still matched, still no mismatch
+    CHECK(multi.text().find("egl-thread-mismatch:") == std::string::npos);
+    multi.note_gl_thread(300);  // a third thread issues gl* calls having never made current: real bug
+    CHECK(line_with(multi.text(), "egl-thread-mismatch:") == "egl-thread-mismatch: current=200 gl=300");
+
     report.clear();
     text = report.text();
     CHECK(text.find("egl-context:") == std::string::npos);
@@ -223,6 +237,51 @@ void check_loads_and_natives() {
     CHECK(contains(text, "jni-onload: liblime.so ok jni=0x00010004"));
     CHECK(contains(text, "jni-onload: libopenal.so failed"));
     CHECK(line_with(text, "registered-natives:") == "registered-natives: 20");
+}
+
+void check_native_calls_and_opens() {
+    zb::RuntimeReport report;
+    zb::NativeCallCounter& touch = report.native_call_counter("org/haxe/lime/Lime.onTouch");
+    zb::NativeCallCounter& render = report.native_call_counter("org/haxe/lime/Lime.render");
+    // Same name back: the second call returns the same counter, not a new one.
+    CHECK(&report.native_call_counter("org/haxe/lime/Lime.onTouch") == &touch);
+    for (int i = 0; i < 5; ++i) touch.count.fetch_add(1, std::memory_order_relaxed);
+    render.count.fetch_add(1, std::memory_order_relaxed);
+    std::string text = report.text();
+    CHECK(contains(text, "org/haxe/lime/Lime.onTouch=5"));
+    CHECK(contains(text, "org/haxe/lime/Lime.render=1"));
+    CHECK(contains(text, "total=6"));
+
+    // Beyond kMaxNativeCalls distinct names, later ones share the overflow counter: still one
+    // atomic add, never a lock, on a hot path with an unexpectedly large number of methods.
+    zb::RuntimeReport bounded;
+    for (std::size_t i = 0; i < zb::RuntimeReport::kMaxNativeCalls + 5; ++i) {
+        bounded.native_call_counter("method" + std::to_string(i)).count.fetch_add(1, std::memory_order_relaxed);
+    }
+    CHECK(contains(bounded.text(), "native-calls:"));
+
+    report.clear();
+    CHECK(!contains(report.text(), "org/haxe/lime/Lime.onTouch"));
+    CHECK(contains(report.text(), "native-calls: (none) total=0"));
+
+    zb::RuntimeReport opens;
+    opens.note_guest_open("/data/app/com.example/lib/arm/libapp.so");
+    opens.note_guest_open("/data/app/com.example/files/flutter_assets/kernel_blob.bin");
+    opens.note_guest_open_failed("/data/app/com.example/lib/arm/libmissing.so", 2);
+    text = opens.text();
+    CHECK(contains(text, "opened-1: /data/app/com.example/lib/arm/libapp.so"));
+    CHECK(contains(text, "opened-2: /data/app/com.example/files/flutter_assets/kernel_blob.bin"));
+    CHECK(contains(text, "open-failed-1: /data/app/com.example/lib/arm/libmissing.so errno=2"));
+
+    // Re-opening an already-recorded path moves it to the front instead of duplicating it.
+    opens.note_guest_open("/data/app/com.example/lib/arm/libapp.so");
+    text = opens.text();
+    CHECK(contains(text, "opened-1: /data/app/com.example/files/flutter_assets/kernel_blob.bin"));
+    CHECK(contains(text, "opened-2: /data/app/com.example/lib/arm/libapp.so"));
+
+    opens.clear();
+    CHECK(contains(opens.text(), "opened-1: (none)"));
+    CHECK(!contains(opens.text(), "open-failed-1:"));
 }
 
 void check_exit_reason() {
@@ -340,6 +399,7 @@ int main() {
     check_unimplemented_host_calls();
     check_host_call_bound();
     check_loads_and_natives();
+    check_native_calls_and_opens();
     check_exit_reason();
     check_observer();
     check_file_writer(dir);

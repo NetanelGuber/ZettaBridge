@@ -12,6 +12,8 @@
 
 namespace zb {
 
+struct NativeCallCounter;  // core/include/zb/runtime_report.h
+
 // Number of precompiled thunks; must match the .rept count in core/src/jni/thunks.S.
 constexpr std::size_t kNativeThunkCount = 16384;
 
@@ -20,6 +22,10 @@ struct NativeTarget {
     std::uint32_t guest_function = 0;  // Thumb bit included
     std::string shorty;                // return type first
     bool is_static = false;
+    std::string label;                 // "Class.method" (or just "method") for the report
+    // Cached at registration (HostJni::register_native); every dispatch increments it with one
+    // relaxed atomic add, no lock. Never null once the slot is bound.
+    NativeCallCounter* counter = nullptr;
 };
 
 // Receives every thunk call with the slot number. It reads the arguments from regs and stores

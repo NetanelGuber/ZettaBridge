@@ -16,6 +16,7 @@
 #include "mock_jvm.h"
 #include "zb/host_jni.h"
 #include "zb/library_runtime.h"
+#include "zb/runtime_report.h"
 
 namespace {
 
@@ -378,6 +379,21 @@ void check_natives(Bridge& bridge) {
     CHECK(tids[0] != tids[1]);
     // Each Java thread leased one carrier; the leases ended with their threads.
     CHECK(wait_thread_count(*bridge.runtime, baseline));
+
+    // The native-call census (runtime_report.h): HostJni::call_native counts every Java ->
+    // guest dispatch through this method's thunk slot with one relaxed atomic add, keyed by the
+    // name RegisterNatives bound it under ("add", the guest probe's RegisterNatives call has no
+    // class name to prefix it with).
+    zb::NativeCallCounter& add_counter = zb::runtime_report().native_call_counter("add");
+    const std::uint64_t before = add_counter.count.load(std::memory_order_relaxed);
+    {
+        MockJvm::NativeFrame frame(vm, java_env);
+        const auto cls = frame.local(natives);
+        CHECK(add(java_env, cls, 1, 0.5f, 0.25f, 3, 1.5f, -2.0f) == 1 + 6 + 2 + 2 + 24 - 64);
+        CHECK(frame.close() == 1);
+    }
+    CHECK(add_counter.count.load(std::memory_order_relaxed) == before + 1);
+    CHECK(zb::runtime_report().text().find("native-calls:") != std::string::npos);
 }
 
 void check_vm(Bridge& bridge) {

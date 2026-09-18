@@ -28,7 +28,8 @@ void dispatch_native(std::uint32_t slot, NativeRegs& regs) {
         regs.x[0], return_type, target->guest_function,
         [&](std::uint32_t guest_env, const RefToHandle& to_handle) {
             return marshal_native_args(target->shorty, regs, guest_env, to_handle);
-        });
+        },
+        target->counter);
     if (!result) {
         // The frame could not be opened because a Java exception is pending; ART throws it when
         // the native method returns. Any other failure cannot be reported to Java.
@@ -55,7 +56,8 @@ void install_native_dispatcher(HostJni::Impl* jni) {
 }
 
 std::int32_t HostJni::register_native(JniBackend::Env env, JniBackend::Ref cls, const char* name,
-                                      const char* signature, std::uint32_t guest_function, bool is_static) {
+                                      const char* signature, std::uint32_t guest_function, bool is_static,
+                                      const char* class_name) {
     Impl& jni = *impl_;
     std::string_view stripped = signature;
     if (!stripped.empty() && stripped.front() == '!') stripped.remove_prefix(1);  // pre-O fast JNI marker
@@ -67,7 +69,13 @@ std::int32_t HostJni::register_native(JniBackend::Env env, JniBackend::Ref cls, 
         if (error != 0) jni.backend.throw_new(env, error, (std::string(name) + signature).c_str());
         return -1;
     }
-    const std::int32_t slot = jni.slots.allocate(NativeTarget{guest_function, *shorty, is_static});
+    // The native-call census (runtime_report.h) counts by "Class.method" when the caller (the
+    // loader) knows the class name, else by "method" alone (a bare guest RegisterNatives call).
+    std::string label = class_name != nullptr && class_name[0] != '\0' ? std::string(class_name) + "." + name
+                                                                        : std::string(name);
+    NativeCallCounter& counter = runtime_report().native_call_counter(label);
+    const std::int32_t slot =
+        jni.slots.allocate(NativeTarget{guest_function, *shorty, is_static, std::move(label), &counter});
     if (slot < 0) {
         log("RegisterNatives: the native thunk pool is exhausted (%s%s)", name, signature);
         return -1;

@@ -14,6 +14,7 @@
 
 #include "zb/log.h"
 #include "zb/process.h"
+#include "zb/runtime_report.h"
 
 namespace zb {
 
@@ -408,7 +409,12 @@ bool HostJni::handle_host_call(std::uint32_t index, GuestThread& thread) {
 }
 
 std::optional<HostJni::NativeResult> HostJni::call_native(JniBackend::Env env, char return_type,
-                                                          std::uint32_t function, const BuildCall& build) {
+                                                          std::uint32_t function, const BuildCall& build,
+                                                          NativeCallCounter* call_counter) {
+    // The single funnel for every Java -> guest native invocation: one relaxed atomic add per
+    // call, no lock, no string work. call_counter is null for calls that are not dispatching a
+    // bound native method (the loader's own JNI_OnLoad call), which are not counted.
+    if (call_counter != nullptr) call_counter->count.fetch_add(1, std::memory_order_relaxed);
     Impl& jni = *impl_;
     JniThread& state = jni.thread();
     const JniBackend::Env outer_env = state.env;

@@ -144,6 +144,47 @@ void RuntimeReport::note_registered_native() {
     if (observer) (*observer)(false);
 }
 
+NativeCallCounter& RuntimeReport::native_call_counter(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::string label = one_line(name, 128);
+    for (NativeCallEntry& entry : native_calls_) {
+        if (entry.name == label) return *entry.counter;
+    }
+    if (native_calls_.size() >= kMaxNativeCalls) return native_calls_overflow_;
+    native_calls_.push_back(NativeCallEntry{label, std::make_unique<NativeCallCounter>()});
+    return *native_calls_.back().counter;
+}
+
+void RuntimeReport::note_guest_open(const std::string& path) {
+    bool structural = false;
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const std::string line = one_line(path, kMaxDetail);
+        auto found = std::find(opened_paths_.begin(), opened_paths_.end(), line);
+        if (found != opened_paths_.end()) opened_paths_.erase(found);
+        else structural = true;
+        opened_paths_.push_back(line);
+        if (opened_paths_.size() > kMaxOpenedPaths) opened_paths_.erase(opened_paths_.begin());
+        observer = take_observer();
+    }
+    if (observer) (*observer)(structural);
+}
+
+void RuntimeReport::note_guest_open_failed(const std::string& path, int error) {
+    std::shared_ptr<Observer> observer;
+    bool structural = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (failed_opens_.size() < kMaxFailedOpens) {
+            failed_opens_.emplace_back(one_line(path, kMaxDetail), error);
+            structural = true;
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(structural);
+}
+
 void RuntimeReport::note_guest_exit(const std::string& reason) {
     std::shared_ptr<Observer> observer;
     {
@@ -324,25 +365,31 @@ void RuntimeReport::note_egl_object(const std::string& key, const std::string& v
 
 void RuntimeReport::note_egl_current(std::uint64_t host_tid) {
     egl_current_generation_.fetch_add(1, std::memory_order_relaxed);
+    bool structural = false;
     std::shared_ptr<Observer> observer;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        egl_current_known_ = true;
-        egl_current_tid_ = host_tid;
+        if (std::find(egl_current_tids_.begin(), egl_current_tids_.end(), host_tid) == egl_current_tids_.end()) {
+            if (egl_current_tids_.size() < kMaxEglThreads) egl_current_tids_.push_back(host_tid);
+            structural = true;
+        }
         observer = take_observer();
     }
-    if (observer) (*observer)(true);
+    if (observer) (*observer)(structural);
 }
 
 void RuntimeReport::note_gl_thread(std::uint64_t host_tid) {
+    bool structural = false;
     std::shared_ptr<Observer> observer;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        gl_thread_known_ = true;
-        gl_thread_tid_ = host_tid;
+        if (std::find(gl_thread_tids_.begin(), gl_thread_tids_.end(), host_tid) == gl_thread_tids_.end()) {
+            if (gl_thread_tids_.size() < kMaxEglThreads) gl_thread_tids_.push_back(host_tid);
+            structural = true;
+        }
         observer = take_observer();
     }
-    if (observer) (*observer)(true);
+    if (observer) (*observer)(structural);
 }
 
 void RuntimeReport::note_egl_swap() {
@@ -465,6 +512,40 @@ std::string RuntimeReport::text() const {
     out += exit_reason_.empty() ? "(none)" : exit_reason_;
     out += '\n';
 
+    {
+        std::vector<std::pair<const std::string*, std::uint64_t>> counts;
+        std::uint64_t total = 0;
+        for (const NativeCallEntry& entry : native_calls_) {
+            const std::uint64_t n = entry.counter->count.load(std::memory_order_relaxed);
+            total += n;
+            counts.emplace_back(&entry.name, n);
+        }
+        total += native_calls_overflow_.count.load(std::memory_order_relaxed);
+        std::sort(counts.begin(), counts.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        out += "native-calls:";
+        std::size_t shown = 0;
+        for (const auto& [name, count] : counts) {
+            if (shown >= 8 || count == 0) break;
+            out += " " + *name + "=" + std::to_string(count);
+            ++shown;
+        }
+        if (shown == 0) out += " (none)";
+        out += " total=" + std::to_string(total) + '\n';
+    }
+
+    if (opened_paths_.empty()) {
+        out += "opened-1: (none)\n";
+    } else {
+        std::size_t n = 1;
+        for (const std::string& path : opened_paths_) out += "opened-" + std::to_string(n++) + ": " + path + '\n';
+    }
+    {
+        std::size_t n = 1;
+        for (const auto& [path, error] : failed_opens_) {
+            out += "open-failed-" + std::to_string(n++) + ": " + path + " errno=" + std::to_string(error) + '\n';
+        }
+    }
+
     append_count(out, "gl-calls", gl_call_total_);
     out += "gl-first-call: ";
     if (gl_call_total_ == 0) {
@@ -490,9 +571,15 @@ std::string RuntimeReport::text() const {
 
     for (const auto& [key, value] : egl_objects_) out += "egl-" + key + ": " + value + '\n';
     append_count(out, "egl-swaps", egl_swap_total_);
-    if (egl_current_known_ && gl_thread_known_ && egl_current_tid_ != gl_thread_tid_) {
-        out += "egl-thread-mismatch: current=" + std::to_string(egl_current_tid_) +
-               " gl=" + std::to_string(gl_thread_tid_) + '\n';
+    // A mismatch is a thread that issued a gl* call having never made an EGL context current on
+    // itself. A raster thread and a resource thread each with their own (correct) context both
+    // appear in egl_current_tids_, so this does not fire for that normal multi-context case.
+    for (const std::uint64_t tid : gl_thread_tids_) {
+        if (std::find(egl_current_tids_.begin(), egl_current_tids_.end(), tid) != egl_current_tids_.end()) continue;
+        out += "egl-thread-mismatch: current=" +
+               std::to_string(egl_current_tids_.empty() ? 0 : egl_current_tids_.back()) +
+               " gl=" + std::to_string(tid) + '\n';
+        break;
     }
     out += "egl-first-error: ";
     if (!egl_error_known_) {
@@ -525,6 +612,10 @@ void RuntimeReport::clear() {
     onload_total_ = 0;
     registered_natives_ = 0;
     exit_reason_.clear();
+    native_calls_.clear();
+    native_calls_overflow_.count.store(0, std::memory_order_relaxed);
+    opened_paths_.clear();
+    failed_opens_.clear();
     gl_call_total_ = 0;
     gl_first_call_function_.clear();
     gl_first_call_tid_ = 0;
@@ -535,11 +626,9 @@ void RuntimeReport::clear() {
     gl_error_value_ = 0;
     gl_details_.clear();
     egl_objects_.clear();
-    egl_current_known_ = false;
-    egl_current_tid_ = 0;
+    egl_current_tids_.clear();
     egl_current_generation_.store(0, std::memory_order_relaxed);
-    gl_thread_known_ = false;
-    gl_thread_tid_ = 0;
+    gl_thread_tids_.clear();
     egl_swap_total_ = 0;
     egl_error_known_ = false;
     egl_error_function_.clear();

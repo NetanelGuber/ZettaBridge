@@ -15,6 +15,8 @@
 
 namespace zb {
 
+struct NativeCallCounter;  // core/include/zb/runtime_report.h
+
 // The host side of the guest JNIEnv (guest/zbjni/zbjni.c -> libzbjni.so). It serves the flat JNI
 // host calls against a JniBackend, owns the 32-bit handle and id tables and the thunk slots, and
 // runs guest native code on behalf of Java callers.
@@ -67,14 +69,20 @@ public:
     // thread's cached carrier. Opens a local frame for the call; return_type 'L' converts the
     // returned handle before the frame closes. nullopt if the frame could not be opened (a Java
     // exception is pending) or the guest call failed.
+    // call_counter, when non-null, is incremented with one relaxed atomic add: the native-call
+    // census (runtime_report.h) for a bound Java native method. Callers that are not dispatching
+    // a bound native method (the loader's own JNI_OnLoad call) pass nullptr and are not counted.
     std::optional<NativeResult> call_native(JniBackend::Env env, char return_type, std::uint32_t function,
-                                            const BuildCall& build);
+                                            const BuildCall& build, NativeCallCounter* call_counter = nullptr);
 
     // Binds one Java native method to a guest function through a thunk slot: strips one leading
     // '!' from the signature, allocates a slot, and calls the backend once. Returns 0, or a
-    // negative JNI error with the slot released.
+    // negative JNI error with the slot released. class_name, when known to the caller (the
+    // loader has it from the export's decoded name), labels the method's native-call counter
+    // "class.name"; nullptr labels it just "name".
     std::int32_t register_native(JniBackend::Env env, JniBackend::Ref cls, const char* name, const char* signature,
-                                 std::uint32_t guest_function, bool is_static = false);
+                                 std::uint32_t guest_function, bool is_static = false,
+                                 const char* class_name = nullptr);
 
     // Guest loader operations bound to the calling host thread. All calls use its cached carrier,
     // or the currently running guest thread for a nested Java -> load transition. A failed loader

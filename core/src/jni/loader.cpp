@@ -151,7 +151,7 @@ JniLoadReport JniLoader::load(JniBackend::Env env, const std::string& path,
         }
         for (const DeclaredNativeMethod& method : methods) {
             if (host_jni_.register_native(env, cls, decoded->method.c_str(), method.signature.c_str(), function,
-                                          method.is_static) != 0) {
+                                          method.is_static, decoded->class_name.c_str()) != 0) {
                 report.error = "RegisterNatives failed for " + decoded->class_name + "." + decoded->method +
                                method.signature;
                 return report;
