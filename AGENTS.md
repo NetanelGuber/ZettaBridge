@@ -1331,3 +1331,30 @@ fd must be registered with that host thread's real `ALooper` through the NDK, wi
 that enters the guest and runs the guest callback. Guest-created threads keep today's path, which
 is proven to work. Keep the NDK behind a backend seam (like `GlBackend`/`AssetBackend`) so host
 tests can drive it without Android.
+
+### Done 2026-09-18: guest loopers on host threads attach to the real Android looper
+
+`AndroidLooperBackend` (`core/include/zb/android_looper_backend.h`) is the seam over
+`<android/looper.h>`; the real one is `core/android/looper_driver_backend.*` and the host-test
+mock is `tests/host/mock_looper.h`. `HostLooper` now decides per calling thread:
+
+- a guest-created thread keeps the old poll set and semantics, unchanged;
+- a borrower (`LibraryRuntime::is_borrower`, backed by `Process::is_borrower`) prepares the real
+  looper of its host thread and registers its fds there. The host callback fires on that thread
+  from Java's `Looper.loop()`, enters the guest through `HostJni::call_on_host_thread` (the
+  thread's cached carrier, so the guest identity matches the one that registered the fd) and runs
+  the guest callback with `(fd, events, data)`. A guest callback returning 0, or a guest that
+  cannot be entered, unregisters the fd on both sides.
+- `ALooper_wake` forwards to the real looper; `ALooper_pollOnce` on such a looper returns
+  `ALOOPER_POLL_WAKE` at once (logged once) instead of blocking a loop Java owns.
+
+New report lines: `looper-attached: <n>` and `looper-host-callbacks: fired=<n> guest=<n>
+failed=<n>`.
+
+Local gate: 47/47 host tests, Android `zbridge`/`zbproxy`, launcher bundle and Gradle debug APK
+all pass. `/sdcard/ZettaBridge-debug.apk` is 9,344,152 bytes, SHA-256
+`d0bd5ffdfa32b5d1801410ae6a3049263ca404bb7b027ecf3740d8873499de42`.
+
+**NEXT/device gate:** install it, launch the Flutter plugin, and check the report for
+`looper-attached` at least 1, `looper-host-callbacks` with `guest` rising, a `1.ui` thread in the
+census, and rising `egl-swaps`.
