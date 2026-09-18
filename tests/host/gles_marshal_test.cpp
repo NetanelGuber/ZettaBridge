@@ -1,5 +1,6 @@
 #include <sys/mman.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -29,10 +30,21 @@ void set_words(zb::LibraryRuntime& runtime, zb::GuestThread& thread,
 void dispatch_all_pointerless(zb::HostGl& host, zb::GuestThread& thread,
                               MockGles& backend, zb::LibraryRuntime& runtime) {
     const std::array<std::uint32_t, 12> words{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    // The sync entry points validate their 32-bit handle before anything reaches the driver, so
+    // the junk arguments below stop at HostGl by design.
+    const std::array<const char*, 4> handle_only{"glClientWaitSync", "glDeleteSync", "glIsSync",
+                                                 "glWaitSync"};
     std::size_t seen = 0;
     for (const zb::GlHostCallInfo& info : zb::kGlHostCalls) {
         if (info.has_pointer) continue;
         ++seen;
+        if (std::find_if(handle_only.begin(), handle_only.end(), [&](const char* name) {
+                return std::strcmp(name, info.name) == 0;
+            }) != handle_only.end()) {
+            set_words(runtime, thread, words);
+            CHECK(host.handle_host_call(info.index, thread));
+            continue;
+        }
         set_words(runtime, thread, words);
         backend.set_error(0);
         const std::size_t before = backend.calls().size();
@@ -49,9 +61,19 @@ void dispatch_all_pointerless(zb::HostGl& host, zb::GuestThread& thread,
 
 int main() {
     CHECK(zb::kGlHostCallCount == 142);
-    CHECK(zb::kGlPointerlessHostCallCount == 81);
+    CHECK(zb::kGlHostCall3Count == 104);
+    CHECK(zb::kGlHostCallTotalCount == 246);
+    CHECK(zb::kGlPointerlessHostCallCount == 126);
     CHECK(zb::ZB_GL_HC_glActiveTexture == 0);
     CHECK(zb::ZB_GL_HC_glViewport == 141);
+    // GLES 3.0 is appended after every other stub library, so the GLES 2.0, AAsset*,
+    // ANativeWindow_* and EGL indices all kept their values.
+    CHECK(zb::kGlHostCall3First == 228);
+    CHECK(zb::kGlHostCall3Last == 331);
+    CHECK(zb::ZB_GL_HC_glBindVertexArray == 234);
+    CHECK(zb::gl_host_call(141) != nullptr && zb::gl_host_call(142) == nullptr);
+    CHECK(zb::gl_host_call(227) == nullptr);
+    CHECK(std::strcmp(zb::gl_host_call_name(228), "glBeginQuery") == 0);
 
     zb::LibraryRuntime runtime;
     CHECK(runtime.memory().map_anon(kStack, 0x1000, PROT_READ | PROT_WRITE));
@@ -291,6 +313,80 @@ int main() {
     CHECK(backend.calls().size() == before_manual);
     CHECK(backend.error() == zb::kGlInvalidValue);
     CHECK(thread.regs()[0] == 0 && thread.regs()[1] == 0);
+
+    // GLES 3.0: glGetStringi copies the driver string into guest memory and caches it, exactly
+    // like glGetString; the guest never sees the driver's pointer.
+    backend.clear_calls();
+    static const char kExtension[] = "GL_OES_mock_extension";
+    backend.set_result("glGetStringi", reinterpret_cast<std::uint64_t>(kExtension));
+    pointer_words = {0x1F03, 2};  // GL_EXTENSIONS
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetStringi, thread));
+    const std::uint32_t extension = thread.regs()[0];
+    CHECK(extension != 0 && extension != reinterpret_cast<std::uintptr_t>(kExtension));
+    CHECK(std::strcmp(reinterpret_cast<const char*>(runtime.memory().base() + extension),
+                      kExtension) == 0);
+    CHECK(backend.calls().size() == 1);
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetStringi, thread));
+    CHECK(thread.regs()[0] == extension && backend.calls().size() == 1);
+
+    // GLES 3.0 mapped buffers are mirrored: a driver mapping is host memory outside the guest
+    // space, so the guest gets a copy that is written back on unmap.
+    std::array<std::uint8_t, 64> driver_range;
+    driver_range.fill(0xA5);
+    backend.clear_calls();
+    backend.set_result("glMapBufferRange", reinterpret_cast<std::uint64_t>(driver_range.data()));
+    backend.set_result("glUnmapBuffer", 1);
+    pointer_words = {0x8892, 0, static_cast<std::uint32_t>(driver_range.size()), 0x0003};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glMapBufferRange, thread));
+    const std::uint32_t mapped = thread.regs()[0];
+    CHECK(mapped != 0 && mapped + driver_range.size() < kData + 0x1000);
+    CHECK(std::memcmp(runtime.memory().base() + mapped, driver_range.data(),
+                      driver_range.size()) == 0);
+
+    // While the range is mapped, glGetBufferPointerv reports the mirror, never the host pointer.
+    backend.clear_calls();
+    pointer_words = {0x8892, 0x88BD, kData + 0xFF8};  // GL_BUFFER_MAP_POINTER
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetBufferPointerv, thread));
+    std::uint32_t reported = 0;
+    std::memcpy(&reported, runtime.memory().base() + kData + 0xFF8, sizeof(reported));
+    CHECK(reported == mapped);
+
+    // What the guest wrote into the mirror reaches the driver's memory on unmap.
+    std::memset(runtime.memory().base() + mapped, 0x5A, driver_range.size());
+    backend.clear_calls();
+    pointer_words = {0x8892};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glUnmapBuffer, thread));
+    CHECK(thread.regs()[0] == 1);
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glUnmapBuffer");
+    CHECK(std::count(driver_range.begin(), driver_range.end(), 0x5A) ==
+          static_cast<long>(driver_range.size()));
+
+    set_words(runtime, thread, pointer_words);
+    pointer_words = {0x8892, 0x88BD, kData + 0xFF8};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetBufferPointerv, thread));
+    std::memcpy(&reported, runtime.memory().base() + kData + 0xFF8, sizeof(reported));
+    CHECK(reported == 0);
+
+    // An invalidated mapping is not copied in: the driver's old contents stay out of the guest.
+    driver_range.fill(0x11);
+    std::memset(runtime.memory().base() + kData + 0x700, 0, 0x40);
+    backend.clear_calls();
+    pointer_words = {0x8892, 0, static_cast<std::uint32_t>(driver_range.size()), 0x0006};
+    set_words(runtime, thread, pointer_words);  // GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glMapBufferRange, thread));
+    const std::uint32_t invalidated = thread.regs()[0];
+    CHECK(invalidated != 0);
+    CHECK(std::memcmp(runtime.memory().base() + invalidated, driver_range.data(),
+                      driver_range.size()) != 0);
+    pointer_words = {0x8892};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glUnmapBuffer, thread));
 
     // The asset range is deliberately not swallowed by HostGl.
     CHECK(!host.handle_host_call(142, thread));

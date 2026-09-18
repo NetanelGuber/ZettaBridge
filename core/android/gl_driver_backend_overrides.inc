@@ -143,3 +143,109 @@
     void glVertexAttrib4fv(GLuint index, const GLfloat *v) override { ::glVertexAttrib4fv(index, v); }
     void glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer) override { ::glVertexAttribPointer(index, size, type, normalized, stride, pointer); }
     void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) override { ::glViewport(x, y, width, height); }
+
+    // GLES 3.0, generated the same way (2026-09-18).
+    void glBeginQuery(GLenum target, GLuint id) override { ::glBeginQuery(target, id); }
+    void glBeginTransformFeedback(GLenum primitiveMode) override { ::glBeginTransformFeedback(primitiveMode); }
+    void glBindBufferBase(GLenum target, GLuint index, GLuint buffer) override { ::glBindBufferBase(target, index, buffer); }
+    void glBindBufferRange(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size) override { ::glBindBufferRange(target, index, buffer, offset, size); }
+    void glBindSampler(GLuint unit, GLuint sampler) override { ::glBindSampler(unit, sampler); }
+    void glBindTransformFeedback(GLenum target, GLuint id) override { ::glBindTransformFeedback(target, id); }
+    void glBindVertexArray(GLuint array) override { ::glBindVertexArray(array); }
+    void glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter) override { ::glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter); }
+    void glClearBufferfi(GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil) override { ::glClearBufferfi(buffer, drawbuffer, depth, stencil); }
+    void glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat *value) override { ::glClearBufferfv(buffer, drawbuffer, value); }
+    void glClearBufferiv(GLenum buffer, GLint drawbuffer, const GLint *value) override { ::glClearBufferiv(buffer, drawbuffer, value); }
+    void glClearBufferuiv(GLenum buffer, GLint drawbuffer, const GLuint *value) override { ::glClearBufferuiv(buffer, drawbuffer, value); }
+    GLenum glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) override { return static_cast<GLenum>(::glClientWaitSync(reinterpret_cast<::GLsync>(sync), flags, timeout)); }
+    void glCompressedTexImage3D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLsizei imageSize, const void *data) override { ::glCompressedTexImage3D(target, level, internalformat, width, height, depth, border, imageSize, data); }
+    void glCompressedTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLsizei imageSize, const void *data) override { ::glCompressedTexSubImage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, data); }
+    void glCopyBufferSubData(GLenum readTarget, GLenum writeTarget, GLintptr readOffset, GLintptr writeOffset, GLsizeiptr size) override { ::glCopyBufferSubData(readTarget, writeTarget, readOffset, writeOffset, size); }
+    void glCopyTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height) override { ::glCopyTexSubImage3D(target, level, xoffset, yoffset, zoffset, x, y, width, height); }
+    void glDeleteQueries(GLsizei n, const GLuint *ids) override { ::glDeleteQueries(n, ids); }
+    void glDeleteSamplers(GLsizei count, const GLuint *samplers) override { ::glDeleteSamplers(count, samplers); }
+    void glDeleteSync(GLsync sync) override { ::glDeleteSync(reinterpret_cast<::GLsync>(sync)); }
+    void glDeleteTransformFeedbacks(GLsizei n, const GLuint *ids) override { ::glDeleteTransformFeedbacks(n, ids); }
+    void glDeleteVertexArrays(GLsizei n, const GLuint *arrays) override { ::glDeleteVertexArrays(n, arrays); }
+    void glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instancecount) override { ::glDrawArraysInstanced(mode, first, count, instancecount); }
+    void glDrawBuffers(GLsizei n, const GLenum *bufs) override { ::glDrawBuffers(n, bufs); }
+    void glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount) override { ::glDrawElementsInstanced(mode, count, type, indices, instancecount); }
+    void glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void *indices) override { ::glDrawRangeElements(mode, start, end, count, type, indices); }
+    void glEndQuery(GLenum target) override { ::glEndQuery(target); }
+    void glEndTransformFeedback(void) override { ::glEndTransformFeedback(); }
+    GLsync glFenceSync(GLenum condition, GLbitfield flags) override { return reinterpret_cast<GLsync>(::glFenceSync(condition, flags)); }
+    void glFlushMappedBufferRange(GLenum target, GLintptr offset, GLsizeiptr length) override { ::glFlushMappedBufferRange(target, offset, length); }
+    void glFramebufferTextureLayer(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint layer) override { ::glFramebufferTextureLayer(target, attachment, texture, level, layer); }
+    void glGenQueries(GLsizei n, GLuint *ids) override { ::glGenQueries(n, ids); }
+    void glGenSamplers(GLsizei count, GLuint *samplers) override { ::glGenSamplers(count, samplers); }
+    void glGenTransformFeedbacks(GLsizei n, GLuint *ids) override { ::glGenTransformFeedbacks(n, ids); }
+    void glGenVertexArrays(GLsizei n, GLuint *arrays) override { ::glGenVertexArrays(n, arrays); }
+    void glGetActiveUniformBlockName(GLuint program, GLuint uniformBlockIndex, GLsizei bufSize, GLsizei *length, GLchar *uniformBlockName) override { ::glGetActiveUniformBlockName(program, uniformBlockIndex, bufSize, length, uniformBlockName); }
+    void glGetActiveUniformBlockiv(GLuint program, GLuint uniformBlockIndex, GLenum pname, GLint *params) override { ::glGetActiveUniformBlockiv(program, uniformBlockIndex, pname, params); }
+    void glGetActiveUniformsiv(GLuint program, GLsizei uniformCount, const GLuint *uniformIndices, GLenum pname, GLint *params) override { ::glGetActiveUniformsiv(program, uniformCount, uniformIndices, pname, params); }
+    void glGetBufferParameteri64v(GLenum target, GLenum pname, GLint64 *params) override { ::glGetBufferParameteri64v(target, pname, params); }
+    void glGetBufferPointerv(GLenum target, GLenum pname, void **params) override { ::glGetBufferPointerv(target, pname, params); }
+    GLint glGetFragDataLocation(GLuint program, const GLchar *name) override { return static_cast<GLint>(::glGetFragDataLocation(program, name)); }
+    void glGetInteger64i_v(GLenum target, GLuint index, GLint64 *data) override { ::glGetInteger64i_v(target, index, data); }
+    void glGetInteger64v(GLenum pname, GLint64 *data) override { ::glGetInteger64v(pname, data); }
+    void glGetIntegeri_v(GLenum target, GLuint index, GLint *data) override { ::glGetIntegeri_v(target, index, data); }
+    void glGetInternalformativ(GLenum target, GLenum internalformat, GLenum pname, GLsizei count, GLint *params) override { ::glGetInternalformativ(target, internalformat, pname, count, params); }
+    void glGetProgramBinary(GLuint program, GLsizei bufSize, GLsizei *length, GLenum *binaryFormat, void *binary) override { ::glGetProgramBinary(program, bufSize, length, binaryFormat, binary); }
+    void glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint *params) override { ::glGetQueryObjectuiv(id, pname, params); }
+    void glGetQueryiv(GLenum target, GLenum pname, GLint *params) override { ::glGetQueryiv(target, pname, params); }
+    void glGetSamplerParameterfv(GLuint sampler, GLenum pname, GLfloat *params) override { ::glGetSamplerParameterfv(sampler, pname, params); }
+    void glGetSamplerParameteriv(GLuint sampler, GLenum pname, GLint *params) override { ::glGetSamplerParameteriv(sampler, pname, params); }
+    const GLubyte * glGetStringi(GLenum name, GLuint index) override { return ::glGetStringi(name, index); }
+    void glGetSynciv(GLsync sync, GLenum pname, GLsizei count, GLsizei *length, GLint *values) override { ::glGetSynciv(reinterpret_cast<::GLsync>(sync), pname, count, length, values); }
+    void glGetTransformFeedbackVarying(GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLsizei *size, GLenum *type, GLchar *name) override { ::glGetTransformFeedbackVarying(program, index, bufSize, length, size, type, name); }
+    GLuint glGetUniformBlockIndex(GLuint program, const GLchar *uniformBlockName) override { return static_cast<GLuint>(::glGetUniformBlockIndex(program, uniformBlockName)); }
+    void glGetUniformIndices(GLuint program, GLsizei uniformCount, const GLchar *const*uniformNames, GLuint *uniformIndices) override { ::glGetUniformIndices(program, uniformCount, uniformNames, uniformIndices); }
+    void glGetUniformuiv(GLuint program, GLint location, GLuint *params) override { ::glGetUniformuiv(program, location, params); }
+    void glGetVertexAttribIiv(GLuint index, GLenum pname, GLint *params) override { ::glGetVertexAttribIiv(index, pname, params); }
+    void glGetVertexAttribIuiv(GLuint index, GLenum pname, GLuint *params) override { ::glGetVertexAttribIuiv(index, pname, params); }
+    void glInvalidateFramebuffer(GLenum target, GLsizei numAttachments, const GLenum *attachments) override { ::glInvalidateFramebuffer(target, numAttachments, attachments); }
+    void glInvalidateSubFramebuffer(GLenum target, GLsizei numAttachments, const GLenum *attachments, GLint x, GLint y, GLsizei width, GLsizei height) override { ::glInvalidateSubFramebuffer(target, numAttachments, attachments, x, y, width, height); }
+    GLboolean glIsQuery(GLuint id) override { return static_cast<GLboolean>(::glIsQuery(id)); }
+    GLboolean glIsSampler(GLuint sampler) override { return static_cast<GLboolean>(::glIsSampler(sampler)); }
+    GLboolean glIsSync(GLsync sync) override { return static_cast<GLboolean>(::glIsSync(reinterpret_cast<::GLsync>(sync))); }
+    GLboolean glIsTransformFeedback(GLuint id) override { return static_cast<GLboolean>(::glIsTransformFeedback(id)); }
+    GLboolean glIsVertexArray(GLuint array) override { return static_cast<GLboolean>(::glIsVertexArray(array)); }
+    void * glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access) override { return ::glMapBufferRange(target, offset, length, access); }
+    void glPauseTransformFeedback(void) override { ::glPauseTransformFeedback(); }
+    void glProgramBinary(GLuint program, GLenum binaryFormat, const void *binary, GLsizei length) override { ::glProgramBinary(program, binaryFormat, binary, length); }
+    void glProgramParameteri(GLuint program, GLenum pname, GLint value) override { ::glProgramParameteri(program, pname, value); }
+    void glReadBuffer(GLenum src) override { ::glReadBuffer(src); }
+    void glRenderbufferStorageMultisample(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height) override { ::glRenderbufferStorageMultisample(target, samples, internalformat, width, height); }
+    void glResumeTransformFeedback(void) override { ::glResumeTransformFeedback(); }
+    void glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param) override { ::glSamplerParameterf(sampler, pname, param); }
+    void glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat *param) override { ::glSamplerParameterfv(sampler, pname, param); }
+    void glSamplerParameteri(GLuint sampler, GLenum pname, GLint param) override { ::glSamplerParameteri(sampler, pname, param); }
+    void glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint *param) override { ::glSamplerParameteriv(sampler, pname, param); }
+    void glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void *pixels) override { ::glTexImage3D(target, level, internalformat, width, height, depth, border, format, type, pixels); }
+    void glTexStorage2D(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height) override { ::glTexStorage2D(target, levels, internalformat, width, height); }
+    void glTexStorage3D(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth) override { ::glTexStorage3D(target, levels, internalformat, width, height, depth); }
+    void glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void *pixels) override { ::glTexSubImage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, pixels); }
+    void glTransformFeedbackVaryings(GLuint program, GLsizei count, const GLchar *const*varyings, GLenum bufferMode) override { ::glTransformFeedbackVaryings(program, count, varyings, bufferMode); }
+    void glUniform1ui(GLint location, GLuint v0) override { ::glUniform1ui(location, v0); }
+    void glUniform1uiv(GLint location, GLsizei count, const GLuint *value) override { ::glUniform1uiv(location, count, value); }
+    void glUniform2ui(GLint location, GLuint v0, GLuint v1) override { ::glUniform2ui(location, v0, v1); }
+    void glUniform2uiv(GLint location, GLsizei count, const GLuint *value) override { ::glUniform2uiv(location, count, value); }
+    void glUniform3ui(GLint location, GLuint v0, GLuint v1, GLuint v2) override { ::glUniform3ui(location, v0, v1, v2); }
+    void glUniform3uiv(GLint location, GLsizei count, const GLuint *value) override { ::glUniform3uiv(location, count, value); }
+    void glUniform4ui(GLint location, GLuint v0, GLuint v1, GLuint v2, GLuint v3) override { ::glUniform4ui(location, v0, v1, v2, v3); }
+    void glUniform4uiv(GLint location, GLsizei count, const GLuint *value) override { ::glUniform4uiv(location, count, value); }
+    void glUniformBlockBinding(GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding) override { ::glUniformBlockBinding(program, uniformBlockIndex, uniformBlockBinding); }
+    void glUniformMatrix2x3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) override { ::glUniformMatrix2x3fv(location, count, transpose, value); }
+    void glUniformMatrix2x4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) override { ::glUniformMatrix2x4fv(location, count, transpose, value); }
+    void glUniformMatrix3x2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) override { ::glUniformMatrix3x2fv(location, count, transpose, value); }
+    void glUniformMatrix3x4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) override { ::glUniformMatrix3x4fv(location, count, transpose, value); }
+    void glUniformMatrix4x2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) override { ::glUniformMatrix4x2fv(location, count, transpose, value); }
+    void glUniformMatrix4x3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) override { ::glUniformMatrix4x3fv(location, count, transpose, value); }
+    GLboolean glUnmapBuffer(GLenum target) override { return static_cast<GLboolean>(::glUnmapBuffer(target)); }
+    void glVertexAttribDivisor(GLuint index, GLuint divisor) override { ::glVertexAttribDivisor(index, divisor); }
+    void glVertexAttribI4i(GLuint index, GLint x, GLint y, GLint z, GLint w) override { ::glVertexAttribI4i(index, x, y, z, w); }
+    void glVertexAttribI4iv(GLuint index, const GLint *v) override { ::glVertexAttribI4iv(index, v); }
+    void glVertexAttribI4ui(GLuint index, GLuint x, GLuint y, GLuint z, GLuint w) override { ::glVertexAttribI4ui(index, x, y, z, w); }
+    void glVertexAttribI4uiv(GLuint index, const GLuint *v) override { ::glVertexAttribI4uiv(index, v); }
+    void glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer) override { ::glVertexAttribIPointer(index, size, type, stride, pointer); }
+    void glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) override { ::glWaitSync(reinterpret_cast<::GLsync>(sync), flags, timeout); }

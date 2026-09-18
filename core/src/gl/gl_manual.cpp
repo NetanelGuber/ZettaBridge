@@ -23,6 +23,18 @@ constexpr GLenum kGlNumCompressedTextureFormats = 0x86A2;
 constexpr GLenum kGlCompressedTextureFormats = 0x86A3;
 constexpr GLenum kGlNumShaderBinaryFormats = 0x8DF9;
 constexpr GLenum kGlShaderBinaryFormats = 0x8DF8;
+constexpr GLenum kGlArrayBuffer = 0x8892;
+constexpr GLenum kGlElementArrayBuffer = 0x8893;
+constexpr GLenum kGlPixelPackBuffer = 0x88EB;
+constexpr GLenum kGlPixelUnpackBuffer = 0x88EC;
+constexpr GLenum kGlBufferMapPointer = 0x88BD;
+constexpr GLenum kGlUniformBlockActiveUniforms = 0x8A42;
+constexpr GLenum kGlUniformBlockActiveUniformIndices = 0x8A43;
+// glMapBufferRange access bits.
+constexpr GLbitfield kGlMapRead = 0x0001;
+constexpr GLbitfield kGlMapWrite = 0x0002;
+constexpr GLbitfield kGlMapInvalidateRange = 0x0004;
+constexpr GLbitfield kGlMapInvalidateBuffer = 0x0008;
 
 struct GlThreadState {
     struct Attribute {
@@ -34,6 +46,9 @@ struct GlThreadState {
         GLsizei stride = 0;
         std::uint32_t guest_pointer = 0;
         GLuint buffer = 0;
+        // GLES 3.0 glVertexAttribIPointer: the attribute must be re-issued through the integer
+        // entry point when its client array is materialized.
+        bool integer = false;
     };
 
     const HostGl* owner = nullptr;
@@ -41,9 +56,12 @@ struct GlThreadState {
     GLint unpack_alignment = 4;
     GLuint array_buffer = 0;
     GLuint element_array_buffer = 0;
+    GLuint pixel_pack_buffer = 0;
+    GLuint pixel_unpack_buffer = 0;
     std::unordered_map<GLuint, Attribute> attributes;
     std::unordered_map<GLuint, std::unordered_map<GLint, std::uint64_t>> uniforms;
     std::unordered_map<GLenum, std::uint32_t> strings;
+    std::unordered_map<std::uint64_t, std::uint32_t> indexed_strings;
 };
 
 thread_local GlThreadState t_state;
@@ -102,10 +120,30 @@ bool serve_pname(HostGl& host, HostGl::Call& call, void (GlBackend::*function)(G
     return true;
 }
 
-bool pixel_pointer(HostGl::Call& call, GLenum format, GLenum type, GLsizei width,
-                   GLsizei height, GLint alignment, unsigned position,
-                   std::uint8_t permission, void*& out) {
-    const auto bytes = gl_pixel_bytes(format, type, width, height, alignment);
+// The pixel argument of a texture or read-back call. With a GLES 3.0 pixel buffer object bound
+// the argument is a byte offset into that buffer and is passed through untouched; otherwise it is
+// a guest address whose whole image (depth images of height padded rows) must be accessible.
+bool pixel_pointer(HostGl& host, HostGl::Call& call, bool pack, GLenum format, GLenum type,
+                   GLsizei width, GLsizei height, GLsizei depth, GLint alignment,
+                   unsigned position, std::uint8_t permission, void*& out) {
+    if (host.pixel_buffer(pack) != 0) {
+        out = reinterpret_cast<void*>(static_cast<std::uintptr_t>(call.arg(position)));
+        return call.valid();
+    }
+    if (depth < 0) {
+        call.fail(kGlInvalidValue, "image depth is negative");
+        return false;
+    }
+    std::uint64_t rows = 0;
+    if (!checked_multiply(static_cast<std::uint64_t>(height), static_cast<std::uint64_t>(depth),
+                          rows) ||
+        rows > static_cast<std::uint64_t>(std::numeric_limits<GLsizei>::max())) {
+        call.fail(kGlInvalidValue, "image dimensions overflowed");
+        return false;
+    }
+    // Images are contiguous, so depth images of height padded rows measure exactly as one
+    // height*depth tall image: only the very last row is unpadded.
+    const auto bytes = gl_pixel_bytes(format, type, width, static_cast<GLsizei>(rows), alignment);
     if (!bytes) {
         call.fail(kGlInvalidValue, "pixel format, type, dimensions or alignment is invalid");
         return false;
@@ -147,8 +185,26 @@ std::uint64_t attribute_component_bytes(GLenum type) {
     case 0x1402:  // GL_SHORT
     case 0x1403:  // GL_UNSIGNED_SHORT
         return 2;
+    case 0x140B:  // GL_HALF_FLOAT
+        return 2;
+    case 0x1404:  // GL_INT
+    case 0x1405:  // GL_UNSIGNED_INT
     case 0x1406:  // GL_FLOAT
     case 0x140C:  // GL_FIXED
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+// The byte width of one index of a glDrawElements-family type, or 0 when the type is invalid.
+std::uint64_t element_index_bytes(GLenum type) {
+    switch (type) {
+    case 0x1401:  // GL_UNSIGNED_BYTE
+        return 1;
+    case 0x1403:  // GL_UNSIGNED_SHORT
+        return 2;
+    case 0x1405:  // GL_UNSIGNED_INT (GLES 3.0)
         return 4;
     default:
         return 0;
@@ -200,13 +256,19 @@ bool materialize_client_arrays(HostGl& host, HostGl::Call& call, std::uint64_t f
     }
 
     const bool rebound = !materialized.empty() && current.array_buffer != 0;
-    if (rebound) host.backend().glBindBuffer(0x8892, 0);  // GL_ARRAY_BUFFER
+    if (rebound) host.backend().glBindBuffer(kGlArrayBuffer, 0);
     for (const auto& item : materialized) {
-        host.backend().glVertexAttribPointer(
-            item.index, item.attribute->size, item.attribute->type,
-            item.attribute->normalized, item.attribute->stride, item.pointer);
+        if (item.attribute->integer) {
+            host.backend().glVertexAttribIPointer(item.index, item.attribute->size,
+                                                  item.attribute->type, item.attribute->stride,
+                                                  item.pointer);
+        } else {
+            host.backend().glVertexAttribPointer(
+                item.index, item.attribute->size, item.attribute->type,
+                item.attribute->normalized, item.attribute->stride, item.pointer);
+        }
     }
-    if (rebound) host.backend().glBindBuffer(0x8892, current.array_buffer);
+    if (rebound) host.backend().glBindBuffer(kGlArrayBuffer, current.array_buffer);
     return true;
 }
 
@@ -251,31 +313,79 @@ std::optional<std::uint64_t> gl_pixel_bytes(GLenum format, GLenum type, GLsizei 
     if (width < 0 || height < 0 || (alignment != 1 && alignment != 2 && alignment != 4 && alignment != 8)) {
         return std::nullopt;
     }
+    std::uint64_t components = 0;
+    switch (format) {
+    case 0x1901:  // GL_STENCIL_INDEX
+    case 0x1902:  // GL_DEPTH_COMPONENT
+    case 0x1903:  // GL_RED
+    case 0x1906:  // GL_ALPHA
+    case 0x1909:  // GL_LUMINANCE
+    case 0x84F9:  // GL_DEPTH_STENCIL
+    case 0x8D94:  // GL_RED_INTEGER
+        components = 1;
+        break;
+    case 0x190A:  // GL_LUMINANCE_ALPHA
+    case 0x8227:  // GL_RG
+    case 0x8228:  // GL_RG_INTEGER
+        components = 2;
+        break;
+    case 0x1907:  // GL_RGB
+    case 0x8D98:  // GL_RGB_INTEGER
+        components = 3;
+        break;
+    case 0x1908:  // GL_RGBA
+    case 0x80E1:  // GL_BGRA_EXT (EXT_texture_format_BGRA8888, used by old NME/lime builds)
+    case 0x8D99:  // GL_RGBA_INTEGER
+        components = 4;
+        break;
+    default:
+        return std::nullopt;
+    }
+
+    // A packed type fixes the whole pixel size and pairs with one or two formats only.
+    struct PackedType {
+        GLenum type;
+        std::uint64_t bytes;
+        GLenum format;
+        GLenum other_format;
+    };
+    static constexpr PackedType kPacked[] = {
+        {0x8363, 2, 0x1907, 0},       // GL_UNSIGNED_SHORT_5_6_5 with GL_RGB
+        {0x8033, 2, 0x1908, 0},       // GL_UNSIGNED_SHORT_4_4_4_4 with GL_RGBA
+        {0x8034, 2, 0x1908, 0},       // GL_UNSIGNED_SHORT_5_5_5_1 with GL_RGBA
+        {0x8368, 4, 0x1908, 0x8D99},  // GL_UNSIGNED_INT_2_10_10_10_REV, also RGBA_INTEGER
+        {0x8C3B, 4, 0x1907, 0},       // GL_UNSIGNED_INT_10F_11F_11F_REV with GL_RGB
+        {0x8C3E, 4, 0x1907, 0},       // GL_UNSIGNED_INT_5_9_9_9_REV with GL_RGB
+        {0x84FA, 4, 0x84F9, 0},       // GL_UNSIGNED_INT_24_8 with GL_DEPTH_STENCIL
+        {0x8DAD, 8, 0x84F9, 0},       // GL_FLOAT_32_UNSIGNED_INT_24_8_REV with GL_DEPTH_STENCIL
+    };
     std::uint64_t bytes_per_pixel = 0;
-    if (type == 0x1401) {  // GL_UNSIGNED_BYTE
-        switch (format) {
-        case 0x1906:  // GL_ALPHA
-        case 0x1909:  // GL_LUMINANCE
-            bytes_per_pixel = 1;
+    for (const PackedType& packed : kPacked) {
+        if (packed.type != type) continue;
+        if (packed.format != format && packed.other_format != format) return std::nullopt;
+        bytes_per_pixel = packed.bytes;
+    }
+    if (bytes_per_pixel == 0) {
+        std::uint64_t component_bytes = 0;
+        switch (type) {
+        case 0x1400:  // GL_BYTE
+        case 0x1401:  // GL_UNSIGNED_BYTE
+            component_bytes = 1;
             break;
-        case 0x190A:  // GL_LUMINANCE_ALPHA
-            bytes_per_pixel = 2;
+        case 0x1402:  // GL_SHORT
+        case 0x1403:  // GL_UNSIGNED_SHORT
+        case 0x140B:  // GL_HALF_FLOAT
+            component_bytes = 2;
             break;
-        case 0x1907:  // GL_RGB
-            bytes_per_pixel = 3;
-            break;
-        case 0x1908:  // GL_RGBA
-        case 0x80E1:  // GL_BGRA_EXT (EXT_texture_format_BGRA8888, used by old NME/lime builds)
-            bytes_per_pixel = 4;
+        case 0x1404:  // GL_INT
+        case 0x1405:  // GL_UNSIGNED_INT
+        case 0x1406:  // GL_FLOAT
+            component_bytes = 4;
             break;
         default:
             return std::nullopt;
         }
-    } else if ((type == 0x8363 && format == 0x1907) ||
-               ((type == 0x8033 || type == 0x8034) && format == 0x1908)) {
-        bytes_per_pixel = 2;
-    } else {
-        return std::nullopt;
+        bytes_per_pixel = components * component_bytes;
     }
 
     std::uint64_t row = 0;
@@ -301,8 +411,15 @@ void HostGl::note_pixel_store(GLenum pname, GLint param) {
 
 void HostGl::note_bind_buffer(GLenum target, GLuint buffer) {
     GlThreadState& current = state(*this);
-    if (target == 0x8892) current.array_buffer = buffer;          // GL_ARRAY_BUFFER
-    if (target == 0x8893) current.element_array_buffer = buffer;  // GL_ELEMENT_ARRAY_BUFFER
+    if (target == kGlArrayBuffer) current.array_buffer = buffer;
+    if (target == kGlElementArrayBuffer) current.element_array_buffer = buffer;
+    if (target == kGlPixelPackBuffer) current.pixel_pack_buffer = buffer;
+    if (target == kGlPixelUnpackBuffer) current.pixel_unpack_buffer = buffer;
+}
+
+GLuint HostGl::pixel_buffer(bool pack) const {
+    const GlThreadState& current = state(*this);
+    return pack ? current.pixel_pack_buffer : current.pixel_unpack_buffer;
 }
 
 void HostGl::note_vertex_attrib_enabled(GLuint index, bool enabled) {
@@ -326,6 +443,13 @@ std::optional<std::uint32_t> HostGl::allocate_guest(std::size_t size) {
     const auto result = runtime_.call_on_current(runtime_.service_api().malloc_fn, args);
     if (!result || result->r0 == 0) return std::nullopt;
     return result->r0;
+}
+
+void HostGl::free_guest(std::uint32_t address) {
+    if (address == 0 || allocator_) return;
+    GuestCall args;
+    args.regs = {address, 0, 0, 0};
+    (void)runtime_.call_on_current(runtime_.service_api().free_fn, args);
 }
 
 std::optional<std::uint64_t> HostGl::uniform_elements(GLuint program, GLint location) {
@@ -383,8 +507,8 @@ bool zbgl_manual_glTexImage2D(HostGl& host, HostGl::Call& call) {
     const GLenum format = call.scalar<GLenum>(6);
     const GLenum type = call.scalar<GLenum>(7);
     void* pixels = nullptr;
-    if (!pixel_pointer(call, format, type, width, height, host.pixel_alignment(false),
-                       8, kPageRead, pixels)) return true;
+    if (!pixel_pointer(host, call, false, format, type, width, height, 1,
+                       host.pixel_alignment(false), 8, kPageRead, pixels)) return true;
     host.backend().glTexImage2D(target, level, internalformat, width, height, border,
                                 format, type, pixels);
     return true;
@@ -400,8 +524,8 @@ bool zbgl_manual_glTexSubImage2D(HostGl& host, HostGl::Call& call) {
     const GLenum format = call.scalar<GLenum>(6);
     const GLenum type = call.scalar<GLenum>(7);
     void* pixels = nullptr;
-    if (!pixel_pointer(call, format, type, width, height, host.pixel_alignment(false),
-                       8, kPageRead, pixels)) return true;
+    if (!pixel_pointer(host, call, false, format, type, width, height, 1,
+                       host.pixel_alignment(false), 8, kPageRead, pixels)) return true;
     host.backend().glTexSubImage2D(target, level, xoffset, yoffset, width, height,
                                    format, type, pixels);
     return true;
@@ -415,8 +539,8 @@ bool zbgl_manual_glReadPixels(HostGl& host, HostGl::Call& call) {
     const GLenum format = call.scalar<GLenum>(4);
     const GLenum type = call.scalar<GLenum>(5);
     void* pixels = nullptr;
-    if (!pixel_pointer(call, format, type, width, height, host.pixel_alignment(true),
-                       6, kPageRead | kPageWrite, pixels)) return true;
+    if (!pixel_pointer(host, call, true, format, type, width, height, 1,
+                       host.pixel_alignment(true), 6, kPageRead | kPageWrite, pixels)) return true;
     host.backend().glReadPixels(x, y, width, height, format, type, pixels);
     return true;
 }
@@ -547,6 +671,7 @@ bool zbgl_manual_glVertexAttribPointer(HostGl& host, HostGl::Call& call) {
     attribute.normalized = call.scalar<GLboolean>(3);
     attribute.stride = call.scalar<GLsizei>(4);
     attribute.guest_pointer = call.arg(5);
+    attribute.integer = false;
     attribute.buffer = state(host).array_buffer;
     if (!call.valid()) return true;
     if (attribute.buffer != 0) {
@@ -573,25 +698,24 @@ bool zbgl_manual_glDrawArrays(HostGl& host, HostGl::Call& call) {
     return true;
 }
 
-bool zbgl_manual_glDrawElements(HostGl& host, HostGl::Call& call) {
-    const GLenum mode = call.scalar<GLenum>(0);
-    const GLsizei count = call.scalar<GLsizei>(1);
-    const GLenum type = call.scalar<GLenum>(2);
-    const std::uint32_t guest_indices = call.arg(3);
-    if (!call.valid()) return true;
+// Shared by glDrawElements, glDrawElementsInstanced and glDrawRangeElements: the indices
+// argument is a guest pointer when no element array buffer is bound and a buffer offset when one
+// is, and any enabled client array is materialized for the index range that will be read.
+// Returns false when the call was rejected.
+bool prepare_elements(HostGl& host, HostGl::Call& call, GLsizei count, GLenum type,
+                      std::uint32_t guest_indices, const void*& driver_indices) {
     if (count < 0) {
         call.fail(kGlInvalidOperation, "element count is negative");
-        return true;
+        return false;
     }
-
     GlThreadState& current = state(host);
-    const void* driver_indices = nullptr;
+    driver_indices = nullptr;
     std::uint64_t max_index = 0;
     if (current.element_array_buffer == 0) {
-        const std::uint64_t index_size = type == 0x1401 ? 1 : type == 0x1403 ? 2 : 0;
+        const std::uint64_t index_size = element_index_bytes(type);
         if (index_size == 0) {
             call.fail(kGlInvalidOperation, "element index type is invalid");
-            return true;
+            return false;
         }
         const std::uint64_t bytes = static_cast<std::uint64_t>(count) * index_size;
         const std::uint8_t* indices = count == 0 && guest_indices == 0
@@ -599,7 +723,7 @@ bool zbgl_manual_glDrawElements(HostGl& host, HostGl::Call& call) {
                                           : host.runtime().memory().host_ptr(guest_indices, bytes, kPageRead);
         if (count != 0 && indices == nullptr) {
             call.fail(kGlInvalidOperation, "client element indices are unreadable");
-            return true;
+            return false;
         }
         for (GLsizei i = 0; i < count; ++i) {
             std::uint64_t value = indices[i];
@@ -607,6 +731,10 @@ bool zbgl_manual_glDrawElements(HostGl& host, HostGl::Call& call) {
                 std::uint16_t value16;
                 std::memcpy(&value16, indices + static_cast<std::size_t>(i) * 2, sizeof(value16));
                 value = value16;
+            } else if (index_size == 4) {
+                std::uint32_t value32;
+                std::memcpy(&value32, indices + static_cast<std::size_t>(i) * 4, sizeof(value32));
+                value = value32;
             }
             max_index = std::max(max_index, value);
         }
@@ -615,7 +743,18 @@ bool zbgl_manual_glDrawElements(HostGl& host, HostGl::Call& call) {
         driver_indices = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(guest_indices));
         if (count > 0) max_index = static_cast<std::uint64_t>(count - 1);
     }
-    if (count > 0 && !materialize_client_arrays(host, call, 0, max_index)) return true;
+    if (count > 0 && !materialize_client_arrays(host, call, 0, max_index)) return false;
+    return true;
+}
+
+bool zbgl_manual_glDrawElements(HostGl& host, HostGl::Call& call) {
+    const GLenum mode = call.scalar<GLenum>(0);
+    const GLsizei count = call.scalar<GLsizei>(1);
+    const GLenum type = call.scalar<GLenum>(2);
+    const std::uint32_t guest_indices = call.arg(3);
+    if (!call.valid()) return true;
+    const void* driver_indices = nullptr;
+    if (!prepare_elements(host, call, count, type, guest_indices, driver_indices)) return true;
     host.backend().glDrawElements(mode, count, type, driver_indices);
     return true;
 }
@@ -631,6 +770,564 @@ bool zbgl_manual_glGetVertexAttribPointerv(HostGl& host, HostGl::Call& call) {
     }
     const auto found = state(host).attributes.find(index);
     *pointer = found == state(host).attributes.end() ? 0 : found->second.guest_pointer;
+    return true;
+}
+
+namespace {
+
+constexpr GLenum kGlInvalidEnum = 0x0500;
+constexpr GLenum kGlColorBuffer = 0x1800;
+
+// GLES 3.0 sync objects. A GLsync is a driver pointer, so the guest only ever sees a 32-bit
+// handle; the table is process-wide because sync objects are shared between contexts.
+std::mutex sync_mutex;
+std::vector<GLsync> sync_objects;  // handle - 1 indexes this; a null slot is a deleted object
+
+std::uint32_t register_sync(GLsync sync) {
+    if (sync == nullptr) return 0;
+    std::lock_guard<std::mutex> lock(sync_mutex);
+    for (std::size_t i = 0; i < sync_objects.size(); ++i) {
+        if (sync_objects[i] == nullptr) {
+            sync_objects[i] = sync;
+            return static_cast<std::uint32_t>(i + 1);
+        }
+    }
+    sync_objects.push_back(sync);
+    return static_cast<std::uint32_t>(sync_objects.size());
+}
+
+GLsync lookup_sync(std::uint32_t handle) {
+    std::lock_guard<std::mutex> lock(sync_mutex);
+    if (handle == 0 || handle > sync_objects.size()) return nullptr;
+    return sync_objects[handle - 1];
+}
+
+GLsync release_sync(std::uint32_t handle) {
+    std::lock_guard<std::mutex> lock(sync_mutex);
+    if (handle == 0 || handle > sync_objects.size()) return nullptr;
+    const GLsync sync = sync_objects[handle - 1];
+    sync_objects[handle - 1] = nullptr;
+    return sync;
+}
+
+bool resolve_sync(HostGl& host, HostGl::Call& call, unsigned position, GLsync& sync) {
+    const std::uint32_t handle = call.arg(position);
+    if (!call.valid()) return false;
+    sync = lookup_sync(handle);
+    if (sync == nullptr) {
+        host.reject(call, kGlInvalidValue, "sync handle is not a live sync object");
+        return false;
+    }
+    return true;
+}
+
+// AAPCS32 puts a 64-bit argument in an even register pair (or an 8-byte aligned stack slot),
+// low word first.
+std::uint64_t argument64(HostGl::Call& call, unsigned low) {
+    return static_cast<std::uint64_t>(call.arg(low)) |
+           (static_cast<std::uint64_t>(call.arg(low + 1)) << 32);
+}
+
+// A guest mirror of a host-mapped buffer range: the driver's mapped memory lives outside the
+// guest address space, so glMapBufferRange hands the guest a copy of the range and
+// glUnmapBuffer writes it back. Keyed by the target the buffer was mapped through, which is how
+// glUnmapBuffer, glFlushMappedBufferRange and glGetBufferPointerv name it again. Process-wide,
+// like the buffer objects themselves.
+struct BufferMapping {
+    std::uint32_t guest = 0;
+    std::uint8_t* data = nullptr;
+    std::uint64_t length = 0;
+    GLbitfield access = 0;
+};
+
+std::mutex mapping_mutex;
+std::unordered_map<GLenum, BufferMapping> mappings;
+
+bool find_mapping(GLenum target, BufferMapping& mapping) {
+    std::lock_guard<std::mutex> lock(mapping_mutex);
+    const auto found = mappings.find(target);
+    if (found == mappings.end()) return false;
+    mapping = found->second;
+    return true;
+}
+
+template <typename T>
+bool serve_uniform(HostGl& host, HostGl::Call& call,
+                   void (GlBackend::*function)(GLuint, GLint, T*)) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLint location = call.scalar<GLint>(1);
+    const auto elements = host.uniform_elements(program, location);
+    if (!elements) {
+        host.reject(call, kGlInvalidOperation, "uniform location is not active in the program");
+        return true;
+    }
+    T* params = call.pointer<T>(2, *elements, kPageRead | kPageWrite);
+    if (call.valid()) (host.backend().*function)(program, location, params);
+    return true;
+}
+
+// The guest passes an array of 32-bit pointers to strings; the driver needs host-width pointers.
+bool guest_string_array(HostGl& host, HostGl::Call& call, unsigned position, std::uint64_t items,
+                        std::vector<const GLchar*>& strings) {
+    const std::uint32_t* guest_strings =
+        call.pointer<const std::uint32_t>(position, items, kPageRead);
+    if (!call.valid()) return false;
+    if (items != 0 && guest_strings == nullptr) {
+        call.fail(kGlInvalidValue, "string array pointer is null");
+        return false;
+    }
+    strings.resize(static_cast<std::size_t>(items));
+    for (std::size_t i = 0; i < strings.size(); ++i) {
+        strings[i] = guest_string(host, call, guest_strings[i]);
+        if (!call.valid()) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+bool zbgl_manual_glGetStringi(HostGl& host, HostGl::Call& call) {
+    const GLenum name = call.scalar<GLenum>(0);
+    const GLuint index = call.scalar<GLuint>(1);
+    if (!call.valid()) return true;
+    GlThreadState& current = state(host);
+    const std::uint64_t key = (static_cast<std::uint64_t>(name) << 32) | index;
+    const auto cached = current.indexed_strings.find(key);
+    if (cached != current.indexed_strings.end()) {
+        call.set_result(cached->second);
+        return true;
+    }
+    const GLubyte* source = host.backend().glGetStringi(name, index);
+    if (source == nullptr) return true;
+    constexpr std::size_t kMaxDriverString = 64u << 20;
+    const std::size_t length = strnlen(reinterpret_cast<const char*>(source), kMaxDriverString);
+    if (length == kMaxDriverString) {
+        host.reject(call, kGlInvalidOperation, "driver string exceeds 64 MiB");
+        return true;
+    }
+    const auto address = host.allocate_guest(length + 1);
+    std::uint8_t* destination =
+        address ? host.runtime().memory().host_ptr(*address, length + 1, kPageRead | kPageWrite)
+                : nullptr;
+    if (destination == nullptr) {
+        host.reject(call, kGlOutOfMemory, "guest allocation for driver string failed");
+        return true;
+    }
+    std::memcpy(destination, source, length + 1);
+    current.indexed_strings[key] = *address;
+    call.set_result(*address);
+    return true;
+}
+
+bool zbgl_manual_glMapBufferRange(HostGl& host, HostGl::Call& call) {
+    const GLenum target = call.scalar<GLenum>(0);
+    const GLintptr offset = call.scalar<GLintptr>(1);
+    const GLsizeiptr length = call.scalar<GLsizeiptr>(2);
+    const GLbitfield access = call.scalar<GLbitfield>(3);
+    if (!call.valid()) return true;
+    if (offset < 0 || length <= 0) {
+        host.reject(call, kGlInvalidValue, "mapped range offset or length is invalid");
+        return true;
+    }
+    BufferMapping existing;
+    if (find_mapping(target, existing)) {
+        host.reject(call, kGlInvalidOperation, "buffer target is already mapped");
+        return true;
+    }
+    void* mapped = host.backend().glMapBufferRange(target, offset, length, access);
+    if (mapped == nullptr) return true;  // The driver queued its own error; the guest gets NULL.
+    const auto address = host.allocate_guest(static_cast<std::size_t>(length));
+    std::uint8_t* mirror =
+        address ? host.runtime().memory().host_ptr(*address, static_cast<std::uint64_t>(length),
+                                                   kPageRead | kPageWrite)
+                : nullptr;
+    if (mirror == nullptr) {
+        if (address) host.free_guest(*address);
+        host.backend().glUnmapBuffer(target);
+        host.reject(call, kGlOutOfMemory, "guest mirror for the mapped buffer range failed");
+        return true;
+    }
+    // GL_MAP_INVALIDATE_RANGE_BIT / GL_MAP_INVALIDATE_BUFFER_BIT say the previous contents are
+    // undefined, so they are never copied in; otherwise a reader and a partial writer both need
+    // to see what the buffer holds now.
+    const bool invalidated = (access & (kGlMapInvalidateRange | kGlMapInvalidateBuffer)) != 0;
+    if (!invalidated && (access & (kGlMapRead | kGlMapWrite)) != 0) {
+        std::memcpy(mirror, mapped, static_cast<std::size_t>(length));
+    }
+    {
+        std::lock_guard<std::mutex> lock(mapping_mutex);
+        mappings[target] = BufferMapping{*address, static_cast<std::uint8_t*>(mapped),
+                                         static_cast<std::uint64_t>(length), access};
+    }
+    call.set_result(*address);
+    return true;
+}
+
+bool zbgl_manual_glUnmapBuffer(HostGl& host, HostGl::Call& call) {
+    const GLenum target = call.scalar<GLenum>(0);
+    if (!call.valid()) return true;
+    BufferMapping mapping;
+    bool mirrored = false;
+    {
+        std::lock_guard<std::mutex> lock(mapping_mutex);
+        const auto found = mappings.find(target);
+        if (found != mappings.end()) {
+            mapping = found->second;
+            mappings.erase(found);
+            mirrored = true;
+        }
+    }
+    if (mirrored && (mapping.access & kGlMapWrite) != 0) {
+        const std::uint8_t* mirror =
+            host.runtime().memory().host_ptr(mapping.guest, mapping.length, kPageRead);
+        if (mirror == nullptr) {
+            host.reject(call, kGlInvalidOperation, "mapped buffer mirror is unreadable");
+        } else {
+            std::memcpy(mapping.data, mirror, static_cast<std::size_t>(mapping.length));
+        }
+    }
+    const GLboolean result = host.backend().glUnmapBuffer(target);
+    if (mirrored) host.free_guest(mapping.guest);
+    call.set_result(result);
+    return true;
+}
+
+bool zbgl_manual_glFlushMappedBufferRange(HostGl& host, HostGl::Call& call) {
+    const GLenum target = call.scalar<GLenum>(0);
+    const GLintptr offset = call.scalar<GLintptr>(1);
+    const GLsizeiptr length = call.scalar<GLsizeiptr>(2);
+    if (!call.valid()) return true;
+    BufferMapping mapping;
+    if (find_mapping(target, mapping) && (mapping.access & kGlMapWrite) != 0) {
+        // The flushed range is relative to the start of the mapped range.
+        if (offset < 0 || length < 0 ||
+            static_cast<std::uint64_t>(offset) + static_cast<std::uint64_t>(length) >
+                mapping.length) {
+            host.reject(call, kGlInvalidValue, "flushed range is outside the mapped range");
+            return true;
+        }
+        const std::uint8_t* mirror = host.runtime().memory().host_ptr(
+            mapping.guest + static_cast<std::uint32_t>(offset),
+            static_cast<std::uint64_t>(length), kPageRead);
+        if (mirror == nullptr) {
+            host.reject(call, kGlInvalidOperation, "mapped buffer mirror is unreadable");
+            return true;
+        }
+        std::memcpy(mapping.data + offset, mirror, static_cast<std::size_t>(length));
+    }
+    host.backend().glFlushMappedBufferRange(target, offset, length);
+    return true;
+}
+
+bool zbgl_manual_glGetBufferPointerv(HostGl& host, HostGl::Call& call) {
+    const GLenum target = call.scalar<GLenum>(0);
+    const GLenum pname = call.scalar<GLenum>(1);
+    // void** in the guest is one 32-bit slot, and what belongs in it is the mirror's guest
+    // address, never the driver's mapped pointer.
+    std::uint32_t* params = call.pointer<std::uint32_t>(2, 1, kPageRead | kPageWrite);
+    if (!call.valid()) return true;
+    if (params == nullptr) {
+        host.reject(call, kGlInvalidValue, "buffer pointer output is null");
+        return true;
+    }
+    if (pname != kGlBufferMapPointer) {
+        host.reject(call, kGlInvalidEnum, "glGetBufferPointerv pname is not GL_BUFFER_MAP_POINTER");
+        return true;
+    }
+    BufferMapping mapping;
+    *params = find_mapping(target, mapping) ? mapping.guest : 0;
+    return true;
+}
+
+bool zbgl_manual_glTexImage3D(HostGl& host, HostGl::Call& call) {
+    const GLenum target = call.scalar<GLenum>(0);
+    const GLint level = call.scalar<GLint>(1);
+    const GLint internalformat = call.scalar<GLint>(2);
+    const GLsizei width = call.scalar<GLsizei>(3);
+    const GLsizei height = call.scalar<GLsizei>(4);
+    const GLsizei depth = call.scalar<GLsizei>(5);
+    const GLint border = call.scalar<GLint>(6);
+    const GLenum format = call.scalar<GLenum>(7);
+    const GLenum type = call.scalar<GLenum>(8);
+    void* pixels = nullptr;
+    if (!pixel_pointer(host, call, false, format, type, width, height, depth,
+                       host.pixel_alignment(false), 9, kPageRead, pixels)) return true;
+    host.backend().glTexImage3D(target, level, internalformat, width, height, depth, border,
+                                format, type, pixels);
+    return true;
+}
+
+bool zbgl_manual_glTexSubImage3D(HostGl& host, HostGl::Call& call) {
+    const GLenum target = call.scalar<GLenum>(0);
+    const GLint level = call.scalar<GLint>(1);
+    const GLint xoffset = call.scalar<GLint>(2);
+    const GLint yoffset = call.scalar<GLint>(3);
+    const GLint zoffset = call.scalar<GLint>(4);
+    const GLsizei width = call.scalar<GLsizei>(5);
+    const GLsizei height = call.scalar<GLsizei>(6);
+    const GLsizei depth = call.scalar<GLsizei>(7);
+    const GLenum format = call.scalar<GLenum>(8);
+    const GLenum type = call.scalar<GLenum>(9);
+    void* pixels = nullptr;
+    if (!pixel_pointer(host, call, false, format, type, width, height, depth,
+                       host.pixel_alignment(false), 10, kPageRead, pixels)) return true;
+    host.backend().glTexSubImage3D(target, level, xoffset, yoffset, zoffset, width, height, depth,
+                                   format, type, pixels);
+    return true;
+}
+
+bool zbgl_manual_glDrawArraysInstanced(HostGl& host, HostGl::Call& call) {
+    const GLenum mode = call.scalar<GLenum>(0);
+    const GLint first = call.scalar<GLint>(1);
+    const GLsizei count = call.scalar<GLsizei>(2);
+    const GLsizei instancecount = call.scalar<GLsizei>(3);
+    if (!call.valid()) return true;
+    if (count > 0) {
+        if (first < 0 || !materialize_client_arrays(
+                             host, call, static_cast<std::uint64_t>(first),
+                             static_cast<std::uint64_t>(first) + static_cast<std::uint64_t>(count) - 1)) {
+            return true;
+        }
+    }
+    host.backend().glDrawArraysInstanced(mode, first, count, instancecount);
+    return true;
+}
+
+bool zbgl_manual_glDrawElementsInstanced(HostGl& host, HostGl::Call& call) {
+    const GLenum mode = call.scalar<GLenum>(0);
+    const GLsizei count = call.scalar<GLsizei>(1);
+    const GLenum type = call.scalar<GLenum>(2);
+    const std::uint32_t guest_indices = call.arg(3);
+    const GLsizei instancecount = call.scalar<GLsizei>(4);
+    if (!call.valid()) return true;
+    const void* driver_indices = nullptr;
+    if (!prepare_elements(host, call, count, type, guest_indices, driver_indices)) return true;
+    host.backend().glDrawElementsInstanced(mode, count, type, driver_indices, instancecount);
+    return true;
+}
+
+bool zbgl_manual_glDrawRangeElements(HostGl& host, HostGl::Call& call) {
+    const GLenum mode = call.scalar<GLenum>(0);
+    const GLuint start = call.scalar<GLuint>(1);
+    const GLuint end = call.scalar<GLuint>(2);
+    const GLsizei count = call.scalar<GLsizei>(3);
+    const GLenum type = call.scalar<GLenum>(4);
+    const std::uint32_t guest_indices = call.arg(5);
+    if (!call.valid()) return true;
+    const void* driver_indices = nullptr;
+    if (!prepare_elements(host, call, count, type, guest_indices, driver_indices)) return true;
+    host.backend().glDrawRangeElements(mode, start, end, count, type, driver_indices);
+    return true;
+}
+
+bool zbgl_manual_glVertexAttribIPointer(HostGl& host, HostGl::Call& call) {
+    const GLuint index = call.scalar<GLuint>(0);
+    GlThreadState::Attribute& attribute = state(host).attributes[index];
+    attribute.defined = true;
+    attribute.size = call.scalar<GLint>(1);
+    attribute.type = call.scalar<GLenum>(2);
+    attribute.normalized = 0;
+    attribute.stride = call.scalar<GLsizei>(3);
+    attribute.guest_pointer = call.arg(4);
+    attribute.integer = true;
+    attribute.buffer = state(host).array_buffer;
+    if (!call.valid()) return true;
+    if (attribute.buffer != 0) {
+        host.backend().glVertexAttribIPointer(
+            index, attribute.size, attribute.type, attribute.stride,
+            reinterpret_cast<const void*>(static_cast<std::uintptr_t>(attribute.guest_pointer)));
+    }
+    return true;
+}
+
+bool zbgl_manual_glGetUniformuiv(HostGl& host, HostGl::Call& call) {
+    return serve_uniform(host, call, &GlBackend::glGetUniformuiv);
+}
+
+bool zbgl_manual_glGetInteger64v(HostGl& host, HostGl::Call& call) {
+    return serve_pname(host, call, &GlBackend::glGetInteger64v);
+}
+
+bool zbgl_manual_glGetFragDataLocation(HostGl& host, HostGl::Call& call) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLchar* name = guest_string(host, call, call.arg(1));
+    if (call.valid()) call.set_result(host.backend().glGetFragDataLocation(program, name));
+    return true;
+}
+
+bool zbgl_manual_glGetUniformBlockIndex(HostGl& host, HostGl::Call& call) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLchar* name = guest_string(host, call, call.arg(1));
+    if (call.valid()) call.set_result(host.backend().glGetUniformBlockIndex(program, name));
+    return true;
+}
+
+namespace {
+
+// GL_COLOR takes four components; GL_DEPTH and GL_STENCIL take one.
+std::uint64_t clear_buffer_elements(GLenum buffer) { return buffer == kGlColorBuffer ? 4 : 1; }
+
+}  // namespace
+
+bool zbgl_manual_glClearBufferiv(HostGl& host, HostGl::Call& call) {
+    const GLenum buffer = call.scalar<GLenum>(0);
+    const GLint drawbuffer = call.scalar<GLint>(1);
+    const GLint* value = call.pointer<const GLint>(2, clear_buffer_elements(buffer), kPageRead);
+    if (call.valid()) host.backend().glClearBufferiv(buffer, drawbuffer, value);
+    return true;
+}
+
+bool zbgl_manual_glClearBufferuiv(HostGl& host, HostGl::Call& call) {
+    const GLenum buffer = call.scalar<GLenum>(0);
+    const GLint drawbuffer = call.scalar<GLint>(1);
+    const GLuint* value = call.pointer<const GLuint>(2, clear_buffer_elements(buffer), kPageRead);
+    if (call.valid()) host.backend().glClearBufferuiv(buffer, drawbuffer, value);
+    return true;
+}
+
+bool zbgl_manual_glClearBufferfv(HostGl& host, HostGl::Call& call) {
+    const GLenum buffer = call.scalar<GLenum>(0);
+    const GLint drawbuffer = call.scalar<GLint>(1);
+    const GLfloat* value = call.pointer<const GLfloat>(2, clear_buffer_elements(buffer), kPageRead);
+    if (call.valid()) host.backend().glClearBufferfv(buffer, drawbuffer, value);
+    return true;
+}
+
+bool zbgl_manual_glGetUniformIndices(HostGl& host, HostGl::Call& call) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLsizei count = call.scalar<GLsizei>(1);
+    if (!call.valid()) return true;
+    if (count < 0) {
+        call.fail(kGlInvalidValue, "uniform name count is negative");
+        return true;
+    }
+    const std::uint64_t items = call.length(count);
+    std::vector<const GLchar*> names;
+    if (!guest_string_array(host, call, 2, items, names)) return true;
+    GLuint* indices = call.pointer<GLuint>(3, items, kPageRead | kPageWrite);
+    if (!call.valid()) return true;
+    if (items != 0 && indices == nullptr) {
+        host.reject(call, kGlInvalidValue, "uniform index output is null");
+        return true;
+    }
+    host.backend().glGetUniformIndices(program, count, names.empty() ? nullptr : names.data(),
+                                       indices);
+    return true;
+}
+
+bool zbgl_manual_glTransformFeedbackVaryings(HostGl& host, HostGl::Call& call) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLsizei count = call.scalar<GLsizei>(1);
+    const GLenum bufferMode = call.scalar<GLenum>(3);
+    if (!call.valid()) return true;
+    if (count < 0) {
+        call.fail(kGlInvalidValue, "varying count is negative");
+        return true;
+    }
+    const std::uint64_t items = call.length(count);
+    std::vector<const GLchar*> varyings;
+    if (!guest_string_array(host, call, 2, items, varyings)) return true;
+    host.backend().glTransformFeedbackVaryings(
+        program, count, varyings.empty() ? nullptr : varyings.data(), bufferMode);
+    return true;
+}
+
+bool zbgl_manual_glGetActiveUniformsiv(HostGl& host, HostGl::Call& call) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLsizei uniformCount = call.scalar<GLsizei>(1);
+    if (!call.valid()) return true;
+    if (uniformCount < 0) {
+        call.fail(kGlInvalidValue, "uniform count is negative");
+        return true;
+    }
+    const std::uint64_t items = call.length(uniformCount);
+    const GLuint* indices = call.pointer<const GLuint>(2, items, kPageRead);
+    const GLenum pname = call.scalar<GLenum>(3);
+    // Every GLES 3.0 pname of this query returns one value per named uniform.
+    GLint* params = call.pointer<GLint>(4, items, kPageRead | kPageWrite);
+    if (!call.valid()) return true;
+    host.backend().glGetActiveUniformsiv(program, uniformCount, indices, pname, params);
+    return true;
+}
+
+bool zbgl_manual_glGetActiveUniformBlockiv(HostGl& host, HostGl::Call& call) {
+    const GLuint program = call.scalar<GLuint>(0);
+    const GLuint uniformBlockIndex = call.scalar<GLuint>(1);
+    const GLenum pname = call.scalar<GLenum>(2);
+    if (!call.valid()) return true;
+    std::uint64_t elements = 1;
+    if (pname == kGlUniformBlockActiveUniformIndices) {
+        GLint active = 0;
+        host.backend().glGetActiveUniformBlockiv(program, uniformBlockIndex,
+                                                 kGlUniformBlockActiveUniforms, &active);
+        elements = active > 0 ? static_cast<std::uint64_t>(active) : 0;
+    }
+    GLint* params = call.pointer<GLint>(3, elements, kPageRead | kPageWrite);
+    if (call.valid()) {
+        host.backend().glGetActiveUniformBlockiv(program, uniformBlockIndex, pname, params);
+    }
+    return true;
+}
+
+bool zbgl_manual_glFenceSync(HostGl& host, HostGl::Call& call) {
+    const GLenum condition = call.scalar<GLenum>(0);
+    const GLbitfield flags = call.scalar<GLbitfield>(1);
+    if (!call.valid()) return true;
+    call.set_result(register_sync(host.backend().glFenceSync(condition, flags)));
+    return true;
+}
+
+bool zbgl_manual_glIsSync(HostGl& host, HostGl::Call& call) {
+    const std::uint32_t handle = call.arg(0);
+    if (!call.valid()) return true;
+    const GLsync sync = lookup_sync(handle);
+    // An unknown handle is GL_FALSE, not an error.
+    call.set_result(sync == nullptr ? GLboolean{0} : host.backend().glIsSync(sync));
+    return true;
+}
+
+bool zbgl_manual_glDeleteSync(HostGl& host, HostGl::Call& call) {
+    const std::uint32_t handle = call.arg(0);
+    if (!call.valid()) return true;
+    if (handle == 0) return true;  // Deleting the zero sync is a no-op, like the real entry point.
+    const GLsync sync = release_sync(handle);
+    if (sync == nullptr) {
+        host.reject(call, kGlInvalidValue, "sync handle is not a live sync object");
+        return true;
+    }
+    host.backend().glDeleteSync(sync);
+    return true;
+}
+
+bool zbgl_manual_glClientWaitSync(HostGl& host, HostGl::Call& call) {
+    GLsync sync = nullptr;
+    if (!resolve_sync(host, call, 0, sync)) return true;
+    const GLbitfield flags = call.scalar<GLbitfield>(1);
+    const GLuint64 timeout = argument64(call, 2);
+    if (!call.valid()) return true;
+    call.set_result(host.backend().glClientWaitSync(sync, flags, timeout));
+    return true;
+}
+
+bool zbgl_manual_glWaitSync(HostGl& host, HostGl::Call& call) {
+    GLsync sync = nullptr;
+    if (!resolve_sync(host, call, 0, sync)) return true;
+    const GLbitfield flags = call.scalar<GLbitfield>(1);
+    const GLuint64 timeout = argument64(call, 2);
+    if (!call.valid()) return true;
+    host.backend().glWaitSync(sync, flags, timeout);
+    return true;
+}
+
+bool zbgl_manual_glGetSynciv(HostGl& host, HostGl::Call& call) {
+    GLsync sync = nullptr;
+    if (!resolve_sync(host, call, 0, sync)) return true;
+    const GLenum pname = call.scalar<GLenum>(1);
+    const GLsizei count = call.scalar<GLsizei>(2);
+    GLsizei* length = call.pointer<GLsizei>(3, 1, kPageRead | kPageWrite);
+    GLint* values = call.pointer<GLint>(4, call.length(count), kPageRead | kPageWrite);
+    if (!call.valid()) return true;
+    host.backend().glGetSynciv(sync, pname, count, length, values);
     return true;
 }
 

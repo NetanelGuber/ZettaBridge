@@ -1015,6 +1015,726 @@ bool HostGl::dispatch(Call& call) {
         backend_.glViewport(x, y, width, height);
         return true;
     }
+    case ZB_GL_HC_glBeginQuery: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLuint id = call.scalar<GLuint>(1);
+        if (!call.valid()) return true;
+        backend_.glBeginQuery(target, id);
+        return true;
+    }
+    case ZB_GL_HC_glBeginTransformFeedback: {
+        const GLenum primitiveMode = call.scalar<GLenum>(0);
+        if (!call.valid()) return true;
+        backend_.glBeginTransformFeedback(primitiveMode);
+        return true;
+    }
+    case ZB_GL_HC_glBindBufferBase: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLuint index = call.scalar<GLuint>(1);
+        const GLuint buffer = call.scalar<GLuint>(2);
+        if (!call.valid()) return true;
+        backend_.glBindBufferBase(target, index, buffer);
+        return true;
+    }
+    case ZB_GL_HC_glBindBufferRange: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLuint index = call.scalar<GLuint>(1);
+        const GLuint buffer = call.scalar<GLuint>(2);
+        const GLintptr offset = call.scalar<GLintptr>(3);
+        const GLsizeiptr size = call.scalar<GLsizeiptr>(4);
+        if (!call.valid()) return true;
+        backend_.glBindBufferRange(target, index, buffer, offset, size);
+        return true;
+    }
+    case ZB_GL_HC_glBindSampler: {
+        const GLuint unit = call.scalar<GLuint>(0);
+        const GLuint sampler = call.scalar<GLuint>(1);
+        if (!call.valid()) return true;
+        backend_.glBindSampler(unit, sampler);
+        return true;
+    }
+    case ZB_GL_HC_glBindTransformFeedback: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLuint id = call.scalar<GLuint>(1);
+        if (!call.valid()) return true;
+        backend_.glBindTransformFeedback(target, id);
+        return true;
+    }
+    case ZB_GL_HC_glBindVertexArray: {
+        const GLuint array = call.scalar<GLuint>(0);
+        if (!call.valid()) return true;
+        backend_.glBindVertexArray(array);
+        return true;
+    }
+    case ZB_GL_HC_glBlitFramebuffer: {
+        const GLint srcX0 = call.scalar<GLint>(0);
+        const GLint srcY0 = call.scalar<GLint>(1);
+        const GLint srcX1 = call.scalar<GLint>(2);
+        const GLint srcY1 = call.scalar<GLint>(3);
+        const GLint dstX0 = call.scalar<GLint>(4);
+        const GLint dstY0 = call.scalar<GLint>(5);
+        const GLint dstX1 = call.scalar<GLint>(6);
+        const GLint dstY1 = call.scalar<GLint>(7);
+        const GLbitfield mask = call.scalar<GLbitfield>(8);
+        const GLenum filter = call.scalar<GLenum>(9);
+        if (!call.valid()) return true;
+        backend_.glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+        return true;
+    }
+    case ZB_GL_HC_glClearBufferfi: {
+        const GLenum buffer = call.scalar<GLenum>(0);
+        const GLint drawbuffer = call.scalar<GLint>(1);
+        const GLfloat depth = call.scalar<GLfloat>(2);
+        const GLint stencil = call.scalar<GLint>(3);
+        if (!call.valid()) return true;
+        backend_.glClearBufferfi(buffer, drawbuffer, depth, stencil);
+        return true;
+    }
+    case ZB_GL_HC_glClearBufferfv: {
+        return zbgl_manual_glClearBufferfv(*this, call);
+    }
+    case ZB_GL_HC_glClearBufferiv: {
+        return zbgl_manual_glClearBufferiv(*this, call);
+    }
+    case ZB_GL_HC_glClearBufferuiv: {
+        return zbgl_manual_glClearBufferuiv(*this, call);
+    }
+    case ZB_GL_HC_glClientWaitSync: {
+        return zbgl_manual_glClientWaitSync(*this, call);
+    }
+    case ZB_GL_HC_glCompressedTexImage3D: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLint level = call.scalar<GLint>(1);
+        const GLenum internalformat = call.scalar<GLenum>(2);
+        const GLsizei width = call.scalar<GLsizei>(3);
+        const GLsizei height = call.scalar<GLsizei>(4);
+        const GLsizei depth = call.scalar<GLsizei>(5);
+        const GLint border = call.scalar<GLint>(6);
+        const GLsizei imageSize = call.scalar<GLsizei>(7);
+        const void * data = call.pointer<const void>(8, call.length(imageSize, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glCompressedTexImage3D(target, level, internalformat, width, height, depth, border, imageSize, data);
+        return true;
+    }
+    case ZB_GL_HC_glCompressedTexSubImage3D: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLint level = call.scalar<GLint>(1);
+        const GLint xoffset = call.scalar<GLint>(2);
+        const GLint yoffset = call.scalar<GLint>(3);
+        const GLint zoffset = call.scalar<GLint>(4);
+        const GLsizei width = call.scalar<GLsizei>(5);
+        const GLsizei height = call.scalar<GLsizei>(6);
+        const GLsizei depth = call.scalar<GLsizei>(7);
+        const GLenum format = call.scalar<GLenum>(8);
+        const GLsizei imageSize = call.scalar<GLsizei>(9);
+        const void * data = call.pointer<const void>(10, call.length(imageSize, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glCompressedTexSubImage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, data);
+        return true;
+    }
+    case ZB_GL_HC_glCopyBufferSubData: {
+        const GLenum readTarget = call.scalar<GLenum>(0);
+        const GLenum writeTarget = call.scalar<GLenum>(1);
+        const GLintptr readOffset = call.scalar<GLintptr>(2);
+        const GLintptr writeOffset = call.scalar<GLintptr>(3);
+        const GLsizeiptr size = call.scalar<GLsizeiptr>(4);
+        if (!call.valid()) return true;
+        backend_.glCopyBufferSubData(readTarget, writeTarget, readOffset, writeOffset, size);
+        return true;
+    }
+    case ZB_GL_HC_glCopyTexSubImage3D: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLint level = call.scalar<GLint>(1);
+        const GLint xoffset = call.scalar<GLint>(2);
+        const GLint yoffset = call.scalar<GLint>(3);
+        const GLint zoffset = call.scalar<GLint>(4);
+        const GLint x = call.scalar<GLint>(5);
+        const GLint y = call.scalar<GLint>(6);
+        const GLsizei width = call.scalar<GLsizei>(7);
+        const GLsizei height = call.scalar<GLsizei>(8);
+        if (!call.valid()) return true;
+        backend_.glCopyTexSubImage3D(target, level, xoffset, yoffset, zoffset, x, y, width, height);
+        return true;
+    }
+    case ZB_GL_HC_glDeleteQueries: {
+        const GLsizei n = call.scalar<GLsizei>(0);
+        const GLuint * ids = call.pointer<const GLuint>(1, call.length(n, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glDeleteQueries(n, ids);
+        return true;
+    }
+    case ZB_GL_HC_glDeleteSamplers: {
+        const GLsizei count = call.scalar<GLsizei>(0);
+        const GLuint * samplers = call.pointer<const GLuint>(1, call.length(count, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glDeleteSamplers(count, samplers);
+        return true;
+    }
+    case ZB_GL_HC_glDeleteSync: {
+        return zbgl_manual_glDeleteSync(*this, call);
+    }
+    case ZB_GL_HC_glDeleteTransformFeedbacks: {
+        const GLsizei n = call.scalar<GLsizei>(0);
+        const GLuint * ids = call.pointer<const GLuint>(1, call.length(n, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glDeleteTransformFeedbacks(n, ids);
+        return true;
+    }
+    case ZB_GL_HC_glDeleteVertexArrays: {
+        const GLsizei n = call.scalar<GLsizei>(0);
+        const GLuint * arrays = call.pointer<const GLuint>(1, call.length(n, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glDeleteVertexArrays(n, arrays);
+        return true;
+    }
+    case ZB_GL_HC_glDrawArraysInstanced: {
+        return zbgl_manual_glDrawArraysInstanced(*this, call);
+    }
+    case ZB_GL_HC_glDrawBuffers: {
+        const GLsizei n = call.scalar<GLsizei>(0);
+        const GLenum * bufs = call.pointer<const GLenum>(1, call.length(n, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glDrawBuffers(n, bufs);
+        return true;
+    }
+    case ZB_GL_HC_glDrawElementsInstanced: {
+        return zbgl_manual_glDrawElementsInstanced(*this, call);
+    }
+    case ZB_GL_HC_glDrawRangeElements: {
+        return zbgl_manual_glDrawRangeElements(*this, call);
+    }
+    case ZB_GL_HC_glEndQuery: {
+        const GLenum target = call.scalar<GLenum>(0);
+        if (!call.valid()) return true;
+        backend_.glEndQuery(target);
+        return true;
+    }
+    case ZB_GL_HC_glEndTransformFeedback: {
+        if (!call.valid()) return true;
+        backend_.glEndTransformFeedback();
+        return true;
+    }
+    case ZB_GL_HC_glFenceSync: {
+        return zbgl_manual_glFenceSync(*this, call);
+    }
+    case ZB_GL_HC_glFlushMappedBufferRange: {
+        return zbgl_manual_glFlushMappedBufferRange(*this, call);
+    }
+    case ZB_GL_HC_glFramebufferTextureLayer: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum attachment = call.scalar<GLenum>(1);
+        const GLuint texture = call.scalar<GLuint>(2);
+        const GLint level = call.scalar<GLint>(3);
+        const GLint layer = call.scalar<GLint>(4);
+        if (!call.valid()) return true;
+        backend_.glFramebufferTextureLayer(target, attachment, texture, level, layer);
+        return true;
+    }
+    case ZB_GL_HC_glGenQueries: {
+        const GLsizei n = call.scalar<GLsizei>(0);
+        GLuint * ids = call.pointer<GLuint>(1, call.length(n, 1u), kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGenQueries(n, ids);
+        return true;
+    }
+    case ZB_GL_HC_glGenSamplers: {
+        const GLsizei count = call.scalar<GLsizei>(0);
+        GLuint * samplers = call.pointer<GLuint>(1, call.length(count, 1u), kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGenSamplers(count, samplers);
+        return true;
+    }
+    case ZB_GL_HC_glGenTransformFeedbacks: {
+        const GLsizei n = call.scalar<GLsizei>(0);
+        GLuint * ids = call.pointer<GLuint>(1, call.length(n, 1u), kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGenTransformFeedbacks(n, ids);
+        return true;
+    }
+    case ZB_GL_HC_glGenVertexArrays: {
+        const GLsizei n = call.scalar<GLsizei>(0);
+        GLuint * arrays = call.pointer<GLuint>(1, call.length(n, 1u), kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGenVertexArrays(n, arrays);
+        return true;
+    }
+    case ZB_GL_HC_glGetActiveUniformBlockName: {
+        const GLuint program = call.scalar<GLuint>(0);
+        const GLuint uniformBlockIndex = call.scalar<GLuint>(1);
+        const GLsizei bufSize = call.scalar<GLsizei>(2);
+        GLsizei * length = call.pointer<GLsizei>(3, 1u, kPageRead | kPageWrite);
+        GLchar * uniformBlockName = call.pointer<GLchar>(4, call.length(bufSize, 1u), kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetActiveUniformBlockName(program, uniformBlockIndex, bufSize, length, uniformBlockName);
+        return true;
+    }
+    case ZB_GL_HC_glGetActiveUniformBlockiv: {
+        return zbgl_manual_glGetActiveUniformBlockiv(*this, call);
+    }
+    case ZB_GL_HC_glGetActiveUniformsiv: {
+        return zbgl_manual_glGetActiveUniformsiv(*this, call);
+    }
+    case ZB_GL_HC_glGetBufferParameteri64v: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLint64 * params = call.pointer<GLint64>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetBufferParameteri64v(target, pname, params);
+        return true;
+    }
+    case ZB_GL_HC_glGetBufferPointerv: {
+        return zbgl_manual_glGetBufferPointerv(*this, call);
+    }
+    case ZB_GL_HC_glGetFragDataLocation: {
+        return zbgl_manual_glGetFragDataLocation(*this, call);
+    }
+    case ZB_GL_HC_glGetInteger64i_v: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLuint index = call.scalar<GLuint>(1);
+        GLint64 * data = call.pointer<GLint64>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetInteger64i_v(target, index, data);
+        return true;
+    }
+    case ZB_GL_HC_glGetInteger64v: {
+        return zbgl_manual_glGetInteger64v(*this, call);
+    }
+    case ZB_GL_HC_glGetIntegeri_v: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLuint index = call.scalar<GLuint>(1);
+        GLint * data = call.pointer<GLint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetIntegeri_v(target, index, data);
+        return true;
+    }
+    case ZB_GL_HC_glGetInternalformativ: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum internalformat = call.scalar<GLenum>(1);
+        const GLenum pname = call.scalar<GLenum>(2);
+        const GLsizei count = call.scalar<GLsizei>(3);
+        GLint * params = call.pointer<GLint>(4, call.length(count, 1u), kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetInternalformativ(target, internalformat, pname, count, params);
+        return true;
+    }
+    case ZB_GL_HC_glGetProgramBinary: {
+        const GLuint program = call.scalar<GLuint>(0);
+        const GLsizei bufSize = call.scalar<GLsizei>(1);
+        GLsizei * length = call.pointer<GLsizei>(2, 1u, kPageRead | kPageWrite);
+        GLenum * binaryFormat = call.pointer<GLenum>(3, 1u, kPageRead | kPageWrite);
+        void * binary = call.pointer<void>(4, call.length(bufSize, 1u), kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetProgramBinary(program, bufSize, length, binaryFormat, binary);
+        return true;
+    }
+    case ZB_GL_HC_glGetQueryObjectuiv: {
+        const GLuint id = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLuint * params = call.pointer<GLuint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetQueryObjectuiv(id, pname, params);
+        return true;
+    }
+    case ZB_GL_HC_glGetQueryiv: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLint * params = call.pointer<GLint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetQueryiv(target, pname, params);
+        return true;
+    }
+    case ZB_GL_HC_glGetSamplerParameterfv: {
+        const GLuint sampler = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLfloat * params = call.pointer<GLfloat>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetSamplerParameterfv(sampler, pname, params);
+        return true;
+    }
+    case ZB_GL_HC_glGetSamplerParameteriv: {
+        const GLuint sampler = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLint * params = call.pointer<GLint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetSamplerParameteriv(sampler, pname, params);
+        return true;
+    }
+    case ZB_GL_HC_glGetStringi: {
+        return zbgl_manual_glGetStringi(*this, call);
+    }
+    case ZB_GL_HC_glGetSynciv: {
+        return zbgl_manual_glGetSynciv(*this, call);
+    }
+    case ZB_GL_HC_glGetTransformFeedbackVarying: {
+        const GLuint program = call.scalar<GLuint>(0);
+        const GLuint index = call.scalar<GLuint>(1);
+        const GLsizei bufSize = call.scalar<GLsizei>(2);
+        GLsizei * length = call.pointer<GLsizei>(3, 1u, kPageRead | kPageWrite);
+        GLsizei * size = call.pointer<GLsizei>(4, 1u, kPageRead | kPageWrite);
+        GLenum * type = call.pointer<GLenum>(5, 1u, kPageRead | kPageWrite);
+        GLchar * name = call.pointer<GLchar>(6, call.length(bufSize, 1u), kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetTransformFeedbackVarying(program, index, bufSize, length, size, type, name);
+        return true;
+    }
+    case ZB_GL_HC_glGetUniformBlockIndex: {
+        return zbgl_manual_glGetUniformBlockIndex(*this, call);
+    }
+    case ZB_GL_HC_glGetUniformIndices: {
+        return zbgl_manual_glGetUniformIndices(*this, call);
+    }
+    case ZB_GL_HC_glGetUniformuiv: {
+        return zbgl_manual_glGetUniformuiv(*this, call);
+    }
+    case ZB_GL_HC_glGetVertexAttribIiv: {
+        const GLuint index = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLint * params = call.pointer<GLint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetVertexAttribIiv(index, pname, params);
+        return true;
+    }
+    case ZB_GL_HC_glGetVertexAttribIuiv: {
+        const GLuint index = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        GLuint * params = call.pointer<GLuint>(2, 1u, kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGetVertexAttribIuiv(index, pname, params);
+        return true;
+    }
+    case ZB_GL_HC_glInvalidateFramebuffer: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLsizei numAttachments = call.scalar<GLsizei>(1);
+        const GLenum * attachments = call.pointer<const GLenum>(2, call.length(numAttachments, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glInvalidateFramebuffer(target, numAttachments, attachments);
+        return true;
+    }
+    case ZB_GL_HC_glInvalidateSubFramebuffer: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLsizei numAttachments = call.scalar<GLsizei>(1);
+        const GLint x = call.scalar<GLint>(3);
+        const GLint y = call.scalar<GLint>(4);
+        const GLsizei width = call.scalar<GLsizei>(5);
+        const GLsizei height = call.scalar<GLsizei>(6);
+        const GLenum * attachments = call.pointer<const GLenum>(2, call.length(numAttachments, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glInvalidateSubFramebuffer(target, numAttachments, attachments, x, y, width, height);
+        return true;
+    }
+    case ZB_GL_HC_glIsQuery: {
+        const GLuint id = call.scalar<GLuint>(0);
+        if (!call.valid()) return true;
+        call.set_result(backend_.glIsQuery(id));
+        return true;
+    }
+    case ZB_GL_HC_glIsSampler: {
+        const GLuint sampler = call.scalar<GLuint>(0);
+        if (!call.valid()) return true;
+        call.set_result(backend_.glIsSampler(sampler));
+        return true;
+    }
+    case ZB_GL_HC_glIsSync: {
+        return zbgl_manual_glIsSync(*this, call);
+    }
+    case ZB_GL_HC_glIsTransformFeedback: {
+        const GLuint id = call.scalar<GLuint>(0);
+        if (!call.valid()) return true;
+        call.set_result(backend_.glIsTransformFeedback(id));
+        return true;
+    }
+    case ZB_GL_HC_glIsVertexArray: {
+        const GLuint array = call.scalar<GLuint>(0);
+        if (!call.valid()) return true;
+        call.set_result(backend_.glIsVertexArray(array));
+        return true;
+    }
+    case ZB_GL_HC_glMapBufferRange: {
+        return zbgl_manual_glMapBufferRange(*this, call);
+    }
+    case ZB_GL_HC_glPauseTransformFeedback: {
+        if (!call.valid()) return true;
+        backend_.glPauseTransformFeedback();
+        return true;
+    }
+    case ZB_GL_HC_glProgramBinary: {
+        const GLuint program = call.scalar<GLuint>(0);
+        const GLenum binaryFormat = call.scalar<GLenum>(1);
+        const GLsizei length = call.scalar<GLsizei>(3);
+        const void * binary = call.pointer<const void>(2, call.length(length, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glProgramBinary(program, binaryFormat, binary, length);
+        return true;
+    }
+    case ZB_GL_HC_glProgramParameteri: {
+        const GLuint program = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        const GLint value = call.scalar<GLint>(2);
+        if (!call.valid()) return true;
+        backend_.glProgramParameteri(program, pname, value);
+        return true;
+    }
+    case ZB_GL_HC_glReadBuffer: {
+        const GLenum src = call.scalar<GLenum>(0);
+        if (!call.valid()) return true;
+        backend_.glReadBuffer(src);
+        return true;
+    }
+    case ZB_GL_HC_glRenderbufferStorageMultisample: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLsizei samples = call.scalar<GLsizei>(1);
+        const GLenum internalformat = call.scalar<GLenum>(2);
+        const GLsizei width = call.scalar<GLsizei>(3);
+        const GLsizei height = call.scalar<GLsizei>(4);
+        if (!call.valid()) return true;
+        backend_.glRenderbufferStorageMultisample(target, samples, internalformat, width, height);
+        return true;
+    }
+    case ZB_GL_HC_glResumeTransformFeedback: {
+        if (!call.valid()) return true;
+        backend_.glResumeTransformFeedback();
+        return true;
+    }
+    case ZB_GL_HC_glSamplerParameterf: {
+        const GLuint sampler = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        const GLfloat param = call.scalar<GLfloat>(2);
+        if (!call.valid()) return true;
+        backend_.glSamplerParameterf(sampler, pname, param);
+        return true;
+    }
+    case ZB_GL_HC_glSamplerParameterfv: {
+        const GLuint sampler = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        const GLfloat * param = call.pointer<const GLfloat>(2, 1u, kPageRead);
+        if (!call.valid()) return true;
+        backend_.glSamplerParameterfv(sampler, pname, param);
+        return true;
+    }
+    case ZB_GL_HC_glSamplerParameteri: {
+        const GLuint sampler = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        const GLint param = call.scalar<GLint>(2);
+        if (!call.valid()) return true;
+        backend_.glSamplerParameteri(sampler, pname, param);
+        return true;
+    }
+    case ZB_GL_HC_glSamplerParameteriv: {
+        const GLuint sampler = call.scalar<GLuint>(0);
+        const GLenum pname = call.scalar<GLenum>(1);
+        const GLint * param = call.pointer<const GLint>(2, 1u, kPageRead);
+        if (!call.valid()) return true;
+        backend_.glSamplerParameteriv(sampler, pname, param);
+        return true;
+    }
+    case ZB_GL_HC_glTexImage3D: {
+        return zbgl_manual_glTexImage3D(*this, call);
+    }
+    case ZB_GL_HC_glTexStorage2D: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLsizei levels = call.scalar<GLsizei>(1);
+        const GLenum internalformat = call.scalar<GLenum>(2);
+        const GLsizei width = call.scalar<GLsizei>(3);
+        const GLsizei height = call.scalar<GLsizei>(4);
+        if (!call.valid()) return true;
+        backend_.glTexStorage2D(target, levels, internalformat, width, height);
+        return true;
+    }
+    case ZB_GL_HC_glTexStorage3D: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLsizei levels = call.scalar<GLsizei>(1);
+        const GLenum internalformat = call.scalar<GLenum>(2);
+        const GLsizei width = call.scalar<GLsizei>(3);
+        const GLsizei height = call.scalar<GLsizei>(4);
+        const GLsizei depth = call.scalar<GLsizei>(5);
+        if (!call.valid()) return true;
+        backend_.glTexStorage3D(target, levels, internalformat, width, height, depth);
+        return true;
+    }
+    case ZB_GL_HC_glTexSubImage3D: {
+        return zbgl_manual_glTexSubImage3D(*this, call);
+    }
+    case ZB_GL_HC_glTransformFeedbackVaryings: {
+        return zbgl_manual_glTransformFeedbackVaryings(*this, call);
+    }
+    case ZB_GL_HC_glUniform1ui: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLuint v0 = call.scalar<GLuint>(1);
+        if (!call.valid()) return true;
+        backend_.glUniform1ui(location, v0);
+        return true;
+    }
+    case ZB_GL_HC_glUniform1uiv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLuint * value = call.pointer<const GLuint>(2, call.length(count, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniform1uiv(location, count, value);
+        return true;
+    }
+    case ZB_GL_HC_glUniform2ui: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLuint v0 = call.scalar<GLuint>(1);
+        const GLuint v1 = call.scalar<GLuint>(2);
+        if (!call.valid()) return true;
+        backend_.glUniform2ui(location, v0, v1);
+        return true;
+    }
+    case ZB_GL_HC_glUniform2uiv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLuint * value = call.pointer<const GLuint>(2, call.length(count, 2u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniform2uiv(location, count, value);
+        return true;
+    }
+    case ZB_GL_HC_glUniform3ui: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLuint v0 = call.scalar<GLuint>(1);
+        const GLuint v1 = call.scalar<GLuint>(2);
+        const GLuint v2 = call.scalar<GLuint>(3);
+        if (!call.valid()) return true;
+        backend_.glUniform3ui(location, v0, v1, v2);
+        return true;
+    }
+    case ZB_GL_HC_glUniform3uiv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLuint * value = call.pointer<const GLuint>(2, call.length(count, 3u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniform3uiv(location, count, value);
+        return true;
+    }
+    case ZB_GL_HC_glUniform4ui: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLuint v0 = call.scalar<GLuint>(1);
+        const GLuint v1 = call.scalar<GLuint>(2);
+        const GLuint v2 = call.scalar<GLuint>(3);
+        const GLuint v3 = call.scalar<GLuint>(4);
+        if (!call.valid()) return true;
+        backend_.glUniform4ui(location, v0, v1, v2, v3);
+        return true;
+    }
+    case ZB_GL_HC_glUniform4uiv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLuint * value = call.pointer<const GLuint>(2, call.length(count, 4u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniform4uiv(location, count, value);
+        return true;
+    }
+    case ZB_GL_HC_glUniformBlockBinding: {
+        const GLuint program = call.scalar<GLuint>(0);
+        const GLuint uniformBlockIndex = call.scalar<GLuint>(1);
+        const GLuint uniformBlockBinding = call.scalar<GLuint>(2);
+        if (!call.valid()) return true;
+        backend_.glUniformBlockBinding(program, uniformBlockIndex, uniformBlockBinding);
+        return true;
+    }
+    case ZB_GL_HC_glUniformMatrix2x3fv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLboolean transpose = call.scalar<GLboolean>(2);
+        const GLfloat * value = call.pointer<const GLfloat>(3, call.length(count, 6u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniformMatrix2x3fv(location, count, transpose, value);
+        return true;
+    }
+    case ZB_GL_HC_glUniformMatrix2x4fv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLboolean transpose = call.scalar<GLboolean>(2);
+        const GLfloat * value = call.pointer<const GLfloat>(3, call.length(count, 8u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniformMatrix2x4fv(location, count, transpose, value);
+        return true;
+    }
+    case ZB_GL_HC_glUniformMatrix3x2fv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLboolean transpose = call.scalar<GLboolean>(2);
+        const GLfloat * value = call.pointer<const GLfloat>(3, call.length(count, 6u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniformMatrix3x2fv(location, count, transpose, value);
+        return true;
+    }
+    case ZB_GL_HC_glUniformMatrix3x4fv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLboolean transpose = call.scalar<GLboolean>(2);
+        const GLfloat * value = call.pointer<const GLfloat>(3, call.length(count, 12u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniformMatrix3x4fv(location, count, transpose, value);
+        return true;
+    }
+    case ZB_GL_HC_glUniformMatrix4x2fv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLboolean transpose = call.scalar<GLboolean>(2);
+        const GLfloat * value = call.pointer<const GLfloat>(3, call.length(count, 8u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniformMatrix4x2fv(location, count, transpose, value);
+        return true;
+    }
+    case ZB_GL_HC_glUniformMatrix4x3fv: {
+        const GLint location = call.scalar<GLint>(0);
+        const GLsizei count = call.scalar<GLsizei>(1);
+        const GLboolean transpose = call.scalar<GLboolean>(2);
+        const GLfloat * value = call.pointer<const GLfloat>(3, call.length(count, 12u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glUniformMatrix4x3fv(location, count, transpose, value);
+        return true;
+    }
+    case ZB_GL_HC_glUnmapBuffer: {
+        return zbgl_manual_glUnmapBuffer(*this, call);
+    }
+    case ZB_GL_HC_glVertexAttribDivisor: {
+        const GLuint index = call.scalar<GLuint>(0);
+        const GLuint divisor = call.scalar<GLuint>(1);
+        if (!call.valid()) return true;
+        backend_.glVertexAttribDivisor(index, divisor);
+        return true;
+    }
+    case ZB_GL_HC_glVertexAttribI4i: {
+        const GLuint index = call.scalar<GLuint>(0);
+        const GLint x = call.scalar<GLint>(1);
+        const GLint y = call.scalar<GLint>(2);
+        const GLint z = call.scalar<GLint>(3);
+        const GLint w = call.scalar<GLint>(4);
+        if (!call.valid()) return true;
+        backend_.glVertexAttribI4i(index, x, y, z, w);
+        return true;
+    }
+    case ZB_GL_HC_glVertexAttribI4iv: {
+        const GLuint index = call.scalar<GLuint>(0);
+        const GLint * v = call.pointer<const GLint>(1, 4u, kPageRead);
+        if (!call.valid()) return true;
+        backend_.glVertexAttribI4iv(index, v);
+        return true;
+    }
+    case ZB_GL_HC_glVertexAttribI4ui: {
+        const GLuint index = call.scalar<GLuint>(0);
+        const GLuint x = call.scalar<GLuint>(1);
+        const GLuint y = call.scalar<GLuint>(2);
+        const GLuint z = call.scalar<GLuint>(3);
+        const GLuint w = call.scalar<GLuint>(4);
+        if (!call.valid()) return true;
+        backend_.glVertexAttribI4ui(index, x, y, z, w);
+        return true;
+    }
+    case ZB_GL_HC_glVertexAttribI4uiv: {
+        const GLuint index = call.scalar<GLuint>(0);
+        const GLuint * v = call.pointer<const GLuint>(1, 4u, kPageRead);
+        if (!call.valid()) return true;
+        backend_.glVertexAttribI4uiv(index, v);
+        return true;
+    }
+    case ZB_GL_HC_glVertexAttribIPointer: {
+        return zbgl_manual_glVertexAttribIPointer(*this, call);
+    }
+    case ZB_GL_HC_glWaitSync: {
+        return zbgl_manual_glWaitSync(*this, call);
+    }
     default:
         return false;
     }

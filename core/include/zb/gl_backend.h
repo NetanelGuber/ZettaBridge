@@ -15,11 +15,16 @@ using GLchar = char;
 using GLenum = std::uint32_t;
 using GLfloat = float;
 using GLint = std::int32_t;
+using GLint64 = std::int64_t;
 using GLintptr = std::intptr_t;
 using GLsizei = std::int32_t;
 using GLsizeiptr = std::ptrdiff_t;
 using GLubyte = std::uint8_t;
 using GLuint = std::uint32_t;
+using GLuint64 = std::uint64_t;
+// GLES 3.0 sync objects are driver pointers. They never reach the guest: HostGl hands
+// out 32-bit handles and keeps the GLsync values host-side.
+using GLsync = void*;
 
 inline constexpr GLenum kGlInvalidValue = 0x0501;
 inline constexpr GLenum kGlInvalidOperation = 0x0502;
@@ -468,6 +473,318 @@ public:
     }
     virtual void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
         (void)invoke("glViewport", {gl_backend_word(x), gl_backend_word(y), gl_backend_word(width), gl_backend_word(height)});
+    }
+    virtual void glBeginQuery(GLenum target, GLuint id) {
+        (void)invoke("glBeginQuery", {gl_backend_word(target), gl_backend_word(id)});
+    }
+    virtual void glBeginTransformFeedback(GLenum primitiveMode) {
+        (void)invoke("glBeginTransformFeedback", {gl_backend_word(primitiveMode)});
+    }
+    virtual void glBindBufferBase(GLenum target, GLuint index, GLuint buffer) {
+        (void)invoke("glBindBufferBase", {gl_backend_word(target), gl_backend_word(index), gl_backend_word(buffer)});
+    }
+    virtual void glBindBufferRange(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size) {
+        (void)invoke("glBindBufferRange", {gl_backend_word(target), gl_backend_word(index), gl_backend_word(buffer), gl_backend_word(offset), gl_backend_word(size)});
+    }
+    virtual void glBindSampler(GLuint unit, GLuint sampler) {
+        (void)invoke("glBindSampler", {gl_backend_word(unit), gl_backend_word(sampler)});
+    }
+    virtual void glBindTransformFeedback(GLenum target, GLuint id) {
+        (void)invoke("glBindTransformFeedback", {gl_backend_word(target), gl_backend_word(id)});
+    }
+    virtual void glBindVertexArray(GLuint array) {
+        (void)invoke("glBindVertexArray", {gl_backend_word(array)});
+    }
+    virtual void glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter) {
+        (void)invoke("glBlitFramebuffer", {gl_backend_word(srcX0), gl_backend_word(srcY0), gl_backend_word(srcX1), gl_backend_word(srcY1), gl_backend_word(dstX0), gl_backend_word(dstY0), gl_backend_word(dstX1), gl_backend_word(dstY1), gl_backend_word(mask), gl_backend_word(filter)});
+    }
+    virtual void glClearBufferfi(GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil) {
+        (void)invoke("glClearBufferfi", {gl_backend_word(buffer), gl_backend_word(drawbuffer), gl_backend_word(depth), gl_backend_word(stencil)});
+    }
+    virtual void glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat *value) {
+        (void)invoke("glClearBufferfv", {gl_backend_word(buffer), gl_backend_word(drawbuffer), gl_backend_word(value)});
+    }
+    virtual void glClearBufferiv(GLenum buffer, GLint drawbuffer, const GLint *value) {
+        (void)invoke("glClearBufferiv", {gl_backend_word(buffer), gl_backend_word(drawbuffer), gl_backend_word(value)});
+    }
+    virtual void glClearBufferuiv(GLenum buffer, GLint drawbuffer, const GLuint *value) {
+        (void)invoke("glClearBufferuiv", {gl_backend_word(buffer), gl_backend_word(drawbuffer), gl_backend_word(value)});
+    }
+    virtual GLenum glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) {
+        return static_cast<GLenum>(invoke("glClientWaitSync", {gl_backend_word(sync), gl_backend_word(flags), gl_backend_word(timeout)}));
+    }
+    virtual void glCompressedTexImage3D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLsizei imageSize, const void *data) {
+        (void)invoke("glCompressedTexImage3D", {gl_backend_word(target), gl_backend_word(level), gl_backend_word(internalformat), gl_backend_word(width), gl_backend_word(height), gl_backend_word(depth), gl_backend_word(border), gl_backend_word(imageSize), gl_backend_word(data)});
+    }
+    virtual void glCompressedTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLsizei imageSize, const void *data) {
+        (void)invoke("glCompressedTexSubImage3D", {gl_backend_word(target), gl_backend_word(level), gl_backend_word(xoffset), gl_backend_word(yoffset), gl_backend_word(zoffset), gl_backend_word(width), gl_backend_word(height), gl_backend_word(depth), gl_backend_word(format), gl_backend_word(imageSize), gl_backend_word(data)});
+    }
+    virtual void glCopyBufferSubData(GLenum readTarget, GLenum writeTarget, GLintptr readOffset, GLintptr writeOffset, GLsizeiptr size) {
+        (void)invoke("glCopyBufferSubData", {gl_backend_word(readTarget), gl_backend_word(writeTarget), gl_backend_word(readOffset), gl_backend_word(writeOffset), gl_backend_word(size)});
+    }
+    virtual void glCopyTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height) {
+        (void)invoke("glCopyTexSubImage3D", {gl_backend_word(target), gl_backend_word(level), gl_backend_word(xoffset), gl_backend_word(yoffset), gl_backend_word(zoffset), gl_backend_word(x), gl_backend_word(y), gl_backend_word(width), gl_backend_word(height)});
+    }
+    virtual void glDeleteQueries(GLsizei n, const GLuint *ids) {
+        (void)invoke("glDeleteQueries", {gl_backend_word(n), gl_backend_word(ids)});
+    }
+    virtual void glDeleteSamplers(GLsizei count, const GLuint *samplers) {
+        (void)invoke("glDeleteSamplers", {gl_backend_word(count), gl_backend_word(samplers)});
+    }
+    virtual void glDeleteSync(GLsync sync) {
+        (void)invoke("glDeleteSync", {gl_backend_word(sync)});
+    }
+    virtual void glDeleteTransformFeedbacks(GLsizei n, const GLuint *ids) {
+        (void)invoke("glDeleteTransformFeedbacks", {gl_backend_word(n), gl_backend_word(ids)});
+    }
+    virtual void glDeleteVertexArrays(GLsizei n, const GLuint *arrays) {
+        (void)invoke("glDeleteVertexArrays", {gl_backend_word(n), gl_backend_word(arrays)});
+    }
+    virtual void glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instancecount) {
+        (void)invoke("glDrawArraysInstanced", {gl_backend_word(mode), gl_backend_word(first), gl_backend_word(count), gl_backend_word(instancecount)});
+    }
+    virtual void glDrawBuffers(GLsizei n, const GLenum *bufs) {
+        (void)invoke("glDrawBuffers", {gl_backend_word(n), gl_backend_word(bufs)});
+    }
+    virtual void glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount) {
+        (void)invoke("glDrawElementsInstanced", {gl_backend_word(mode), gl_backend_word(count), gl_backend_word(type), gl_backend_word(indices), gl_backend_word(instancecount)});
+    }
+    virtual void glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void *indices) {
+        (void)invoke("glDrawRangeElements", {gl_backend_word(mode), gl_backend_word(start), gl_backend_word(end), gl_backend_word(count), gl_backend_word(type), gl_backend_word(indices)});
+    }
+    virtual void glEndQuery(GLenum target) {
+        (void)invoke("glEndQuery", {gl_backend_word(target)});
+    }
+    virtual void glEndTransformFeedback(void) {
+        (void)invoke("glEndTransformFeedback", {});
+    }
+    virtual GLsync glFenceSync(GLenum condition, GLbitfield flags) {
+        return reinterpret_cast<GLsync>(static_cast<std::uintptr_t>(invoke("glFenceSync", {gl_backend_word(condition), gl_backend_word(flags)})));
+    }
+    virtual void glFlushMappedBufferRange(GLenum target, GLintptr offset, GLsizeiptr length) {
+        (void)invoke("glFlushMappedBufferRange", {gl_backend_word(target), gl_backend_word(offset), gl_backend_word(length)});
+    }
+    virtual void glFramebufferTextureLayer(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint layer) {
+        (void)invoke("glFramebufferTextureLayer", {gl_backend_word(target), gl_backend_word(attachment), gl_backend_word(texture), gl_backend_word(level), gl_backend_word(layer)});
+    }
+    virtual void glGenQueries(GLsizei n, GLuint *ids) {
+        (void)invoke("glGenQueries", {gl_backend_word(n), gl_backend_word(ids)});
+    }
+    virtual void glGenSamplers(GLsizei count, GLuint *samplers) {
+        (void)invoke("glGenSamplers", {gl_backend_word(count), gl_backend_word(samplers)});
+    }
+    virtual void glGenTransformFeedbacks(GLsizei n, GLuint *ids) {
+        (void)invoke("glGenTransformFeedbacks", {gl_backend_word(n), gl_backend_word(ids)});
+    }
+    virtual void glGenVertexArrays(GLsizei n, GLuint *arrays) {
+        (void)invoke("glGenVertexArrays", {gl_backend_word(n), gl_backend_word(arrays)});
+    }
+    virtual void glGetActiveUniformBlockName(GLuint program, GLuint uniformBlockIndex, GLsizei bufSize, GLsizei *length, GLchar *uniformBlockName) {
+        (void)invoke("glGetActiveUniformBlockName", {gl_backend_word(program), gl_backend_word(uniformBlockIndex), gl_backend_word(bufSize), gl_backend_word(length), gl_backend_word(uniformBlockName)});
+    }
+    virtual void glGetActiveUniformBlockiv(GLuint program, GLuint uniformBlockIndex, GLenum pname, GLint *params) {
+        (void)invoke("glGetActiveUniformBlockiv", {gl_backend_word(program), gl_backend_word(uniformBlockIndex), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual void glGetActiveUniformsiv(GLuint program, GLsizei uniformCount, const GLuint *uniformIndices, GLenum pname, GLint *params) {
+        (void)invoke("glGetActiveUniformsiv", {gl_backend_word(program), gl_backend_word(uniformCount), gl_backend_word(uniformIndices), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual void glGetBufferParameteri64v(GLenum target, GLenum pname, GLint64 *params) {
+        (void)invoke("glGetBufferParameteri64v", {gl_backend_word(target), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual void glGetBufferPointerv(GLenum target, GLenum pname, void **params) {
+        (void)invoke("glGetBufferPointerv", {gl_backend_word(target), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual GLint glGetFragDataLocation(GLuint program, const GLchar *name) {
+        return static_cast<GLint>(invoke("glGetFragDataLocation", {gl_backend_word(program), gl_backend_word(name)}));
+    }
+    virtual void glGetInteger64i_v(GLenum target, GLuint index, GLint64 *data) {
+        (void)invoke("glGetInteger64i_v", {gl_backend_word(target), gl_backend_word(index), gl_backend_word(data)});
+    }
+    virtual void glGetInteger64v(GLenum pname, GLint64 *data) {
+        (void)invoke("glGetInteger64v", {gl_backend_word(pname), gl_backend_word(data)});
+    }
+    virtual void glGetIntegeri_v(GLenum target, GLuint index, GLint *data) {
+        (void)invoke("glGetIntegeri_v", {gl_backend_word(target), gl_backend_word(index), gl_backend_word(data)});
+    }
+    virtual void glGetInternalformativ(GLenum target, GLenum internalformat, GLenum pname, GLsizei count, GLint *params) {
+        (void)invoke("glGetInternalformativ", {gl_backend_word(target), gl_backend_word(internalformat), gl_backend_word(pname), gl_backend_word(count), gl_backend_word(params)});
+    }
+    virtual void glGetProgramBinary(GLuint program, GLsizei bufSize, GLsizei *length, GLenum *binaryFormat, void *binary) {
+        (void)invoke("glGetProgramBinary", {gl_backend_word(program), gl_backend_word(bufSize), gl_backend_word(length), gl_backend_word(binaryFormat), gl_backend_word(binary)});
+    }
+    virtual void glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint *params) {
+        (void)invoke("glGetQueryObjectuiv", {gl_backend_word(id), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual void glGetQueryiv(GLenum target, GLenum pname, GLint *params) {
+        (void)invoke("glGetQueryiv", {gl_backend_word(target), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual void glGetSamplerParameterfv(GLuint sampler, GLenum pname, GLfloat *params) {
+        (void)invoke("glGetSamplerParameterfv", {gl_backend_word(sampler), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual void glGetSamplerParameteriv(GLuint sampler, GLenum pname, GLint *params) {
+        (void)invoke("glGetSamplerParameteriv", {gl_backend_word(sampler), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual const GLubyte * glGetStringi(GLenum name, GLuint index) {
+        return reinterpret_cast<const GLubyte *>(static_cast<std::uintptr_t>(invoke("glGetStringi", {gl_backend_word(name), gl_backend_word(index)})));
+    }
+    virtual void glGetSynciv(GLsync sync, GLenum pname, GLsizei count, GLsizei *length, GLint *values) {
+        (void)invoke("glGetSynciv", {gl_backend_word(sync), gl_backend_word(pname), gl_backend_word(count), gl_backend_word(length), gl_backend_word(values)});
+    }
+    virtual void glGetTransformFeedbackVarying(GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLsizei *size, GLenum *type, GLchar *name) {
+        (void)invoke("glGetTransformFeedbackVarying", {gl_backend_word(program), gl_backend_word(index), gl_backend_word(bufSize), gl_backend_word(length), gl_backend_word(size), gl_backend_word(type), gl_backend_word(name)});
+    }
+    virtual GLuint glGetUniformBlockIndex(GLuint program, const GLchar *uniformBlockName) {
+        return static_cast<GLuint>(invoke("glGetUniformBlockIndex", {gl_backend_word(program), gl_backend_word(uniformBlockName)}));
+    }
+    virtual void glGetUniformIndices(GLuint program, GLsizei uniformCount, const GLchar *const*uniformNames, GLuint *uniformIndices) {
+        (void)invoke("glGetUniformIndices", {gl_backend_word(program), gl_backend_word(uniformCount), gl_backend_word(uniformNames), gl_backend_word(uniformIndices)});
+    }
+    virtual void glGetUniformuiv(GLuint program, GLint location, GLuint *params) {
+        (void)invoke("glGetUniformuiv", {gl_backend_word(program), gl_backend_word(location), gl_backend_word(params)});
+    }
+    virtual void glGetVertexAttribIiv(GLuint index, GLenum pname, GLint *params) {
+        (void)invoke("glGetVertexAttribIiv", {gl_backend_word(index), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual void glGetVertexAttribIuiv(GLuint index, GLenum pname, GLuint *params) {
+        (void)invoke("glGetVertexAttribIuiv", {gl_backend_word(index), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual void glInvalidateFramebuffer(GLenum target, GLsizei numAttachments, const GLenum *attachments) {
+        (void)invoke("glInvalidateFramebuffer", {gl_backend_word(target), gl_backend_word(numAttachments), gl_backend_word(attachments)});
+    }
+    virtual void glInvalidateSubFramebuffer(GLenum target, GLsizei numAttachments, const GLenum *attachments, GLint x, GLint y, GLsizei width, GLsizei height) {
+        (void)invoke("glInvalidateSubFramebuffer", {gl_backend_word(target), gl_backend_word(numAttachments), gl_backend_word(attachments), gl_backend_word(x), gl_backend_word(y), gl_backend_word(width), gl_backend_word(height)});
+    }
+    virtual GLboolean glIsQuery(GLuint id) {
+        return static_cast<GLboolean>(invoke("glIsQuery", {gl_backend_word(id)}));
+    }
+    virtual GLboolean glIsSampler(GLuint sampler) {
+        return static_cast<GLboolean>(invoke("glIsSampler", {gl_backend_word(sampler)}));
+    }
+    virtual GLboolean glIsSync(GLsync sync) {
+        return static_cast<GLboolean>(invoke("glIsSync", {gl_backend_word(sync)}));
+    }
+    virtual GLboolean glIsTransformFeedback(GLuint id) {
+        return static_cast<GLboolean>(invoke("glIsTransformFeedback", {gl_backend_word(id)}));
+    }
+    virtual GLboolean glIsVertexArray(GLuint array) {
+        return static_cast<GLboolean>(invoke("glIsVertexArray", {gl_backend_word(array)}));
+    }
+    virtual void * glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access) {
+        return reinterpret_cast<void *>(static_cast<std::uintptr_t>(invoke("glMapBufferRange", {gl_backend_word(target), gl_backend_word(offset), gl_backend_word(length), gl_backend_word(access)})));
+    }
+    virtual void glPauseTransformFeedback(void) {
+        (void)invoke("glPauseTransformFeedback", {});
+    }
+    virtual void glProgramBinary(GLuint program, GLenum binaryFormat, const void *binary, GLsizei length) {
+        (void)invoke("glProgramBinary", {gl_backend_word(program), gl_backend_word(binaryFormat), gl_backend_word(binary), gl_backend_word(length)});
+    }
+    virtual void glProgramParameteri(GLuint program, GLenum pname, GLint value) {
+        (void)invoke("glProgramParameteri", {gl_backend_word(program), gl_backend_word(pname), gl_backend_word(value)});
+    }
+    virtual void glReadBuffer(GLenum src) {
+        (void)invoke("glReadBuffer", {gl_backend_word(src)});
+    }
+    virtual void glRenderbufferStorageMultisample(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height) {
+        (void)invoke("glRenderbufferStorageMultisample", {gl_backend_word(target), gl_backend_word(samples), gl_backend_word(internalformat), gl_backend_word(width), gl_backend_word(height)});
+    }
+    virtual void glResumeTransformFeedback(void) {
+        (void)invoke("glResumeTransformFeedback", {});
+    }
+    virtual void glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param) {
+        (void)invoke("glSamplerParameterf", {gl_backend_word(sampler), gl_backend_word(pname), gl_backend_word(param)});
+    }
+    virtual void glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat *param) {
+        (void)invoke("glSamplerParameterfv", {gl_backend_word(sampler), gl_backend_word(pname), gl_backend_word(param)});
+    }
+    virtual void glSamplerParameteri(GLuint sampler, GLenum pname, GLint param) {
+        (void)invoke("glSamplerParameteri", {gl_backend_word(sampler), gl_backend_word(pname), gl_backend_word(param)});
+    }
+    virtual void glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint *param) {
+        (void)invoke("glSamplerParameteriv", {gl_backend_word(sampler), gl_backend_word(pname), gl_backend_word(param)});
+    }
+    virtual void glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void *pixels) {
+        (void)invoke("glTexImage3D", {gl_backend_word(target), gl_backend_word(level), gl_backend_word(internalformat), gl_backend_word(width), gl_backend_word(height), gl_backend_word(depth), gl_backend_word(border), gl_backend_word(format), gl_backend_word(type), gl_backend_word(pixels)});
+    }
+    virtual void glTexStorage2D(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height) {
+        (void)invoke("glTexStorage2D", {gl_backend_word(target), gl_backend_word(levels), gl_backend_word(internalformat), gl_backend_word(width), gl_backend_word(height)});
+    }
+    virtual void glTexStorage3D(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth) {
+        (void)invoke("glTexStorage3D", {gl_backend_word(target), gl_backend_word(levels), gl_backend_word(internalformat), gl_backend_word(width), gl_backend_word(height), gl_backend_word(depth)});
+    }
+    virtual void glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void *pixels) {
+        (void)invoke("glTexSubImage3D", {gl_backend_word(target), gl_backend_word(level), gl_backend_word(xoffset), gl_backend_word(yoffset), gl_backend_word(zoffset), gl_backend_word(width), gl_backend_word(height), gl_backend_word(depth), gl_backend_word(format), gl_backend_word(type), gl_backend_word(pixels)});
+    }
+    virtual void glTransformFeedbackVaryings(GLuint program, GLsizei count, const GLchar *const*varyings, GLenum bufferMode) {
+        (void)invoke("glTransformFeedbackVaryings", {gl_backend_word(program), gl_backend_word(count), gl_backend_word(varyings), gl_backend_word(bufferMode)});
+    }
+    virtual void glUniform1ui(GLint location, GLuint v0) {
+        (void)invoke("glUniform1ui", {gl_backend_word(location), gl_backend_word(v0)});
+    }
+    virtual void glUniform1uiv(GLint location, GLsizei count, const GLuint *value) {
+        (void)invoke("glUniform1uiv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(value)});
+    }
+    virtual void glUniform2ui(GLint location, GLuint v0, GLuint v1) {
+        (void)invoke("glUniform2ui", {gl_backend_word(location), gl_backend_word(v0), gl_backend_word(v1)});
+    }
+    virtual void glUniform2uiv(GLint location, GLsizei count, const GLuint *value) {
+        (void)invoke("glUniform2uiv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(value)});
+    }
+    virtual void glUniform3ui(GLint location, GLuint v0, GLuint v1, GLuint v2) {
+        (void)invoke("glUniform3ui", {gl_backend_word(location), gl_backend_word(v0), gl_backend_word(v1), gl_backend_word(v2)});
+    }
+    virtual void glUniform3uiv(GLint location, GLsizei count, const GLuint *value) {
+        (void)invoke("glUniform3uiv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(value)});
+    }
+    virtual void glUniform4ui(GLint location, GLuint v0, GLuint v1, GLuint v2, GLuint v3) {
+        (void)invoke("glUniform4ui", {gl_backend_word(location), gl_backend_word(v0), gl_backend_word(v1), gl_backend_word(v2), gl_backend_word(v3)});
+    }
+    virtual void glUniform4uiv(GLint location, GLsizei count, const GLuint *value) {
+        (void)invoke("glUniform4uiv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(value)});
+    }
+    virtual void glUniformBlockBinding(GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding) {
+        (void)invoke("glUniformBlockBinding", {gl_backend_word(program), gl_backend_word(uniformBlockIndex), gl_backend_word(uniformBlockBinding)});
+    }
+    virtual void glUniformMatrix2x3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) {
+        (void)invoke("glUniformMatrix2x3fv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(transpose), gl_backend_word(value)});
+    }
+    virtual void glUniformMatrix2x4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) {
+        (void)invoke("glUniformMatrix2x4fv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(transpose), gl_backend_word(value)});
+    }
+    virtual void glUniformMatrix3x2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) {
+        (void)invoke("glUniformMatrix3x2fv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(transpose), gl_backend_word(value)});
+    }
+    virtual void glUniformMatrix3x4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) {
+        (void)invoke("glUniformMatrix3x4fv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(transpose), gl_backend_word(value)});
+    }
+    virtual void glUniformMatrix4x2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) {
+        (void)invoke("glUniformMatrix4x2fv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(transpose), gl_backend_word(value)});
+    }
+    virtual void glUniformMatrix4x3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) {
+        (void)invoke("glUniformMatrix4x3fv", {gl_backend_word(location), gl_backend_word(count), gl_backend_word(transpose), gl_backend_word(value)});
+    }
+    virtual GLboolean glUnmapBuffer(GLenum target) {
+        return static_cast<GLboolean>(invoke("glUnmapBuffer", {gl_backend_word(target)}));
+    }
+    virtual void glVertexAttribDivisor(GLuint index, GLuint divisor) {
+        (void)invoke("glVertexAttribDivisor", {gl_backend_word(index), gl_backend_word(divisor)});
+    }
+    virtual void glVertexAttribI4i(GLuint index, GLint x, GLint y, GLint z, GLint w) {
+        (void)invoke("glVertexAttribI4i", {gl_backend_word(index), gl_backend_word(x), gl_backend_word(y), gl_backend_word(z), gl_backend_word(w)});
+    }
+    virtual void glVertexAttribI4iv(GLuint index, const GLint *v) {
+        (void)invoke("glVertexAttribI4iv", {gl_backend_word(index), gl_backend_word(v)});
+    }
+    virtual void glVertexAttribI4ui(GLuint index, GLuint x, GLuint y, GLuint z, GLuint w) {
+        (void)invoke("glVertexAttribI4ui", {gl_backend_word(index), gl_backend_word(x), gl_backend_word(y), gl_backend_word(z), gl_backend_word(w)});
+    }
+    virtual void glVertexAttribI4uiv(GLuint index, const GLuint *v) {
+        (void)invoke("glVertexAttribI4uiv", {gl_backend_word(index), gl_backend_word(v)});
+    }
+    virtual void glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer) {
+        (void)invoke("glVertexAttribIPointer", {gl_backend_word(index), gl_backend_word(size), gl_backend_word(type), gl_backend_word(stride), gl_backend_word(pointer)});
+    }
+    virtual void glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) {
+        (void)invoke("glWaitSync", {gl_backend_word(sync), gl_backend_word(flags), gl_backend_word(timeout)});
     }
 
 protected:

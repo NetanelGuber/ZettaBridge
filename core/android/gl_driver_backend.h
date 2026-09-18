@@ -1,6 +1,6 @@
 #pragma once
 
-#include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
 
 #include "zb/gl_backend.h"
 
@@ -10,7 +10,7 @@ namespace zb {
 // (libGLESv2.so). All marshaling (pointer translation, bounds checks, client-array
 // materialization) already happened in HostGl before a call reaches here, so every override
 // below is a direct forward with no logic of its own. This and gl_driver_backend.cpp are the
-// only files in the tree that include GLES2/gl2.h for real.
+// only files in the tree that include GLES3/gl3.h (which includes GLES2/gl2.h) for real.
 class GlDriverBackend final : public GlBackend {
 public:
     // There is no real API to inject an error into the driver's own error queue, so a rejection

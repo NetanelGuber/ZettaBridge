@@ -48,7 +48,7 @@ void HostGl::Call::fail(GLenum error, const char* reason) {
 }
 
 void HostGl::reject(Call& call, GLenum error, const char* reason) {
-    const char* name = call.index() < kGlHostCalls.size() ? kGlHostCalls[call.index()].name : "?";
+    const char* name = gl_host_call_name(call.index());
     log("GLES %s rejected: %s", name, reason);
     // Guests rarely call glGetError, so a rejection is otherwise silent (a texture that never
     // got its pixels renders black). Count them, and keep the first few with their arguments.
@@ -81,8 +81,8 @@ bool gl_trace_enabled() {
 }  // namespace
 
 bool HostGl::handle_host_call(std::uint32_t index, GuestThread& thread) {
-    if (index > kGlHostCallLast) return false;
-    const char* name = index < kGlHostCalls.size() ? kGlHostCalls[index].name : "?";
+    if (!is_gl_host_call(index)) return false;
+    const char* name = gl_host_call_name(index);
     if (gl_trace_enabled()) {
         log("GLES trace: %s(0x%x, 0x%x, 0x%x, 0x%x)", name, thread.regs()[0], thread.regs()[1],
             thread.regs()[2], thread.regs()[3]);

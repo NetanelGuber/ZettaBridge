@@ -7,10 +7,16 @@
 
 namespace zb {
 
+// Two blocks: GLES 2.0 at 0-141, GLES 3.0 appended after every other stub library so no
+// established host-call index moved.
 inline constexpr std::uint32_t kGlHostCallFirst = 0;
-inline constexpr std::uint32_t kGlHostCallLast = 141;
-inline constexpr std::size_t kGlHostCallCount = 142;
-inline constexpr std::size_t kGlPointerlessHostCallCount = 81;
+inline constexpr std::uint32_t kGlHostCallLast = 141u;
+inline constexpr std::size_t kGlHostCallCount = 142u;
+inline constexpr std::uint32_t kGlHostCall3First = 228u;
+inline constexpr std::uint32_t kGlHostCall3Last = 331u;
+inline constexpr std::size_t kGlHostCall3Count = 104u;
+inline constexpr std::size_t kGlHostCallTotalCount = 246u;
+inline constexpr std::size_t kGlPointerlessHostCallCount = 126u;
 
 inline constexpr std::uint32_t ZB_GL_HC_glActiveTexture = 0u;
 inline constexpr std::uint32_t ZB_GL_HC_glAttachShader = 1u;
@@ -154,6 +160,110 @@ inline constexpr std::uint32_t ZB_GL_HC_glVertexAttrib4f = 138u;
 inline constexpr std::uint32_t ZB_GL_HC_glVertexAttrib4fv = 139u;
 inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribPointer = 140u;
 inline constexpr std::uint32_t ZB_GL_HC_glViewport = 141u;
+inline constexpr std::uint32_t ZB_GL_HC_glBeginQuery = 228u;
+inline constexpr std::uint32_t ZB_GL_HC_glBeginTransformFeedback = 229u;
+inline constexpr std::uint32_t ZB_GL_HC_glBindBufferBase = 230u;
+inline constexpr std::uint32_t ZB_GL_HC_glBindBufferRange = 231u;
+inline constexpr std::uint32_t ZB_GL_HC_glBindSampler = 232u;
+inline constexpr std::uint32_t ZB_GL_HC_glBindTransformFeedback = 233u;
+inline constexpr std::uint32_t ZB_GL_HC_glBindVertexArray = 234u;
+inline constexpr std::uint32_t ZB_GL_HC_glBlitFramebuffer = 235u;
+inline constexpr std::uint32_t ZB_GL_HC_glClearBufferfi = 236u;
+inline constexpr std::uint32_t ZB_GL_HC_glClearBufferfv = 237u;
+inline constexpr std::uint32_t ZB_GL_HC_glClearBufferiv = 238u;
+inline constexpr std::uint32_t ZB_GL_HC_glClearBufferuiv = 239u;
+inline constexpr std::uint32_t ZB_GL_HC_glClientWaitSync = 240u;
+inline constexpr std::uint32_t ZB_GL_HC_glCompressedTexImage3D = 241u;
+inline constexpr std::uint32_t ZB_GL_HC_glCompressedTexSubImage3D = 242u;
+inline constexpr std::uint32_t ZB_GL_HC_glCopyBufferSubData = 243u;
+inline constexpr std::uint32_t ZB_GL_HC_glCopyTexSubImage3D = 244u;
+inline constexpr std::uint32_t ZB_GL_HC_glDeleteQueries = 245u;
+inline constexpr std::uint32_t ZB_GL_HC_glDeleteSamplers = 246u;
+inline constexpr std::uint32_t ZB_GL_HC_glDeleteSync = 247u;
+inline constexpr std::uint32_t ZB_GL_HC_glDeleteTransformFeedbacks = 248u;
+inline constexpr std::uint32_t ZB_GL_HC_glDeleteVertexArrays = 249u;
+inline constexpr std::uint32_t ZB_GL_HC_glDrawArraysInstanced = 250u;
+inline constexpr std::uint32_t ZB_GL_HC_glDrawBuffers = 251u;
+inline constexpr std::uint32_t ZB_GL_HC_glDrawElementsInstanced = 252u;
+inline constexpr std::uint32_t ZB_GL_HC_glDrawRangeElements = 253u;
+inline constexpr std::uint32_t ZB_GL_HC_glEndQuery = 254u;
+inline constexpr std::uint32_t ZB_GL_HC_glEndTransformFeedback = 255u;
+inline constexpr std::uint32_t ZB_GL_HC_glFenceSync = 256u;
+inline constexpr std::uint32_t ZB_GL_HC_glFlushMappedBufferRange = 257u;
+inline constexpr std::uint32_t ZB_GL_HC_glFramebufferTextureLayer = 258u;
+inline constexpr std::uint32_t ZB_GL_HC_glGenQueries = 259u;
+inline constexpr std::uint32_t ZB_GL_HC_glGenSamplers = 260u;
+inline constexpr std::uint32_t ZB_GL_HC_glGenTransformFeedbacks = 261u;
+inline constexpr std::uint32_t ZB_GL_HC_glGenVertexArrays = 262u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetActiveUniformBlockName = 263u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetActiveUniformBlockiv = 264u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetActiveUniformsiv = 265u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetBufferParameteri64v = 266u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetBufferPointerv = 267u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetFragDataLocation = 268u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetInteger64i_v = 269u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetInteger64v = 270u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetIntegeri_v = 271u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetInternalformativ = 272u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetProgramBinary = 273u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetQueryObjectuiv = 274u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetQueryiv = 275u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetSamplerParameterfv = 276u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetSamplerParameteriv = 277u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetStringi = 278u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetSynciv = 279u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetTransformFeedbackVarying = 280u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetUniformBlockIndex = 281u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetUniformIndices = 282u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetUniformuiv = 283u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetVertexAttribIiv = 284u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetVertexAttribIuiv = 285u;
+inline constexpr std::uint32_t ZB_GL_HC_glInvalidateFramebuffer = 286u;
+inline constexpr std::uint32_t ZB_GL_HC_glInvalidateSubFramebuffer = 287u;
+inline constexpr std::uint32_t ZB_GL_HC_glIsQuery = 288u;
+inline constexpr std::uint32_t ZB_GL_HC_glIsSampler = 289u;
+inline constexpr std::uint32_t ZB_GL_HC_glIsSync = 290u;
+inline constexpr std::uint32_t ZB_GL_HC_glIsTransformFeedback = 291u;
+inline constexpr std::uint32_t ZB_GL_HC_glIsVertexArray = 292u;
+inline constexpr std::uint32_t ZB_GL_HC_glMapBufferRange = 293u;
+inline constexpr std::uint32_t ZB_GL_HC_glPauseTransformFeedback = 294u;
+inline constexpr std::uint32_t ZB_GL_HC_glProgramBinary = 295u;
+inline constexpr std::uint32_t ZB_GL_HC_glProgramParameteri = 296u;
+inline constexpr std::uint32_t ZB_GL_HC_glReadBuffer = 297u;
+inline constexpr std::uint32_t ZB_GL_HC_glRenderbufferStorageMultisample = 298u;
+inline constexpr std::uint32_t ZB_GL_HC_glResumeTransformFeedback = 299u;
+inline constexpr std::uint32_t ZB_GL_HC_glSamplerParameterf = 300u;
+inline constexpr std::uint32_t ZB_GL_HC_glSamplerParameterfv = 301u;
+inline constexpr std::uint32_t ZB_GL_HC_glSamplerParameteri = 302u;
+inline constexpr std::uint32_t ZB_GL_HC_glSamplerParameteriv = 303u;
+inline constexpr std::uint32_t ZB_GL_HC_glTexImage3D = 304u;
+inline constexpr std::uint32_t ZB_GL_HC_glTexStorage2D = 305u;
+inline constexpr std::uint32_t ZB_GL_HC_glTexStorage3D = 306u;
+inline constexpr std::uint32_t ZB_GL_HC_glTexSubImage3D = 307u;
+inline constexpr std::uint32_t ZB_GL_HC_glTransformFeedbackVaryings = 308u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniform1ui = 309u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniform1uiv = 310u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniform2ui = 311u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniform2uiv = 312u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniform3ui = 313u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniform3uiv = 314u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniform4ui = 315u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniform4uiv = 316u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniformBlockBinding = 317u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniformMatrix2x3fv = 318u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniformMatrix2x4fv = 319u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniformMatrix3x2fv = 320u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniformMatrix3x4fv = 321u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniformMatrix4x2fv = 322u;
+inline constexpr std::uint32_t ZB_GL_HC_glUniformMatrix4x3fv = 323u;
+inline constexpr std::uint32_t ZB_GL_HC_glUnmapBuffer = 324u;
+inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribDivisor = 325u;
+inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribI4i = 326u;
+inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribI4iv = 327u;
+inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribI4ui = 328u;
+inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribI4uiv = 329u;
+inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribIPointer = 330u;
+inline constexpr std::uint32_t ZB_GL_HC_glWaitSync = 331u;
 
 struct GlHostCallInfo {
     std::uint32_t index;
@@ -161,7 +271,8 @@ struct GlHostCallInfo {
     bool has_pointer;
 };
 
-inline constexpr std::array<GlHostCallInfo, kGlHostCallCount> kGlHostCalls{{
+// GLES 2.0 first, then GLES 3.0; use gl_host_call() rather than indexing by host call.
+inline constexpr std::array<GlHostCallInfo, kGlHostCallTotalCount> kGlHostCalls{{
     {0u, "glActiveTexture", false},
     {1u, "glAttachShader", false},
     {2u, "glBindAttribLocation", true},
@@ -304,6 +415,127 @@ inline constexpr std::array<GlHostCallInfo, kGlHostCallCount> kGlHostCalls{{
     {139u, "glVertexAttrib4fv", true},
     {140u, "glVertexAttribPointer", true},
     {141u, "glViewport", false},
+    {228u, "glBeginQuery", false},
+    {229u, "glBeginTransformFeedback", false},
+    {230u, "glBindBufferBase", false},
+    {231u, "glBindBufferRange", false},
+    {232u, "glBindSampler", false},
+    {233u, "glBindTransformFeedback", false},
+    {234u, "glBindVertexArray", false},
+    {235u, "glBlitFramebuffer", false},
+    {236u, "glClearBufferfi", false},
+    {237u, "glClearBufferfv", true},
+    {238u, "glClearBufferiv", true},
+    {239u, "glClearBufferuiv", true},
+    {240u, "glClientWaitSync", false},
+    {241u, "glCompressedTexImage3D", true},
+    {242u, "glCompressedTexSubImage3D", true},
+    {243u, "glCopyBufferSubData", false},
+    {244u, "glCopyTexSubImage3D", false},
+    {245u, "glDeleteQueries", true},
+    {246u, "glDeleteSamplers", true},
+    {247u, "glDeleteSync", false},
+    {248u, "glDeleteTransformFeedbacks", true},
+    {249u, "glDeleteVertexArrays", true},
+    {250u, "glDrawArraysInstanced", false},
+    {251u, "glDrawBuffers", true},
+    {252u, "glDrawElementsInstanced", true},
+    {253u, "glDrawRangeElements", true},
+    {254u, "glEndQuery", false},
+    {255u, "glEndTransformFeedback", false},
+    {256u, "glFenceSync", false},
+    {257u, "glFlushMappedBufferRange", false},
+    {258u, "glFramebufferTextureLayer", false},
+    {259u, "glGenQueries", true},
+    {260u, "glGenSamplers", true},
+    {261u, "glGenTransformFeedbacks", true},
+    {262u, "glGenVertexArrays", true},
+    {263u, "glGetActiveUniformBlockName", true},
+    {264u, "glGetActiveUniformBlockiv", true},
+    {265u, "glGetActiveUniformsiv", true},
+    {266u, "glGetBufferParameteri64v", true},
+    {267u, "glGetBufferPointerv", true},
+    {268u, "glGetFragDataLocation", true},
+    {269u, "glGetInteger64i_v", true},
+    {270u, "glGetInteger64v", true},
+    {271u, "glGetIntegeri_v", true},
+    {272u, "glGetInternalformativ", true},
+    {273u, "glGetProgramBinary", true},
+    {274u, "glGetQueryObjectuiv", true},
+    {275u, "glGetQueryiv", true},
+    {276u, "glGetSamplerParameterfv", true},
+    {277u, "glGetSamplerParameteriv", true},
+    {278u, "glGetStringi", false},
+    {279u, "glGetSynciv", true},
+    {280u, "glGetTransformFeedbackVarying", true},
+    {281u, "glGetUniformBlockIndex", true},
+    {282u, "glGetUniformIndices", true},
+    {283u, "glGetUniformuiv", true},
+    {284u, "glGetVertexAttribIiv", true},
+    {285u, "glGetVertexAttribIuiv", true},
+    {286u, "glInvalidateFramebuffer", true},
+    {287u, "glInvalidateSubFramebuffer", true},
+    {288u, "glIsQuery", false},
+    {289u, "glIsSampler", false},
+    {290u, "glIsSync", false},
+    {291u, "glIsTransformFeedback", false},
+    {292u, "glIsVertexArray", false},
+    {293u, "glMapBufferRange", false},
+    {294u, "glPauseTransformFeedback", false},
+    {295u, "glProgramBinary", true},
+    {296u, "glProgramParameteri", false},
+    {297u, "glReadBuffer", false},
+    {298u, "glRenderbufferStorageMultisample", false},
+    {299u, "glResumeTransformFeedback", false},
+    {300u, "glSamplerParameterf", false},
+    {301u, "glSamplerParameterfv", true},
+    {302u, "glSamplerParameteri", false},
+    {303u, "glSamplerParameteriv", true},
+    {304u, "glTexImage3D", true},
+    {305u, "glTexStorage2D", false},
+    {306u, "glTexStorage3D", false},
+    {307u, "glTexSubImage3D", true},
+    {308u, "glTransformFeedbackVaryings", true},
+    {309u, "glUniform1ui", false},
+    {310u, "glUniform1uiv", true},
+    {311u, "glUniform2ui", false},
+    {312u, "glUniform2uiv", true},
+    {313u, "glUniform3ui", false},
+    {314u, "glUniform3uiv", true},
+    {315u, "glUniform4ui", false},
+    {316u, "glUniform4uiv", true},
+    {317u, "glUniformBlockBinding", false},
+    {318u, "glUniformMatrix2x3fv", true},
+    {319u, "glUniformMatrix2x4fv", true},
+    {320u, "glUniformMatrix3x2fv", true},
+    {321u, "glUniformMatrix3x4fv", true},
+    {322u, "glUniformMatrix4x2fv", true},
+    {323u, "glUniformMatrix4x3fv", true},
+    {324u, "glUnmapBuffer", false},
+    {325u, "glVertexAttribDivisor", false},
+    {326u, "glVertexAttribI4i", false},
+    {327u, "glVertexAttribI4iv", true},
+    {328u, "glVertexAttribI4ui", false},
+    {329u, "glVertexAttribI4uiv", true},
+    {330u, "glVertexAttribIPointer", true},
+    {331u, "glWaitSync", false},
 }};
+
+inline constexpr const GlHostCallInfo* gl_host_call(std::uint32_t index) {
+    if (index <= kGlHostCallLast) return &kGlHostCalls[index];
+    if (index >= kGlHostCall3First && index <= kGlHostCall3Last) {
+        return &kGlHostCalls[kGlHostCallCount + (index - kGlHostCall3First)];
+    }
+    return nullptr;
+}
+
+inline constexpr bool is_gl_host_call(std::uint32_t index) {
+    return gl_host_call(index) != nullptr;
+}
+
+inline constexpr const char* gl_host_call_name(std::uint32_t index) {
+    const GlHostCallInfo* info = gl_host_call(index);
+    return info == nullptr ? "?" : info->name;
+}
 
 }  // namespace zb

@@ -35,6 +35,18 @@ def gles2_names():
     return sorted(set(re.findall(r"GL_APICALL\s+[^;]*?GL_APIENTRY\s+(gl\w+)\s*\(", text)))
 
 
+def gles3_names():
+    """The GLES 3.0 entry points that GLES 2.0 does not already export.
+
+    Android's real libGLESv2.so exports both, so these go into the same guest stub library.
+    They are registered as a second libGLESv2 entry at the end of LIBRARIES, which appends to
+    that library's assembly file without renumbering any established host-call index.
+    """
+    text = open(os.path.join(INCLUDE, "GLES3", "gl3.h")).read()
+    names = set(re.findall(r"GL_APICALL\s+[^;]*?GL_APIENTRY\s+(gl\w+)\s*\(", text))
+    return sorted(names - set(gles2_names()))
+
+
 def android_asset_names():
     names = set()
     decl = re.compile(r"^[A-Za-z_][\w \*]*\b(AAsset\w*)\(")
@@ -119,6 +131,10 @@ LIBRARIES = [
     ("libGLESv2", gles2_compat_names),
     ("libjnigraphics", jnigraphics_names),
     ("libandroid", looper_compat_names),
+    # GLES 3.0. Appended last on purpose: the GLES 2.0 indices (0-141), the AAsset* ones
+    # (142-159), ANativeWindow_* (160-167) and EGL (168-211) are hand-referenced elsewhere
+    # (core/include/zb/asset_hostcalls.h, window_hostcalls.h, egl_hostcalls.h) and must not move.
+    ("libGLESv2", gles3_names),
 ]
 
 

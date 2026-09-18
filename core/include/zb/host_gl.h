@@ -14,7 +14,7 @@
 
 namespace zb {
 
-// GLES 2.0 host-call dispatcher. Guest code passes AAPCS32 words in r0-r3 and on its stack;
+// GLES 2.0 + 3.0 host-call dispatcher. Guest code passes AAPCS32 words in r0-r3 and on its stack;
 // HostGl translates those words to the portable GlBackend seam after Dynarmic has stopped.
 // GL visibility diagnostics in the runtime report (gl_diagnostics.cpp). Off by default: they
 // add driver queries to the call stream. The Android runtime turns them on.
@@ -113,18 +113,25 @@ public:
         : runtime_(runtime), backend_(backend), allocator_(std::move(allocator)),
           egl_context_probe_(std::move(egl_context_probe)) {}
 
-    // Serves the GLES range 0-141 and leaves 142-160 for HostAssets.
+    // Serves the two GLES ranges (2.0 at 0-141, 3.0 at 228-331) and leaves 142-160 for
+    // HostAssets, 160-167 for HostNativeWindow and 168-211 for HostEgl.
     bool handle_host_call(std::uint32_t index, GuestThread& thread);
     LibraryRuntime& runtime() { return runtime_; }
     GlBackend& backend() { return backend_; }
     void reject(Call& call, GLenum error, const char* reason);
     void note_pixel_store(GLenum pname, GLint param);
     void note_bind_buffer(GLenum target, GLuint buffer);
+    // The GLES 3.0 pixel buffer bound to GL_PIXEL_PACK_BUFFER / GL_PIXEL_UNPACK_BUFFER, if any:
+    // while one is bound, a pixel "pointer" argument is a buffer offset, not a guest address.
+    GLuint pixel_buffer(bool pack) const;
     void note_vertex_attrib_enabled(GLuint index, bool enabled);
     void invalidate_uniforms(GLuint program);
     GLint pixel_alignment(bool pack) const;
     std::optional<std::uint64_t> uniform_elements(GLuint program, GLint location);
     std::optional<std::uint32_t> allocate_guest(std::size_t size);
+    // Releases an allocate_guest() block. A HostGl built with a test GuestAllocator has no
+    // matching deallocator, so the block is simply left to that allocator's arena.
+    void free_guest(std::uint32_t address);
 
 private:
     bool dispatch(Call& call);

@@ -1146,3 +1146,835 @@ glEGLImageTargetTexture2DOES:
     svc #0x5a00d8
     bx lr
 .size glEGLImageTargetTexture2DOES, . - glEGLImageTargetTexture2DOES
+
+.global glBeginQuery
+.type glBeginQuery, %function
+.p2align 2
+glBeginQuery:
+    svc #0x5a00e4
+    bx lr
+.size glBeginQuery, . - glBeginQuery
+
+.global glBeginTransformFeedback
+.type glBeginTransformFeedback, %function
+.p2align 2
+glBeginTransformFeedback:
+    svc #0x5a00e5
+    bx lr
+.size glBeginTransformFeedback, . - glBeginTransformFeedback
+
+.global glBindBufferBase
+.type glBindBufferBase, %function
+.p2align 2
+glBindBufferBase:
+    svc #0x5a00e6
+    bx lr
+.size glBindBufferBase, . - glBindBufferBase
+
+.global glBindBufferRange
+.type glBindBufferRange, %function
+.p2align 2
+glBindBufferRange:
+    svc #0x5a00e7
+    bx lr
+.size glBindBufferRange, . - glBindBufferRange
+
+.global glBindSampler
+.type glBindSampler, %function
+.p2align 2
+glBindSampler:
+    svc #0x5a00e8
+    bx lr
+.size glBindSampler, . - glBindSampler
+
+.global glBindTransformFeedback
+.type glBindTransformFeedback, %function
+.p2align 2
+glBindTransformFeedback:
+    svc #0x5a00e9
+    bx lr
+.size glBindTransformFeedback, . - glBindTransformFeedback
+
+.global glBindVertexArray
+.type glBindVertexArray, %function
+.p2align 2
+glBindVertexArray:
+    svc #0x5a00ea
+    bx lr
+.size glBindVertexArray, . - glBindVertexArray
+
+.global glBlitFramebuffer
+.type glBlitFramebuffer, %function
+.p2align 2
+glBlitFramebuffer:
+    svc #0x5a00eb
+    bx lr
+.size glBlitFramebuffer, . - glBlitFramebuffer
+
+.global glClearBufferfi
+.type glClearBufferfi, %function
+.p2align 2
+glClearBufferfi:
+    svc #0x5a00ec
+    bx lr
+.size glClearBufferfi, . - glClearBufferfi
+
+.global glClearBufferfv
+.type glClearBufferfv, %function
+.p2align 2
+glClearBufferfv:
+    svc #0x5a00ed
+    bx lr
+.size glClearBufferfv, . - glClearBufferfv
+
+.global glClearBufferiv
+.type glClearBufferiv, %function
+.p2align 2
+glClearBufferiv:
+    svc #0x5a00ee
+    bx lr
+.size glClearBufferiv, . - glClearBufferiv
+
+.global glClearBufferuiv
+.type glClearBufferuiv, %function
+.p2align 2
+glClearBufferuiv:
+    svc #0x5a00ef
+    bx lr
+.size glClearBufferuiv, . - glClearBufferuiv
+
+.global glClientWaitSync
+.type glClientWaitSync, %function
+.p2align 2
+glClientWaitSync:
+    svc #0x5a00f0
+    bx lr
+.size glClientWaitSync, . - glClientWaitSync
+
+.global glCompressedTexImage3D
+.type glCompressedTexImage3D, %function
+.p2align 2
+glCompressedTexImage3D:
+    svc #0x5a00f1
+    bx lr
+.size glCompressedTexImage3D, . - glCompressedTexImage3D
+
+.global glCompressedTexSubImage3D
+.type glCompressedTexSubImage3D, %function
+.p2align 2
+glCompressedTexSubImage3D:
+    svc #0x5a00f2
+    bx lr
+.size glCompressedTexSubImage3D, . - glCompressedTexSubImage3D
+
+.global glCopyBufferSubData
+.type glCopyBufferSubData, %function
+.p2align 2
+glCopyBufferSubData:
+    svc #0x5a00f3
+    bx lr
+.size glCopyBufferSubData, . - glCopyBufferSubData
+
+.global glCopyTexSubImage3D
+.type glCopyTexSubImage3D, %function
+.p2align 2
+glCopyTexSubImage3D:
+    svc #0x5a00f4
+    bx lr
+.size glCopyTexSubImage3D, . - glCopyTexSubImage3D
+
+.global glDeleteQueries
+.type glDeleteQueries, %function
+.p2align 2
+glDeleteQueries:
+    svc #0x5a00f5
+    bx lr
+.size glDeleteQueries, . - glDeleteQueries
+
+.global glDeleteSamplers
+.type glDeleteSamplers, %function
+.p2align 2
+glDeleteSamplers:
+    svc #0x5a00f6
+    bx lr
+.size glDeleteSamplers, . - glDeleteSamplers
+
+.global glDeleteSync
+.type glDeleteSync, %function
+.p2align 2
+glDeleteSync:
+    svc #0x5a00f7
+    bx lr
+.size glDeleteSync, . - glDeleteSync
+
+.global glDeleteTransformFeedbacks
+.type glDeleteTransformFeedbacks, %function
+.p2align 2
+glDeleteTransformFeedbacks:
+    svc #0x5a00f8
+    bx lr
+.size glDeleteTransformFeedbacks, . - glDeleteTransformFeedbacks
+
+.global glDeleteVertexArrays
+.type glDeleteVertexArrays, %function
+.p2align 2
+glDeleteVertexArrays:
+    svc #0x5a00f9
+    bx lr
+.size glDeleteVertexArrays, . - glDeleteVertexArrays
+
+.global glDrawArraysInstanced
+.type glDrawArraysInstanced, %function
+.p2align 2
+glDrawArraysInstanced:
+    svc #0x5a00fa
+    bx lr
+.size glDrawArraysInstanced, . - glDrawArraysInstanced
+
+.global glDrawBuffers
+.type glDrawBuffers, %function
+.p2align 2
+glDrawBuffers:
+    svc #0x5a00fb
+    bx lr
+.size glDrawBuffers, . - glDrawBuffers
+
+.global glDrawElementsInstanced
+.type glDrawElementsInstanced, %function
+.p2align 2
+glDrawElementsInstanced:
+    svc #0x5a00fc
+    bx lr
+.size glDrawElementsInstanced, . - glDrawElementsInstanced
+
+.global glDrawRangeElements
+.type glDrawRangeElements, %function
+.p2align 2
+glDrawRangeElements:
+    svc #0x5a00fd
+    bx lr
+.size glDrawRangeElements, . - glDrawRangeElements
+
+.global glEndQuery
+.type glEndQuery, %function
+.p2align 2
+glEndQuery:
+    svc #0x5a00fe
+    bx lr
+.size glEndQuery, . - glEndQuery
+
+.global glEndTransformFeedback
+.type glEndTransformFeedback, %function
+.p2align 2
+glEndTransformFeedback:
+    svc #0x5a00ff
+    bx lr
+.size glEndTransformFeedback, . - glEndTransformFeedback
+
+.global glFenceSync
+.type glFenceSync, %function
+.p2align 2
+glFenceSync:
+    svc #0x5a0100
+    bx lr
+.size glFenceSync, . - glFenceSync
+
+.global glFlushMappedBufferRange
+.type glFlushMappedBufferRange, %function
+.p2align 2
+glFlushMappedBufferRange:
+    svc #0x5a0101
+    bx lr
+.size glFlushMappedBufferRange, . - glFlushMappedBufferRange
+
+.global glFramebufferTextureLayer
+.type glFramebufferTextureLayer, %function
+.p2align 2
+glFramebufferTextureLayer:
+    svc #0x5a0102
+    bx lr
+.size glFramebufferTextureLayer, . - glFramebufferTextureLayer
+
+.global glGenQueries
+.type glGenQueries, %function
+.p2align 2
+glGenQueries:
+    svc #0x5a0103
+    bx lr
+.size glGenQueries, . - glGenQueries
+
+.global glGenSamplers
+.type glGenSamplers, %function
+.p2align 2
+glGenSamplers:
+    svc #0x5a0104
+    bx lr
+.size glGenSamplers, . - glGenSamplers
+
+.global glGenTransformFeedbacks
+.type glGenTransformFeedbacks, %function
+.p2align 2
+glGenTransformFeedbacks:
+    svc #0x5a0105
+    bx lr
+.size glGenTransformFeedbacks, . - glGenTransformFeedbacks
+
+.global glGenVertexArrays
+.type glGenVertexArrays, %function
+.p2align 2
+glGenVertexArrays:
+    svc #0x5a0106
+    bx lr
+.size glGenVertexArrays, . - glGenVertexArrays
+
+.global glGetActiveUniformBlockName
+.type glGetActiveUniformBlockName, %function
+.p2align 2
+glGetActiveUniformBlockName:
+    svc #0x5a0107
+    bx lr
+.size glGetActiveUniformBlockName, . - glGetActiveUniformBlockName
+
+.global glGetActiveUniformBlockiv
+.type glGetActiveUniformBlockiv, %function
+.p2align 2
+glGetActiveUniformBlockiv:
+    svc #0x5a0108
+    bx lr
+.size glGetActiveUniformBlockiv, . - glGetActiveUniformBlockiv
+
+.global glGetActiveUniformsiv
+.type glGetActiveUniformsiv, %function
+.p2align 2
+glGetActiveUniformsiv:
+    svc #0x5a0109
+    bx lr
+.size glGetActiveUniformsiv, . - glGetActiveUniformsiv
+
+.global glGetBufferParameteri64v
+.type glGetBufferParameteri64v, %function
+.p2align 2
+glGetBufferParameteri64v:
+    svc #0x5a010a
+    bx lr
+.size glGetBufferParameteri64v, . - glGetBufferParameteri64v
+
+.global glGetBufferPointerv
+.type glGetBufferPointerv, %function
+.p2align 2
+glGetBufferPointerv:
+    svc #0x5a010b
+    bx lr
+.size glGetBufferPointerv, . - glGetBufferPointerv
+
+.global glGetFragDataLocation
+.type glGetFragDataLocation, %function
+.p2align 2
+glGetFragDataLocation:
+    svc #0x5a010c
+    bx lr
+.size glGetFragDataLocation, . - glGetFragDataLocation
+
+.global glGetInteger64i_v
+.type glGetInteger64i_v, %function
+.p2align 2
+glGetInteger64i_v:
+    svc #0x5a010d
+    bx lr
+.size glGetInteger64i_v, . - glGetInteger64i_v
+
+.global glGetInteger64v
+.type glGetInteger64v, %function
+.p2align 2
+glGetInteger64v:
+    svc #0x5a010e
+    bx lr
+.size glGetInteger64v, . - glGetInteger64v
+
+.global glGetIntegeri_v
+.type glGetIntegeri_v, %function
+.p2align 2
+glGetIntegeri_v:
+    svc #0x5a010f
+    bx lr
+.size glGetIntegeri_v, . - glGetIntegeri_v
+
+.global glGetInternalformativ
+.type glGetInternalformativ, %function
+.p2align 2
+glGetInternalformativ:
+    svc #0x5a0110
+    bx lr
+.size glGetInternalformativ, . - glGetInternalformativ
+
+.global glGetProgramBinary
+.type glGetProgramBinary, %function
+.p2align 2
+glGetProgramBinary:
+    svc #0x5a0111
+    bx lr
+.size glGetProgramBinary, . - glGetProgramBinary
+
+.global glGetQueryObjectuiv
+.type glGetQueryObjectuiv, %function
+.p2align 2
+glGetQueryObjectuiv:
+    svc #0x5a0112
+    bx lr
+.size glGetQueryObjectuiv, . - glGetQueryObjectuiv
+
+.global glGetQueryiv
+.type glGetQueryiv, %function
+.p2align 2
+glGetQueryiv:
+    svc #0x5a0113
+    bx lr
+.size glGetQueryiv, . - glGetQueryiv
+
+.global glGetSamplerParameterfv
+.type glGetSamplerParameterfv, %function
+.p2align 2
+glGetSamplerParameterfv:
+    svc #0x5a0114
+    bx lr
+.size glGetSamplerParameterfv, . - glGetSamplerParameterfv
+
+.global glGetSamplerParameteriv
+.type glGetSamplerParameteriv, %function
+.p2align 2
+glGetSamplerParameteriv:
+    svc #0x5a0115
+    bx lr
+.size glGetSamplerParameteriv, . - glGetSamplerParameteriv
+
+.global glGetStringi
+.type glGetStringi, %function
+.p2align 2
+glGetStringi:
+    svc #0x5a0116
+    bx lr
+.size glGetStringi, . - glGetStringi
+
+.global glGetSynciv
+.type glGetSynciv, %function
+.p2align 2
+glGetSynciv:
+    svc #0x5a0117
+    bx lr
+.size glGetSynciv, . - glGetSynciv
+
+.global glGetTransformFeedbackVarying
+.type glGetTransformFeedbackVarying, %function
+.p2align 2
+glGetTransformFeedbackVarying:
+    svc #0x5a0118
+    bx lr
+.size glGetTransformFeedbackVarying, . - glGetTransformFeedbackVarying
+
+.global glGetUniformBlockIndex
+.type glGetUniformBlockIndex, %function
+.p2align 2
+glGetUniformBlockIndex:
+    svc #0x5a0119
+    bx lr
+.size glGetUniformBlockIndex, . - glGetUniformBlockIndex
+
+.global glGetUniformIndices
+.type glGetUniformIndices, %function
+.p2align 2
+glGetUniformIndices:
+    svc #0x5a011a
+    bx lr
+.size glGetUniformIndices, . - glGetUniformIndices
+
+.global glGetUniformuiv
+.type glGetUniformuiv, %function
+.p2align 2
+glGetUniformuiv:
+    svc #0x5a011b
+    bx lr
+.size glGetUniformuiv, . - glGetUniformuiv
+
+.global glGetVertexAttribIiv
+.type glGetVertexAttribIiv, %function
+.p2align 2
+glGetVertexAttribIiv:
+    svc #0x5a011c
+    bx lr
+.size glGetVertexAttribIiv, . - glGetVertexAttribIiv
+
+.global glGetVertexAttribIuiv
+.type glGetVertexAttribIuiv, %function
+.p2align 2
+glGetVertexAttribIuiv:
+    svc #0x5a011d
+    bx lr
+.size glGetVertexAttribIuiv, . - glGetVertexAttribIuiv
+
+.global glInvalidateFramebuffer
+.type glInvalidateFramebuffer, %function
+.p2align 2
+glInvalidateFramebuffer:
+    svc #0x5a011e
+    bx lr
+.size glInvalidateFramebuffer, . - glInvalidateFramebuffer
+
+.global glInvalidateSubFramebuffer
+.type glInvalidateSubFramebuffer, %function
+.p2align 2
+glInvalidateSubFramebuffer:
+    svc #0x5a011f
+    bx lr
+.size glInvalidateSubFramebuffer, . - glInvalidateSubFramebuffer
+
+.global glIsQuery
+.type glIsQuery, %function
+.p2align 2
+glIsQuery:
+    svc #0x5a0120
+    bx lr
+.size glIsQuery, . - glIsQuery
+
+.global glIsSampler
+.type glIsSampler, %function
+.p2align 2
+glIsSampler:
+    svc #0x5a0121
+    bx lr
+.size glIsSampler, . - glIsSampler
+
+.global glIsSync
+.type glIsSync, %function
+.p2align 2
+glIsSync:
+    svc #0x5a0122
+    bx lr
+.size glIsSync, . - glIsSync
+
+.global glIsTransformFeedback
+.type glIsTransformFeedback, %function
+.p2align 2
+glIsTransformFeedback:
+    svc #0x5a0123
+    bx lr
+.size glIsTransformFeedback, . - glIsTransformFeedback
+
+.global glIsVertexArray
+.type glIsVertexArray, %function
+.p2align 2
+glIsVertexArray:
+    svc #0x5a0124
+    bx lr
+.size glIsVertexArray, . - glIsVertexArray
+
+.global glMapBufferRange
+.type glMapBufferRange, %function
+.p2align 2
+glMapBufferRange:
+    svc #0x5a0125
+    bx lr
+.size glMapBufferRange, . - glMapBufferRange
+
+.global glPauseTransformFeedback
+.type glPauseTransformFeedback, %function
+.p2align 2
+glPauseTransformFeedback:
+    svc #0x5a0126
+    bx lr
+.size glPauseTransformFeedback, . - glPauseTransformFeedback
+
+.global glProgramBinary
+.type glProgramBinary, %function
+.p2align 2
+glProgramBinary:
+    svc #0x5a0127
+    bx lr
+.size glProgramBinary, . - glProgramBinary
+
+.global glProgramParameteri
+.type glProgramParameteri, %function
+.p2align 2
+glProgramParameteri:
+    svc #0x5a0128
+    bx lr
+.size glProgramParameteri, . - glProgramParameteri
+
+.global glReadBuffer
+.type glReadBuffer, %function
+.p2align 2
+glReadBuffer:
+    svc #0x5a0129
+    bx lr
+.size glReadBuffer, . - glReadBuffer
+
+.global glRenderbufferStorageMultisample
+.type glRenderbufferStorageMultisample, %function
+.p2align 2
+glRenderbufferStorageMultisample:
+    svc #0x5a012a
+    bx lr
+.size glRenderbufferStorageMultisample, . - glRenderbufferStorageMultisample
+
+.global glResumeTransformFeedback
+.type glResumeTransformFeedback, %function
+.p2align 2
+glResumeTransformFeedback:
+    svc #0x5a012b
+    bx lr
+.size glResumeTransformFeedback, . - glResumeTransformFeedback
+
+.global glSamplerParameterf
+.type glSamplerParameterf, %function
+.p2align 2
+glSamplerParameterf:
+    svc #0x5a012c
+    bx lr
+.size glSamplerParameterf, . - glSamplerParameterf
+
+.global glSamplerParameterfv
+.type glSamplerParameterfv, %function
+.p2align 2
+glSamplerParameterfv:
+    svc #0x5a012d
+    bx lr
+.size glSamplerParameterfv, . - glSamplerParameterfv
+
+.global glSamplerParameteri
+.type glSamplerParameteri, %function
+.p2align 2
+glSamplerParameteri:
+    svc #0x5a012e
+    bx lr
+.size glSamplerParameteri, . - glSamplerParameteri
+
+.global glSamplerParameteriv
+.type glSamplerParameteriv, %function
+.p2align 2
+glSamplerParameteriv:
+    svc #0x5a012f
+    bx lr
+.size glSamplerParameteriv, . - glSamplerParameteriv
+
+.global glTexImage3D
+.type glTexImage3D, %function
+.p2align 2
+glTexImage3D:
+    svc #0x5a0130
+    bx lr
+.size glTexImage3D, . - glTexImage3D
+
+.global glTexStorage2D
+.type glTexStorage2D, %function
+.p2align 2
+glTexStorage2D:
+    svc #0x5a0131
+    bx lr
+.size glTexStorage2D, . - glTexStorage2D
+
+.global glTexStorage3D
+.type glTexStorage3D, %function
+.p2align 2
+glTexStorage3D:
+    svc #0x5a0132
+    bx lr
+.size glTexStorage3D, . - glTexStorage3D
+
+.global glTexSubImage3D
+.type glTexSubImage3D, %function
+.p2align 2
+glTexSubImage3D:
+    svc #0x5a0133
+    bx lr
+.size glTexSubImage3D, . - glTexSubImage3D
+
+.global glTransformFeedbackVaryings
+.type glTransformFeedbackVaryings, %function
+.p2align 2
+glTransformFeedbackVaryings:
+    svc #0x5a0134
+    bx lr
+.size glTransformFeedbackVaryings, . - glTransformFeedbackVaryings
+
+.global glUniform1ui
+.type glUniform1ui, %function
+.p2align 2
+glUniform1ui:
+    svc #0x5a0135
+    bx lr
+.size glUniform1ui, . - glUniform1ui
+
+.global glUniform1uiv
+.type glUniform1uiv, %function
+.p2align 2
+glUniform1uiv:
+    svc #0x5a0136
+    bx lr
+.size glUniform1uiv, . - glUniform1uiv
+
+.global glUniform2ui
+.type glUniform2ui, %function
+.p2align 2
+glUniform2ui:
+    svc #0x5a0137
+    bx lr
+.size glUniform2ui, . - glUniform2ui
+
+.global glUniform2uiv
+.type glUniform2uiv, %function
+.p2align 2
+glUniform2uiv:
+    svc #0x5a0138
+    bx lr
+.size glUniform2uiv, . - glUniform2uiv
+
+.global glUniform3ui
+.type glUniform3ui, %function
+.p2align 2
+glUniform3ui:
+    svc #0x5a0139
+    bx lr
+.size glUniform3ui, . - glUniform3ui
+
+.global glUniform3uiv
+.type glUniform3uiv, %function
+.p2align 2
+glUniform3uiv:
+    svc #0x5a013a
+    bx lr
+.size glUniform3uiv, . - glUniform3uiv
+
+.global glUniform4ui
+.type glUniform4ui, %function
+.p2align 2
+glUniform4ui:
+    svc #0x5a013b
+    bx lr
+.size glUniform4ui, . - glUniform4ui
+
+.global glUniform4uiv
+.type glUniform4uiv, %function
+.p2align 2
+glUniform4uiv:
+    svc #0x5a013c
+    bx lr
+.size glUniform4uiv, . - glUniform4uiv
+
+.global glUniformBlockBinding
+.type glUniformBlockBinding, %function
+.p2align 2
+glUniformBlockBinding:
+    svc #0x5a013d
+    bx lr
+.size glUniformBlockBinding, . - glUniformBlockBinding
+
+.global glUniformMatrix2x3fv
+.type glUniformMatrix2x3fv, %function
+.p2align 2
+glUniformMatrix2x3fv:
+    svc #0x5a013e
+    bx lr
+.size glUniformMatrix2x3fv, . - glUniformMatrix2x3fv
+
+.global glUniformMatrix2x4fv
+.type glUniformMatrix2x4fv, %function
+.p2align 2
+glUniformMatrix2x4fv:
+    svc #0x5a013f
+    bx lr
+.size glUniformMatrix2x4fv, . - glUniformMatrix2x4fv
+
+.global glUniformMatrix3x2fv
+.type glUniformMatrix3x2fv, %function
+.p2align 2
+glUniformMatrix3x2fv:
+    svc #0x5a0140
+    bx lr
+.size glUniformMatrix3x2fv, . - glUniformMatrix3x2fv
+
+.global glUniformMatrix3x4fv
+.type glUniformMatrix3x4fv, %function
+.p2align 2
+glUniformMatrix3x4fv:
+    svc #0x5a0141
+    bx lr
+.size glUniformMatrix3x4fv, . - glUniformMatrix3x4fv
+
+.global glUniformMatrix4x2fv
+.type glUniformMatrix4x2fv, %function
+.p2align 2
+glUniformMatrix4x2fv:
+    svc #0x5a0142
+    bx lr
+.size glUniformMatrix4x2fv, . - glUniformMatrix4x2fv
+
+.global glUniformMatrix4x3fv
+.type glUniformMatrix4x3fv, %function
+.p2align 2
+glUniformMatrix4x3fv:
+    svc #0x5a0143
+    bx lr
+.size glUniformMatrix4x3fv, . - glUniformMatrix4x3fv
+
+.global glUnmapBuffer
+.type glUnmapBuffer, %function
+.p2align 2
+glUnmapBuffer:
+    svc #0x5a0144
+    bx lr
+.size glUnmapBuffer, . - glUnmapBuffer
+
+.global glVertexAttribDivisor
+.type glVertexAttribDivisor, %function
+.p2align 2
+glVertexAttribDivisor:
+    svc #0x5a0145
+    bx lr
+.size glVertexAttribDivisor, . - glVertexAttribDivisor
+
+.global glVertexAttribI4i
+.type glVertexAttribI4i, %function
+.p2align 2
+glVertexAttribI4i:
+    svc #0x5a0146
+    bx lr
+.size glVertexAttribI4i, . - glVertexAttribI4i
+
+.global glVertexAttribI4iv
+.type glVertexAttribI4iv, %function
+.p2align 2
+glVertexAttribI4iv:
+    svc #0x5a0147
+    bx lr
+.size glVertexAttribI4iv, . - glVertexAttribI4iv
+
+.global glVertexAttribI4ui
+.type glVertexAttribI4ui, %function
+.p2align 2
+glVertexAttribI4ui:
+    svc #0x5a0148
+    bx lr
+.size glVertexAttribI4ui, . - glVertexAttribI4ui
+
+.global glVertexAttribI4uiv
+.type glVertexAttribI4uiv, %function
+.p2align 2
+glVertexAttribI4uiv:
+    svc #0x5a0149
+    bx lr
+.size glVertexAttribI4uiv, . - glVertexAttribI4uiv
+
+.global glVertexAttribIPointer
+.type glVertexAttribIPointer, %function
+.p2align 2
+glVertexAttribIPointer:
+    svc #0x5a014a
+    bx lr
+.size glVertexAttribIPointer, . - glVertexAttribIPointer
+
+.global glWaitSync
+.type glWaitSync, %function
+.p2align 2
+glWaitSync:
+    svc #0x5a014b
+    bx lr
+.size glWaitSync, . - glWaitSync
