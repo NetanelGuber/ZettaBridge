@@ -125,9 +125,17 @@ bool query_attribute(HostEgl& host, HostEgl::Call& call, EglObject kind) {
 
 // Shared by eglChooseConfig and eglGetConfigs: the guest array holds 32-bit handles, never host
 // EGLConfig pointers, so the driver fills a host vector that is then mapped handle by handle.
+struct ConfigOutcome {
+    EGLint size = -1;
+    EGLint count = -1;
+    EGLBoolean ok = 0;
+};
+
 bool serve_configs(HostEgl& host, HostEgl::Call& call, EGLDisplay dpy,
-                   const std::vector<EGLint>* attribs, unsigned configs_position) {
+                   const std::vector<EGLint>* attribs, unsigned configs_position,
+                   ConfigOutcome* outcome = nullptr) {
     const EGLint config_size = call.scalar<EGLint>(configs_position + 1);
+    if (outcome != nullptr) outcome->size = config_size;
     if (!call.valid()) return true;
     if (config_size < 0) {
         call.fail(kEglBadParameter, "config array size is negative");
@@ -151,6 +159,10 @@ bool serve_configs(HostEgl& host, HostEgl::Call& call, EGLDisplay dpy,
             : host.backend().eglChooseConfig(dpy, attribs->empty() ? nullptr : attribs->data(),
                                              found.empty() ? nullptr : found.data(), config_size,
                                              &count);
+    if (outcome != nullptr) {
+        outcome->count = count;
+        outcome->ok = ok;
+    }
     if (ok != 0 && guest_configs != nullptr) {
         const std::size_t written =
             std::min<std::size_t>(found.size(), count < 0 ? 0 : static_cast<std::size_t>(count));
@@ -178,7 +190,8 @@ bool zbegl_manual_eglChooseConfig(HostEgl& host, HostEgl::Call& call) {
     if (!call.valid()) return true;
     std::vector<EGLint> attribs;
     if (!read_attribs(host, call, 1, attribs)) return true;
-    const bool served = serve_configs(host, call, dpy, &attribs, 2);
+    ConfigOutcome outcome;
+    const bool served = serve_configs(host, call, dpy, &attribs, 2, &outcome);
     // Flutter chooses one configuration per context (onscreen, then offscreen) and does not check
     // the second for failure, so record what each request asked for and how many it got.
     static std::atomic<unsigned> chosen{0};
@@ -190,8 +203,9 @@ bool zbegl_manual_eglChooseConfig(HostEgl& host, HostEgl::Call& call) {
             std::snprintf(word, sizeof word, "%s0x%x=%d", text.empty() ? "" : " ", attribs[i], attribs[i + 1]);
             text += word;
         }
-        // The outcome itself shows up in crash-recent-egl-calls (eglChooseConfig=0x1 or 0x0).
-        runtime_report().note_egl_object("choose-" + std::to_string(seen), text);
+        std::snprintf(word, sizeof word, " -> ok=%d configs=%d/%d", outcome.ok, outcome.count,
+                      outcome.size);
+        runtime_report().note_egl_object("choose-" + std::to_string(seen), text + word);
     }
     return served;
 }

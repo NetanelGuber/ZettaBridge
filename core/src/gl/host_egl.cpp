@@ -204,7 +204,8 @@ std::string egl_recent_calls() {
     for (std::uint64_t i = first; i < next; ++i) {
         const std::uint32_t index = g_recent_egl[i % kRecentEglCalls].index.load(std::memory_order_relaxed);
         const std::uint32_t result = g_recent_egl[i % kRecentEglCalls].result.load(std::memory_order_relaxed);
-        const char* name = index < kEglHostCalls.size() ? kEglHostCalls[index].name : "?";
+        const std::uint32_t row = index - kEglHostCallFirst;
+        const char* name = row < kEglHostCalls.size() ? kEglHostCalls[row].name : "?";
         char text[96];
         std::snprintf(text, sizeof text, "%s%s=0x%x", out.empty() ? "" : " ", name, result);
         out += text;
