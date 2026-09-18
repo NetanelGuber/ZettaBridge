@@ -44,6 +44,28 @@ constexpr GLenum kMinFilter = 0x2801;
 constexpr GLenum kWrapS = 0x2802;
 constexpr GLenum kWrapT = 0x2803;
 constexpr GLenum kAttribEnabled = 0x8622;
+constexpr GLenum kAlpha = 0x1906;
+constexpr GLenum kRgb = 0x1907;
+constexpr GLenum kLuminance = 0x1909;
+constexpr GLenum kLuminanceAlpha = 0x190A;
+constexpr GLenum kR8 = 0x8229;
+// Real value per GLES3/gl3.h; NOT 0x8C8A.
+constexpr GLenum kPixelUnpackBufferBinding = 0x88EF;
+
+// Bytes per pixel for GL_UNSIGNED_BYTE uploads of the formats seen in practice. Returns 0 for
+// anything else (compressed, float, or a format this diagnostic does not know), in which case the
+// byte-level inspection below is skipped.
+GLint channels_for_format(GLenum format) {
+    switch (format) {
+    case kRgba: return 4;
+    case kRgb: return 3;
+    case kLuminanceAlpha: return 2;
+    case kAlpha:
+    case kLuminance:
+    case kR8: return 1;
+    default: return 0;
+    }
+}
 
 struct Attrib {
     bool set = false;
@@ -82,6 +104,19 @@ struct State {
     std::uint64_t clear_samples = 0;
     GLuint bound_framebuffer = 0;
     Attrib attribs[8];
+
+    // Per-glTexSubImage2D detail lines (first 12 calls).
+    std::uint64_t texsub_details = 0;
+
+    // The texture id of the glyph atlas: the first glTexImage2D whose size/format matched.
+    // 0 means "not seen yet"; real texture ids are never 0.
+    GLuint glyph_atlas_texture = 0;
+    std::uint64_t glyph_uploads = 0;
+    std::uint64_t glyph_bytes = 0;
+    std::uint64_t glyph_nonzero = 0;
+
+    // First 4 compressed tex image / sub-image calls, of either function.
+    std::uint64_t compressed_calls = 0;
 };
 
 State& state() {
@@ -300,7 +335,7 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
     case ZB_GL_HC_glShaderSource:
         ++s.shader_sources;
         break;
-    case ZB_GL_HC_glTexSubImage2D:
+    case ZB_GL_HC_glTexSubImage2D: {
         if (++s.tex_sub_images == 1) {
             detail("first-texsubimage", format("level=%d at=%d,%d %dx%d format=0x%x type=0x%x pixels=0x%x",
                                                static_cast<GLint>(call.arg(1)), static_cast<GLint>(call.arg(2)),
@@ -308,7 +343,61 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
                                                static_cast<GLint>(call.arg(5)), call.arg(6), call.arg(7), call.arg(8)));
         }
         detail("texsubimages", std::to_string(s.tex_sub_images), true);
+
+        const GLenum target = call.arg(0);
+        const GLint level = static_cast<GLint>(call.arg(1));
+        const GLint xoffset = static_cast<GLint>(call.arg(2));
+        const GLint yoffset = static_cast<GLint>(call.arg(3));
+        const GLint width = static_cast<GLint>(call.arg(4));
+        const GLint height = static_cast<GLint>(call.arg(5));
+        const GLenum sub_format = call.arg(6);
+        const GLenum type = call.arg(7);
+        const std::uint32_t pixels = call.arg(8);
+
+        GLint pbo = 0, texture = 0;
+        gl.glGetIntegerv(kPixelUnpackBufferBinding, &pbo);
+        gl.glGetIntegerv(kTextureBinding2d, &texture);
+        const bool pbo_bound = pbo != 0;
+
+        const GLint channels = channels_for_format(sub_format);
+        const std::uint64_t bytes = (!pbo_bound && width > 0 && height > 0 && type == kUnsignedByte &&
+                                     channels > 0)
+                                        ? std::uint64_t(width) * std::uint64_t(height) *
+                                              static_cast<std::uint64_t>(channels)
+                                        : 0;
+        const std::uint8_t* data =
+            bytes != 0 ? host.runtime().memory().host_ptr(pixels, bytes, kPageRead) : nullptr;
+        std::uint64_t nonzero = 0;
+        for (std::uint64_t i = 0; data != nullptr && i < bytes; ++i) nonzero += data[i] != 0;
+
+        if (s.texsub_details < 12) {
+            ++s.texsub_details;
+            std::string head;
+            for (std::uint64_t i = 0; data != nullptr && i < std::min<std::uint64_t>(bytes, 12); ++i) {
+                head += format("%02x", data[i]);
+            }
+            const std::string key = "texsub-" + std::to_string(s.texsub_details);
+            detail(key.c_str(),
+                   format("target=0x%x level=%d x=%d y=%d %dx%d format=0x%x type=0x%x pbo=%d texture=%d "
+                          "readable=%d nonzero=%llu/%llu head=",
+                          target, level, xoffset, yoffset, width, height, sub_format, type, pbo_bound ? 1 : 0,
+                          texture, data != nullptr ? 1 : 0, (unsigned long long)nonzero,
+                          (unsigned long long)bytes) +
+                       head);
+        }
+
+        if (s.glyph_atlas_texture != 0 && texture == static_cast<GLint>(s.glyph_atlas_texture)) {
+            ++s.glyph_uploads;
+            s.glyph_bytes += bytes;
+            s.glyph_nonzero += nonzero;
+            detail("glyph-atlas",
+                   format("uploads=%llu bytes=%llu nonzero=%llu texture=%u", (unsigned long long)s.glyph_uploads,
+                          (unsigned long long)s.glyph_bytes, (unsigned long long)s.glyph_nonzero,
+                          s.glyph_atlas_texture),
+                   true);
+        }
         break;
+    }
     case ZB_GL_HC_glTexParameteri:
     case ZB_GL_HC_glTexParameterf: {
         const bool is_float = call.index() == ZB_GL_HC_glTexParameterf;
@@ -377,6 +466,16 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
                                        call.arg(7), call.arg(8), data != nullptr ? 1 : 0,
                                        (unsigned long long)nonzero, (unsigned long long)bytes) + head);
         }
+        if (s.glyph_atlas_texture == 0) {
+            const GLint width = static_cast<GLint>(call.arg(3));
+            const GLint height = static_cast<GLint>(call.arg(4));
+            const GLenum internal = call.arg(2);
+            if (width == 4096 && height == 1024 && (internal == kAlpha || internal == kR8)) {
+                GLint texture = 0;
+                gl.glGetIntegerv(kTextureBinding2d, &texture);
+                if (texture != 0) s.glyph_atlas_texture = static_cast<GLuint>(texture);
+            }
+        }
         detail("teximages", std::to_string(s.tex_images + 1), true);
         if (++s.tex_images <= 2) {
             const std::string key = "teximage-" + std::to_string(s.tex_images);
@@ -410,6 +509,24 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
                                     float_words(host, call.arg(2), size >= 32 ? 8 : size / 4));
         }
         break;
+    case ZB_GL_HC_glCompressedTexImage2D:
+    case ZB_GL_HC_glCompressedTexSubImage2D: {
+        if (s.compressed_calls < 4) {
+            ++s.compressed_calls;
+            const bool is_sub = call.index() == ZB_GL_HC_glCompressedTexSubImage2D;
+            const std::string key = "compressed-" + std::to_string(s.compressed_calls);
+            if (is_sub) {
+                detail(key.c_str(), format("glCompressedTexSubImage2D format=0x%x %dx%d imageSize=%u",
+                                           call.arg(6), static_cast<GLint>(call.arg(4)),
+                                           static_cast<GLint>(call.arg(5)), call.arg(7)));
+            } else {
+                detail(key.c_str(), format("glCompressedTexImage2D internal=0x%x %dx%d imageSize=%u",
+                                           call.arg(2), static_cast<GLint>(call.arg(3)),
+                                           static_cast<GLint>(call.arg(4)), call.arg(6)));
+            }
+        }
+        break;
+    }
     case ZB_GL_HC_glUniformMatrix4fv:
         if (++s.matrices == 1) {
             detail("first-matrix4", format("location=%d count=%d transpose=%u values=",
