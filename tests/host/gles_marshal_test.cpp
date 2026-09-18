@@ -287,6 +287,30 @@ int main() {
     CHECK(host.handle_host_call(zb::ZB_GL_HC_glTexImage2D, thread));
     CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glTexImage2D");
 
+    // GLES2 legacy alpha textures keep their sampling semantics on an ES3 driver: store the
+    // single channel as R8/RED and make texture(...).a read that red channel through swizzle.
+    backend.clear_calls();
+    pointer_words = {0x0DE1, 0, 0x1906, 1, 1, 0, 0x1906, 0x1401, kData};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glTexImage2D, thread));
+    CHECK(backend.calls().size() == 5);
+    CHECK(backend.calls()[0].name == "glTexImage2D");
+    CHECK(backend.calls()[0].arguments[2] == 0x8229);  // GL_R8
+    CHECK(backend.calls()[0].arguments[6] == 0x1903);  // GL_RED
+    for (std::size_t i = 1; i < 5; ++i) CHECK(backend.calls()[i].name == "glTexParameteri");
+    CHECK(backend.calls()[1].arguments[1] == 0x8E42 && backend.calls()[1].arguments[2] == 0);
+    CHECK(backend.calls()[2].arguments[1] == 0x8E43 && backend.calls()[2].arguments[2] == 0);
+    CHECK(backend.calls()[3].arguments[1] == 0x8E44 && backend.calls()[3].arguments[2] == 0);
+    CHECK(backend.calls()[4].arguments[1] == 0x8E45 &&
+          backend.calls()[4].arguments[2] == 0x1903);
+
+    backend.clear_calls();
+    pointer_words = {0x0DE1, 0, 0, 0, 1, 1, 0x1906, 0x1401, kData};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glTexSubImage2D, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glTexSubImage2D");
+    CHECK(backend.calls()[0].arguments[6] == 0x1903);  // GL_RED
+
     // A one-element COMPSIZE(pname) entry is generated rather than left as a stub.
     backend.clear_calls();
     pointer_words = {3, 0x8B81, kData + 0xFFC};  // GL_COMPILE_STATUS

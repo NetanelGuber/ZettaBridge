@@ -29,6 +29,14 @@ constexpr GLenum kGlElementArrayBuffer = 0x8893;
 constexpr GLenum kGlPixelPackBuffer = 0x88EB;
 constexpr GLenum kGlPixelUnpackBuffer = 0x88EC;
 constexpr GLenum kGlBufferMapPointer = 0x88BD;
+constexpr GLenum kGlAlpha = 0x1906;
+constexpr GLenum kGlRed = 0x1903;
+constexpr GLint kGlR8 = 0x8229;
+constexpr GLenum kGlTextureSwizzleR = 0x8E42;
+constexpr GLenum kGlTextureSwizzleG = 0x8E43;
+constexpr GLenum kGlTextureSwizzleB = 0x8E44;
+constexpr GLenum kGlTextureSwizzleA = 0x8E45;
+constexpr GLint kGlZero = 0;
 constexpr GLenum kGlUniformBlockActiveUniforms = 0x8A42;
 constexpr GLenum kGlUniformBlockActiveUniformIndices = 0x8A43;
 // glMapBufferRange access bits.
@@ -510,8 +518,19 @@ bool zbgl_manual_glTexImage2D(HostGl& host, HostGl::Call& call) {
     void* pixels = nullptr;
     if (!pixel_pointer(host, call, false, format, type, width, height, 1,
                        host.pixel_alignment(false), 8, kPageRead, pixels)) return true;
-    host.backend().glTexImage2D(target, level, internalformat, width, height, border,
-                                format, type, pixels);
+    if (internalformat == static_cast<GLint>(kGlAlpha) && format == kGlAlpha) {
+        host.backend().glTexImage2D(target, level, kGlR8, width, height, border,
+                                   kGlRed, type, pixels);
+        // GL_ALPHA sampling returns (0, 0, 0, A). R8 is the ES3 storage equivalent; swizzle
+        // restores the guest-visible GLES2 result while avoiding legacy texture semantics.
+        host.backend().glTexParameteri(target, kGlTextureSwizzleR, kGlZero);
+        host.backend().glTexParameteri(target, kGlTextureSwizzleG, kGlZero);
+        host.backend().glTexParameteri(target, kGlTextureSwizzleB, kGlZero);
+        host.backend().glTexParameteri(target, kGlTextureSwizzleA, kGlRed);
+    } else {
+        host.backend().glTexImage2D(target, level, internalformat, width, height, border,
+                                   format, type, pixels);
+    }
     return true;
 }
 
@@ -528,7 +547,7 @@ bool zbgl_manual_glTexSubImage2D(HostGl& host, HostGl::Call& call) {
     if (!pixel_pointer(host, call, false, format, type, width, height, 1,
                        host.pixel_alignment(false), 8, kPageRead, pixels)) return true;
     host.backend().glTexSubImage2D(target, level, xoffset, yoffset, width, height,
-                                   format, type, pixels);
+                                  format == kGlAlpha ? kGlRed : format, type, pixels);
     return true;
 }
 

@@ -1540,3 +1540,26 @@ Ready APK: `/sdcard/ZettaBridge-debug.apk`, 9,377,080 bytes, SHA-256
 preferred). A nonzero legacy texture error authorizes the tested compatibility translation above;
 an error of zero means decode the two `head` fields as little-endian float uniforms before changing
 texture formats.
+
+### Device result and A/B build: legacy alpha sampling
+
+The device reported `gl-legacy-texture-error ... error=0x0`, so allocation is accepted. The first
+text `FragInfo` is also valid: `is_color_glyph=0`, `use_text_color=1`, and `text_color` is
+`(0,0,0,0.5019608)`; the two intervening words are std140 padding. Upload, binding, uniform contents
+and allocation error are therefore ruled out. A one-off first-run crash was not reproduced on the
+second run and the saved report has no guest exit.
+
+The next build is a controlled A/B test of the remaining sampling-semantic boundary. Guest
+`GL_ALPHA` allocations are stored as ES3 `GL_R8/GL_RED`, with texture swizzle `(0,0,0,R)` restoring
+the GLES2 sampled value; matching `GL_ALPHA` sub-images use `GL_RED`. Other formats are unchanged.
+The host test observed RED first and now asserts the translated allocation, all four swizzles and
+the translated sub-image. Fresh gate: host 47/47, Android `zbridge`/`zbproxy`, launcher bundle and
+Gradle debug APK all pass.
+
+Ready A/B APK: `/sdcard/ZettaBridge-debug.apk`, 9,377,272 bytes, SHA-256
+`92e1e04b66716bc1a41a432658d2e6fa88b21f73a232df39dbf6409344145c39`.
+
+**NEXT/device gate:** install, force-stop and launch avtobuy twice. Report whether text or the four
+missing images change and whether either run exits. If there is no improvement, revert this A/B
+compatibility commit and instrument a real onscreen text draw (the current first three text samples
+are Impeller's 2x2 offscreen warm-up and do not prove the later onscreen draw output).
