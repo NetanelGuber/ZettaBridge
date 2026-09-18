@@ -33,6 +33,16 @@ Slot g_slots[kMaxSlots];
 
 void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint32_t id) {
     if (tid == 0) return;
+    // This runs on every guest syscall and host call, so the common path must not scan the table:
+    // each thread remembers its own slot after claiming it once.
+    static thread_local Slot* mine = nullptr;
+    static thread_local std::int32_t mine_tid = 0;
+    if (mine != nullptr && mine_tid == tid) {
+        mine->kind.store(static_cast<std::uint8_t>(kind), std::memory_order_relaxed);
+        mine->id.store(id, std::memory_order_relaxed);
+        mine->counter.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     // Find an existing slot for this tid, or claim the first free one. A relaxed CAS race
     // between two threads claiming the same free slot for different tids is possible but
     // vanishingly rare and self-heals: the loser just tries the next slot next call.
@@ -43,6 +53,8 @@ void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint
             slot.kind.store(static_cast<std::uint8_t>(kind), std::memory_order_relaxed);
             slot.id.store(id, std::memory_order_relaxed);
             slot.counter.fetch_add(1, std::memory_order_relaxed);
+            mine = &slot;
+            mine_tid = tid;
             return;
         }
         if (current == 0 && free_slot == nullptr) free_slot = &slot;
@@ -56,6 +68,8 @@ void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint
     free_slot->kind.store(static_cast<std::uint8_t>(kind), std::memory_order_relaxed);
     free_slot->id.store(id, std::memory_order_relaxed);
     free_slot->counter.store(1, std::memory_order_relaxed);
+    mine = free_slot;
+    mine_tid = tid;
 }
 
 std::vector<ThreadActivitySample> snapshot_thread_activity() {
