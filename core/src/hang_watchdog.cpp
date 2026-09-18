@@ -105,24 +105,39 @@ std::vector<ThreadActivitySample> snapshot_thread_activity() {
 // Ticks of CPU this thread has burned, from /proc/self/task/<tid>/stat, or 0 when unreadable.
 // A thread whose activity never changes but whose CPU keeps climbing is spinning in translated
 // code; one whose CPU stands still is blocked.
-std::uint64_t thread_cpu_ticks(std::int32_t tid) {
+// What the kernel says about a thread: "gone" when it no longer exists, otherwise its scheduler
+// state (R running, S sleeping, D uninterruptible), the CPU ticks it burned, and the kernel
+// function it is waiting in. Zero CPU alone cannot tell an idle thread from a dead one.
+std::string thread_kernel_state(std::int32_t tid) {
     char path[64];
     std::snprintf(path, sizeof path, "/proc/self/task/%d/stat", tid);
     std::FILE* file = std::fopen(path, "re");
-    if (file == nullptr) return 0;
+    if (file == nullptr) return "gone";
     char line[1024];
     const char* read = std::fgets(line, sizeof line, file);
     std::fclose(file);
-    if (read == nullptr) return 0;
+    if (read == nullptr) return "gone";
     const char* cursor = std::strrchr(line, ')');
-    if (cursor == nullptr) return 0;
+    if (cursor == nullptr) return "?";
+    char state = '?';
     unsigned long long utime = 0, stime = 0;
     // Fields after "comm": state, ppid, pgrp, session, tty, tpgid, flags, min_flt, cmin_flt,
     // maj_flt, cmaj_flt, utime, stime.
-    if (std::sscanf(cursor + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &utime, &stime) != 2) {
-        return 0;
+    if (std::sscanf(cursor + 2, "%c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &state, &utime,
+                    &stime) != 3) {
+        return "?";
     }
-    return utime + stime;
+    char waiting[64] = {};
+    std::snprintf(path, sizeof path, "/proc/self/task/%d/wchan", tid);
+    std::FILE* wchan = std::fopen(path, "re");
+    if (wchan != nullptr) {
+        if (std::fgets(waiting, sizeof waiting, wchan) == nullptr) waiting[0] = '\0';
+        std::fclose(wchan);
+    }
+    char text[128];
+    std::snprintf(text, sizeof text, "%c cpu=%llu%s%s", state, utime + stime,
+                  waiting[0] != '\0' ? " in=" : "", waiting);
+    return text;
 }
 
 std::string describe_thread_activity(const ThreadActivitySample& sample) {
@@ -195,7 +210,7 @@ bool HangWatchdog::sample(Clock::time_point now) {
             std::chrono::duration_cast<std::chrono::seconds>(now - state->since).count();
         value += std::to_string(state->tid) + "=" + describe_thread_activity(sample) +
                  " x" + std::to_string(state->counter) + " stuck=" + std::to_string(seconds) +
-                 " cpu=" + std::to_string(thread_cpu_ticks(state->tid));
+                 " " + thread_kernel_state(state->tid);
         ++shown;
     }
     value += " | recent-jni: " + jni_recent_calls();
