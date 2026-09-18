@@ -1300,3 +1300,34 @@ Current branch is `codex/phase4d-launcher`. The only dirty path before this hand
 intentional existing `third_party/dynarmic` submodule baseline. The last known APK is
 `/sdcard/ZettaBridge-debug.apk`, SHA-256
 `956780e0caee29702a903b36c31ca13946cab1918f9d8ec1727d9dfe592ac047`.
+
+## Flutter: why no frame is ever drawn (2026-09-18)
+
+Device evidence, after EGL, GLES 3.0, the direct-buffer mirror, `AAsset_getBuffer` and the JNI
+mirror-lifetime fix all landed: `gl-calls: 3507`, 140 shaders and 70 programs built,
+`egl-surface: created`, `egl-swaps: 0`, zero draw calls, `guest-exit: (none)`, and the report's
+thread census shows `1.raster` and `1.io` but **no `1.ui`**.
+
+The looper diagnostics name the cause:
+```
+looper-prepared: 29365=0x7a000000 29371=0x7a000004 29372=0x7a000008
+looper-addfd-1:  tid=29365 looper=0x7a000000 fd=138 ident=-2 events=0x1 result=1
+watch: 29365=sys:timerfd_settime x807 stuck=21 S cpu=0 in=futex_wait_queue
+```
+- 29371 (`1.raster`) and 29372 (`1.io`) are guest-created threads: they poll their loopers and the
+  bridge dispatches their callbacks (21 so far). That half works.
+- 29365 is a **Java thread** (`flutter-worker-`) that entered the guest on a borrowed carrier. On
+  it, the engine built its platform/UI message loop: `ALooper_prepare`, `ALooper_addFd` with a
+  callback, `timerfd_settime`. It then returned to Java and never polls.
+
+On a real device that is correct engine behaviour: `MessageLoopAndroid` attaches its timerfd to the
+**thread's own Android looper**, and Java's `Looper.loop()` polls it. In our world the guest's
+looper is `HostLooper`, a separate thing the Java looper knows nothing about, so the timerfd never
+fires, the UI task runner never runs, Dart never starts, and nothing is ever drawn.
+
+**NEXT: attach guest loopers that live on host threads to the real Android looper.** When
+`ALooper_prepare`/`addFd`/`wake` happen on a borrower (a host thread that entered the guest), the
+fd must be registered with that host thread's real `ALooper` through the NDK, with a host callback
+that enters the guest and runs the guest callback. Guest-created threads keep today's path, which
+is proven to work. Keep the NDK behind a backend seam (like `GlBackend`/`AssetBackend`) so host
+tests can drive it without Android.
