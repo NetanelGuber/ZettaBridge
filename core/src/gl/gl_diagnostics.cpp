@@ -53,6 +53,8 @@ constexpr GLenum kLuminanceAlpha = 0x190A;
 constexpr GLenum kR8 = 0x8229;
 // Real value per GLES3/gl3.h; NOT 0x8C8A.
 constexpr GLenum kPixelUnpackBufferBinding = 0x88EF;
+constexpr GLenum kUniformBuffer = 0x8A11;
+constexpr GLenum kUniformBufferBinding = 0x8A28;
 
 // Bytes per pixel for GL_UNSIGNED_BYTE uploads of the formats seen in practice. Returns 0 for
 // anything else (compressed, float, or a format this diagnostic does not know), in which case the
@@ -119,6 +121,21 @@ struct State {
 
     // First 4 compressed tex image / sub-image calls, of either function.
     std::uint64_t compressed_calls = 0;
+
+    // First 8 glBufferData/glBufferSubData calls whose target is GL_UNIFORM_BUFFER.
+    std::uint64_t ubo_buffer_calls = 0;
+    // First 8 glBindBufferRange/glBindBufferBase calls.
+    std::uint64_t ubo_bind_calls = 0;
+    // First 8 glUniformBlockBinding/glGetUniformBlockIndex calls.
+    std::uint64_t uniform_block_calls = 0;
+
+    // Before/after framebuffer readback around the first 3 draws with the glyph atlas
+    // texture bound to the active texture unit.
+    std::uint64_t text_draws_captured = 0;
+    bool text_snapshot_pending = false;
+    GLint text_snapshot_x = 0;
+    GLint text_snapshot_y = 0;
+    std::uint8_t text_snapshot_before[32 * 32 * 4] = {};
 };
 
 State& state() {
@@ -163,6 +180,62 @@ std::string float_words(HostGl& host, std::uint32_t address, std::uint32_t words
         out += format(i == 0 ? "%g" : " %g", static_cast<double>(value));
     }
     return out;
+}
+
+// Short, best-effort guest C-string read for diagnostic labels only (block names). Unlike
+// gl_manual.cpp's guest_string(), this never fails the call: it just reports "(unreadable)".
+std::string guest_short_string(HostGl& host, std::uint32_t address) {
+    if (address == 0) return "(null)";
+    constexpr std::uint32_t kMax = 63;
+    const std::uint8_t* data = host.runtime().memory().host_ptr(address, kMax, kPageRead);
+    if (data == nullptr) return format("(unreadable 0x%x)", address);
+    std::uint32_t length = 0;
+    while (length < kMax && data[length] != 0) ++length;
+    return std::string(reinterpret_cast<const char*>(data), length);
+}
+
+// First `words` 32-bit values at a guest address, decoded both as float and as uint32 hex.
+std::string dual_words(HostGl& host, std::uint32_t address, std::uint32_t words) {
+    if (address == 0 || words == 0) return "floats=(none) hex=(none)";
+    const std::uint8_t* data = host.runtime().memory().host_ptr(address, 4ull * words, kPageRead);
+    if (data == nullptr) return format("(unreadable 0x%x)", address);
+    std::string floats, hexes;
+    for (std::uint32_t i = 0; i < words; ++i) {
+        float f;
+        std::uint32_t u;
+        std::memcpy(&f, data + 4 * i, 4);
+        std::memcpy(&u, data + 4 * i, 4);
+        floats += format(i == 0 ? "%g" : " %g", static_cast<double>(f));
+        hexes += format(i == 0 ? "%08x" : " %08x", u);
+    }
+    return "floats=[" + floats + "] hex=[" + hexes + "]";
+}
+
+// glBufferData(target,size,data,usage) and glBufferSubData(target,offset,size,data) both funnel
+// here when their target is GL_UNIFORM_BUFFER: that is how Impeller feeds FragInfo's std140
+// uniforms to the text pipeline.
+void record_ubo_buffer(HostGl& host, HostGl::Call& call, State& s, bool sub_data) {
+    const GLenum target = call.arg(0);
+    if (target != kUniformBuffer || s.ubo_buffer_calls >= 8) return;
+    ++s.ubo_buffer_calls;
+    GlBackend& gl = host.backend();
+    GLint bound = -1;
+    gl.glGetIntegerv(kUniformBufferBinding, &bound);
+    std::uint32_t offset_arg = 0, size_arg = 0, data_ptr = 0;
+    if (sub_data) {
+        offset_arg = call.arg(1);
+        size_arg = call.arg(2);
+        data_ptr = call.arg(3);
+    } else {
+        size_arg = call.arg(1);
+        data_ptr = call.arg(2);
+    }
+    const std::uint32_t words = std::min<std::uint32_t>(8, size_arg / 4);
+    const std::string key = "ubo-buffer-" + std::to_string(s.ubo_buffer_calls);
+    detail(key.c_str(), format("fn=%s bound-buffer=%d offset=%u size=%u ",
+                               sub_data ? "glBufferSubData" : "glBufferData", bound, offset_arg,
+                               size_arg) +
+                             dual_words(host, data_ptr, words));
 }
 
 void sample(HostGl& host, std::uint64_t draw, GLenum mode, GLsizei count) {
@@ -313,6 +386,24 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
         }
         for (std::uint64_t at : kSampleDraws) {
             if (draw == at) sample(host, draw, mode, count);
+        }
+        if (s.text_snapshot_pending) {
+            s.text_snapshot_pending = false;
+            std::uint8_t after[32 * 32 * 4] = {};
+            gl.glReadPixels(s.text_snapshot_x, s.text_snapshot_y, 32, 32, kRgba, kUnsignedByte, after);
+            const bool changed = std::memcmp(s.text_snapshot_before, after, sizeof after) != 0;
+            ++s.text_draws_captured;
+            auto pixels4 = [](const std::uint8_t* p) {
+                return format("%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x",
+                               p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10],
+                               p[11], p[12], p[13], p[14], p[15]);
+            };
+            const std::string key = "text-draw-" + std::to_string(s.text_draws_captured);
+            detail(key.c_str(), format("region=%d,%d 32x32 texture=%u ", s.text_snapshot_x,
+                                       s.text_snapshot_y, s.glyph_atlas_texture) +
+                                     "before=" + pixels4(s.text_snapshot_before) +
+                                     " after=" + pixels4(after) +
+                                     format(" changed=%s", changed ? "yes" : "no"));
         }
         if (draw == 1 || draw % 256 == 0) {
             detail("draws", format("total=%llu empty=%llu offscreen=%llu clears=%llu",
@@ -513,7 +604,56 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
             detail(key.c_str(), format("target=0x%x size=%u usage=0x%x floats=", call.arg(0), size, call.arg(3)) +
                                     float_words(host, call.arg(2), size >= 32 ? 8 : size / 4));
         }
+        record_ubo_buffer(host, call, s, false);
         break;
+    case ZB_GL_HC_glBufferSubData:
+        record_ubo_buffer(host, call, s, true);
+        break;
+    case ZB_GL_HC_glBindBufferBase:
+    case ZB_GL_HC_glBindBufferRange: {
+        if (s.ubo_bind_calls < 8) {
+            ++s.ubo_bind_calls;
+            const bool is_range = call.index() == ZB_GL_HC_glBindBufferRange;
+            const GLuint index = call.arg(1);
+            const GLuint buffer = call.arg(2);
+            const std::uint32_t offset_raw = is_range ? call.arg(3) : 0;
+            const std::uint32_t size_raw = is_range ? call.arg(4) : 0;
+            // GLintptr/GLsizeiptr are 32-bit in the guest, 64-bit on the host; this is exactly
+            // the sign-extending conversion the generated dispatcher applies via call.scalar<T>
+            // before calling the driver, so it shows what actually reached glBindBufferRange.
+            const std::int64_t offset_passed =
+                is_range ? static_cast<std::int64_t>(call.scalar<GLintptr>(3)) : 0;
+            const std::int64_t size_passed =
+                is_range ? static_cast<std::int64_t>(call.scalar<GLsizeiptr>(4)) : 0;
+            const std::string key = "ubo-bind-" + std::to_string(s.ubo_bind_calls);
+            detail(key.c_str(),
+                   format("fn=%s index=%u buffer=%u offset-raw32=0x%x offset-passed64=%lld "
+                          "size-raw32=0x%x size-passed64=%lld",
+                          is_range ? "glBindBufferRange" : "glBindBufferBase", index, buffer,
+                          offset_raw, (long long)offset_passed, size_raw, (long long)size_passed));
+        }
+        break;
+    }
+    case ZB_GL_HC_glUniformBlockBinding:
+    case ZB_GL_HC_glGetUniformBlockIndex: {
+        if (s.uniform_block_calls < 8) {
+            ++s.uniform_block_calls;
+            const bool is_binding = call.index() == ZB_GL_HC_glUniformBlockBinding;
+            const GLuint program = call.arg(0);
+            std::string extra;
+            if (is_binding) {
+                extra = format("block-index=%u binding=%u", call.arg(1), call.arg(2));
+            } else {
+                extra = "name=" + guest_short_string(host, call.arg(1));
+            }
+            const std::string key = "uniform-block-" + std::to_string(s.uniform_block_calls);
+            detail(key.c_str(), format("fn=%s program=%u ",
+                                       is_binding ? "glUniformBlockBinding" : "glGetUniformBlockIndex",
+                                       program) +
+                                     extra);
+        }
+        break;
+    }
     case ZB_GL_HC_glCompressedTexImage2D:
     case ZB_GL_HC_glCompressedTexSubImage2D: {
         if (s.compressed_calls < 4) {
@@ -543,6 +683,29 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
     default:
         break;
     }
+}
+
+void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
+    const std::uint32_t index = call.index();
+    if (index != ZB_GL_HC_glDrawArrays && index != ZB_GL_HC_glDrawElements) return;
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (s.text_draws_captured >= 3 || s.glyph_atlas_texture == 0) return;
+    GlBackend& gl = host.backend();
+    GLint active_texture = -1;
+    gl.glGetIntegerv(kTextureBinding2d, &active_texture);
+    if (active_texture != static_cast<GLint>(s.glyph_atlas_texture)) return;
+    GLint scissor[4] = {0, 0, 0, 0};
+    gl.glGetIntegerv(kScissorBox, scissor);
+    GLint x = scissor[0] + scissor[2] / 2 - 16;
+    GLint y = scissor[1] + scissor[3] / 2 - 16;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    s.text_snapshot_x = x;
+    s.text_snapshot_y = y;
+    std::memset(s.text_snapshot_before, 0, sizeof s.text_snapshot_before);
+    gl.glReadPixels(x, y, 32, 32, kRgba, kUnsignedByte, s.text_snapshot_before);
+    s.text_snapshot_pending = true;
 }
 
 }  // namespace zb

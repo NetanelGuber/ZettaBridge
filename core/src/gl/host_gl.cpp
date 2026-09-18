@@ -99,6 +99,7 @@ bool HostGl::handle_host_call(std::uint32_t index, GuestThread& thread) {
         if (egl_context_probe_) runtime_report().note_gl_egl_context(egl_context_probe_());
     }
     Call call(*this, thread, index);
+    if (gl_diagnostics_enabled()) gl_diagnose_before(*this, call);
     if (dispatch(call)) {
         // Visibility diagnostics query the driver, so they run only once the Android runtime
         // enables them; mock-backend tests keep exact call logs.
