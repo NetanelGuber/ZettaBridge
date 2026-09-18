@@ -304,12 +304,19 @@ std::optional<std::string> ProxyRuntime::last_load_error() const {
 }
 
 GuestJniEngine::GuestJniEngine(JniBackend& backend, GlBackend* gl_backend, HostGl::EglContextProbe egl_context_probe,
-                               AssetBackend* asset_backend, EglBackend* egl_backend, NativeWindowBackend* window_backend)
+                               AssetBackend* asset_backend, EglBackend* egl_backend, NativeWindowBackend* window_backend,
+                               AndroidLooperBackend* looper_backend)
     : backend_(backend),
       runtime_(new LibraryRuntime()),
       host_jni_(new HostJni(*runtime_, backend)),
       loader_(new JniLoader(*host_jni_, backend)) {
-    host_looper_ = new HostLooper(*runtime_);
+    // A looper callback arrives on a Java thread that currently runs no guest code, so entering
+    // the guest goes through HostJni, which reuses that host thread's cached carrier.
+    HostJni* jni = host_jni_;
+    HostLooper::GuestInvoker looper_invoker = [jni](std::uint32_t function, const GuestCall& args) {
+        return jni->call_on_host_thread(function, args);
+    };
+    host_looper_ = new HostLooper(*runtime_, looper_backend, std::move(looper_invoker));
     host_compat_ = new HostPlatformCompat();
     if (gl_backend != nullptr) {
         host_gl_ = new HostGl(*runtime_, *gl_backend, HostGl::GuestAllocator{}, std::move(egl_context_probe));

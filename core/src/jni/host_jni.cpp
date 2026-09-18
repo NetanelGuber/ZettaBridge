@@ -317,6 +317,10 @@ HostJni::~HostJni() {
     std::abort();
 }
 
+std::optional<GuestResult> HostJni::call_on_host_thread(std::uint32_t function, const GuestCall& args) {
+    return impl_->invoke(t_thread, function, args);
+}
+
 bool HostJni::ready() const {
     return impl_->ready.load();
 }

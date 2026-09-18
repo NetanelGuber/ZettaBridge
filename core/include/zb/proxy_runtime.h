@@ -8,6 +8,7 @@
 #include <string>
 #include <thread>
 
+#include "zb/android_looper_backend.h"
 #include "zb/asset_backend.h"
 #include "zb/egl_backend.h"
 #include "zb/gl_backend.h"
@@ -141,11 +142,14 @@ public:
     // gl_backend is optional: nullptr (the host build) chains only HostJni. Android supplies the
     // real driver backend (and an EGL-current probe) so GLES host calls reach the driver too.
     // asset_backend, egl_backend and window_backend are likewise optional: nullptr leaves the
-    // corresponding host-call range unimplemented.
+    // corresponding host-call range unimplemented. looper_backend, when given, lets guest loopers
+    // prepared on a host thread attach to that thread's real Android looper; nullptr keeps every
+    // thread on HostLooper's own poll set.
     explicit GuestJniEngine(JniBackend& backend, GlBackend* gl_backend = nullptr,
                             HostGl::EglContextProbe egl_context_probe = {},
                             AssetBackend* asset_backend = nullptr, EglBackend* egl_backend = nullptr,
-                            NativeWindowBackend* window_backend = nullptr);
+                            NativeWindowBackend* window_backend = nullptr,
+                            AndroidLooperBackend* looper_backend = nullptr);
     ~GuestJniEngine() override;
     GuestJniEngine(const GuestJniEngine&) = delete;
     GuestJniEngine& operator=(const GuestJniEngine&) = delete;

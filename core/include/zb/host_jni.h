@@ -84,6 +84,13 @@ public:
                                  std::uint32_t guest_function, bool is_static = false,
                                  const char* class_name = nullptr);
 
+    // Runs a guest function on the calling host thread with no JNI transition: the guest thread
+    // this host thread already runs, or else this host thread's cached carrier, borrowed on first
+    // use. Lets a host callback the platform delivers on a Java thread (an Android looper
+    // callback) re-enter the guest with the same guest identity that thread used before.
+    // nullopt when no guest thread could be obtained or the call failed.
+    std::optional<GuestResult> call_on_host_thread(std::uint32_t function, const GuestCall& args);
+
     // Guest loader operations bound to the calling host thread. All calls use its cached carrier,
     // or the currently running guest thread for a nested Java -> load transition. A failed loader
     // lookup reads dlerror on that same guest thread.
