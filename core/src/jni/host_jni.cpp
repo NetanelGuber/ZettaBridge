@@ -436,7 +436,7 @@ std::optional<HostJni::NativeResult> HostJni::call_native(JniBackend::Env env, c
     // method returns. A guest that writes to a mirror outside a Java -> guest native call (from a
     // guest thread of its own, say) is not seen by Java until the next native call returns, and a
     // later GetDirectBufferAddress for the same buffer overwrites those writes with Java's bytes.
-    jni.flush_buffer_mirrors();
+    jni.flush_buffer_mirrors(env);
 
     std::optional<NativeResult> result;
     JniBackend::Ref kept = 0;

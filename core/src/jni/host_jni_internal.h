@@ -91,6 +91,10 @@ struct HostJni::Impl {
     struct BufferMirror {
         std::uint32_t guest = 0;   // guest address of the copy
         std::uint64_t size = 0;    // bytes of the copy
+        // A global reference keeps the Java buffer, and with it the host memory we write back
+        // into, alive. Without it the collector frees that memory and the write-back lands in
+        // whatever ART put there next (a crash inside the collector's own root scan).
+        JniBackend::Ref global = 0;
     };
     // Total mirrored bytes are capped so a runaway guest cannot exhaust guest memory.
     static constexpr std::uint64_t kMirrorCapBytes = 64u * 1024u * 1024u;
@@ -130,9 +134,10 @@ struct HostJni::Impl {
 
     // Guest address of the mirror of a Java-owned direct buffer, refreshed from host memory
     // first; 0 when it cannot be mirrored, with failure set to the reason.
-    std::uint32_t mirror_direct_buffer(const void* host, std::int64_t capacity, const char*& failure);
+    std::uint32_t mirror_direct_buffer(JniBackend::Env env, JniBackend::Ref buffer, const void* host,
+                                       std::int64_t capacity, const char*& failure);
     // Copies every mirror back into its Java buffer. The one guest -> host sync point.
-    void flush_buffer_mirrors();
+    void flush_buffer_mirrors(JniBackend::Env env);
 
     // Host-call groups; each returns false for indices it does not serve.
     bool serve_objects(JniCall& call);

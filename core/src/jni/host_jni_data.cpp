@@ -37,7 +37,8 @@ std::size_t element_size(char type) {
 
 }  // namespace
 
-std::uint32_t HostJni::Impl::mirror_direct_buffer(const void* host, std::int64_t capacity,
+std::uint32_t HostJni::Impl::mirror_direct_buffer(JniBackend::Env env, JniBackend::Ref buffer,
+                                                  const void* host, std::int64_t capacity,
                                                   const char*& failure) {
     if (host == nullptr || capacity <= 0) {
         failure = "empty";
@@ -79,7 +80,7 @@ std::uint32_t HostJni::Impl::mirror_direct_buffer(const void* host, std::int64_t
     if (found == mirrors.end()) {
         // A concurrent call may have mirrored the same buffer first; then its allocation wins and
         // ours is simply left unused (the guest heap keeps it, which is bounded by the cap).
-        found = mirrors.emplace(host, BufferMirror{guest, size}).first;
+        found = mirrors.emplace(host, BufferMirror{guest, size, backend.new_global_ref(env, buffer)}).first;
         mirrored_bytes += size;
     }
     // Java may have written into the buffer since the last call, so refresh the copy. A guest
@@ -89,11 +90,26 @@ std::uint32_t HostJni::Impl::mirror_direct_buffer(const void* host, std::int64_t
     return found->second.guest;
 }
 
-void HostJni::Impl::flush_buffer_mirrors() {
+void HostJni::Impl::flush_buffer_mirrors(JniBackend::Env env) {
     std::lock_guard<std::mutex> lock(mirror_mutex);
     const std::uint8_t* base = runtime.memory().base();
-    for (const auto& entry : mirrors) {
-        std::memcpy(const_cast<void*>(entry.first), base + entry.second.guest, entry.second.size);
+    for (auto it = mirrors.begin(); it != mirrors.end();) {
+        const BufferMirror& mirror = it->second;
+        // Ask Java again rather than trusting the address we stored: a buffer whose memory moved,
+        // shrank or went away must never be written through a stale pointer.
+        const void* host = mirror.global != 0 ? backend.get_direct_buffer_address(env, mirror.global) : nullptr;
+        const std::int64_t capacity =
+            host != nullptr ? backend.get_direct_buffer_capacity(env, mirror.global) : 0;
+        if (host != it->first || capacity < 0 ||
+            static_cast<std::uint64_t>(capacity) < mirror.size) {
+            log("direct buffer mirror dropped: the Java buffer changed or went away");
+            if (mirror.global != 0) backend.delete_global_ref(env, mirror.global);
+            mirrored_bytes -= mirror.size;
+            it = mirrors.erase(it);
+            continue;
+        }
+        std::memcpy(const_cast<void*>(host), base + mirror.guest, mirror.size);
+        ++it;
     }
 }
 
@@ -218,7 +234,8 @@ bool HostJni::Impl::serve_data(JniCall& call) {
             // still shows how far this call got.
             runtime_report().note_jni_detail("direct-buffer-last-request",
                                              "host=" + std::to_string(reinterpret_cast<std::uintptr_t>(host)), true);
-            answer = mirror_direct_buffer(host, backend.get_direct_buffer_capacity(env, buffer), failure);
+            answer = mirror_direct_buffer(env, buffer, host,
+                                          backend.get_direct_buffer_capacity(env, buffer), failure);
             mirrored = answer != 0;
         }
         call.set(answer);
