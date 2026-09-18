@@ -3,6 +3,7 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 
+#include <string>
 #include <type_traits>
 
 #include "zb/runtime_report.h"
@@ -47,9 +48,11 @@ void* GlDriverBackend::extension_entry(unsigned slot, const char* name) {
     if (cached == nullptr) {
         cached = reinterpret_cast<void*>(::eglGetProcAddress(name));
         if (cached == nullptr) {
-            // Named once, so a guest that called a missing entry point leaves a trace even
-            // though there is no logcat on the device.
-            runtime_report().note_gl_detail("extension-missing", name, false);
+            // One line per missing name, written once (overwrite=false), so a guest that
+            // called an entry point this driver does not have leaves a trace even though
+            // there is no logcat on the device.
+            runtime_report().note_gl_detail(std::string("missing-") + name, "no driver entry",
+                                            false);
             cached = kExtensionMissing;
         }
         extension_entries_[slot].store(cached, std::memory_order_release);
