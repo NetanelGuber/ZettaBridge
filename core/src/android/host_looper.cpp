@@ -18,6 +18,12 @@
 #include "zb/guest_thread.h"
 #include "zb/library_runtime.h"
 #include "zb/platform_compat_hostcalls.h"
+#include "zb/runtime_report.h"
+
+#include <atomic>
+#include <algorithm>
+#include <cstdio>
+#include <string>
 
 namespace zb {
 
@@ -49,6 +55,16 @@ short poll_events(int events) {
     if ((events & kEventInput) != 0) result |= POLLIN;
     if ((events & kEventOutput) != 0) result |= POLLOUT;
     return result;
+}
+
+const char* poll_result_name(int result) {
+    switch (result) {
+    case kPollWake: return "wake";
+    case kPollCallback: return "callback";
+    case kPollTimeout: return "timeout";
+    case kPollError: return "error";
+    default: return result >= 0 ? "ident" : "unknown";
+    }
 }
 
 void signal_eventfd(int fd) {
@@ -96,6 +112,85 @@ struct HostLooper::Impl {
         }
     }
 
+    // Diagnostics only (Flutter callback-looper hunt): counters and per-thread "last" state
+    // pushed into the runtime report. None of this changes looper semantics.
+    std::atomic<std::uint64_t> report_loopers{0};
+    std::atomic<std::uint64_t> report_fds_added{0};
+    std::atomic<std::uint64_t> report_fds_removed{0};
+    std::atomic<std::uint64_t> report_polls{0};
+    std::atomic<std::uint64_t> report_polls_wake{0};
+    std::atomic<std::uint64_t> report_polls_timeout{0};
+    std::atomic<std::uint64_t> report_polls_callback{0};
+    std::atomic<std::uint64_t> report_polls_error{0};
+    std::atomic<std::uint64_t> report_polls_ident{0};
+    std::atomic<std::uint64_t> report_callbacks{0};
+    std::atomic<std::uint64_t> report_callbacks_unregistered{0};
+    std::atomic<std::uint64_t> report_wakes{0};
+
+    static constexpr std::size_t kMaxReportSlots = 4;
+    std::mutex report_mutex;
+    std::vector<std::int32_t> report_slot_tids;
+
+    void report_loopers_line() {
+        runtime_report().note_looper_detail(
+            "loopers", std::to_string(report_loopers.load(std::memory_order_relaxed)), true);
+    }
+
+    void report_fds_line() {
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "added=%llu removed=%llu",
+                      static_cast<unsigned long long>(report_fds_added.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(report_fds_removed.load(std::memory_order_relaxed)));
+        runtime_report().note_looper_detail("fds", buf, true);
+    }
+
+    void report_polls_line() {
+        char buf[192];
+        std::snprintf(buf, sizeof buf,
+                      "total=%llu wake=%llu timeout=%llu callback=%llu error=%llu ident=%llu",
+                      static_cast<unsigned long long>(report_polls.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(report_polls_wake.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(report_polls_timeout.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(report_polls_callback.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(report_polls_error.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(report_polls_ident.load(std::memory_order_relaxed)));
+        runtime_report().note_looper_detail("polls", buf, true);
+    }
+
+    void report_callbacks_line() {
+        char buf[128];
+        std::snprintf(buf, sizeof buf, "dispatched=%llu unregistered=%llu",
+                      static_cast<unsigned long long>(report_callbacks.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(report_callbacks_unregistered.load(std::memory_order_relaxed)));
+        runtime_report().note_looper_detail("callbacks", buf, true);
+    }
+
+    void report_wakes_line() {
+        runtime_report().note_looper_detail(
+            "wakes", std::to_string(report_wakes.load(std::memory_order_relaxed)), true);
+    }
+
+    void report_last(const GuestThread& thread, std::size_t fd_count, int result) {
+        std::size_t index;
+        {
+            std::lock_guard<std::mutex> lock(report_mutex);
+            const auto it = std::find(report_slot_tids.begin(), report_slot_tids.end(), thread.tid);
+            if (it != report_slot_tids.end()) {
+                index = static_cast<std::size_t>(it - report_slot_tids.begin());
+            } else if (report_slot_tids.size() < kMaxReportSlots) {
+                index = report_slot_tids.size();
+                report_slot_tids.push_back(thread.tid);
+            } else {
+                return;
+            }
+        }
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "tid=%d fds=%zu result=%s", static_cast<int>(thread.tid),
+                      fd_count, poll_result_name(result));
+        runtime_report().note_looper_detail(
+            "last-" + std::to_string(index), buf, true);
+    }
+
     std::uint32_t argument(GuestThread& thread, unsigned position, bool& valid) const {
         if (position < 4) return thread.regs()[position];
         const std::uint64_t address = static_cast<std::uint64_t>(thread.regs()[13]) +
@@ -139,6 +234,8 @@ struct HostLooper::Impl {
         next_handle += 4;
         thread_loopers.emplace(&thread, handle);
         loopers.emplace(handle, std::move(looper));
+        report_loopers.fetch_add(1, std::memory_order_relaxed);
+        report_loopers_line();
         return handle;
     }
 
@@ -183,6 +280,8 @@ struct HostLooper::Impl {
             wake_fd = looper.wake_fd;
         }
         signal_eventfd(wake_fd);
+        report_fds_added.fetch_add(1, std::memory_order_relaxed);
+        report_fds_line();
         return 1;
     }
 
@@ -197,6 +296,8 @@ struct HostLooper::Impl {
             wake_fd = looper.wake_fd;
         }
         signal_eventfd(wake_fd);
+        report_fds_removed.fetch_add(1, std::memory_order_relaxed);
+        report_fds_line();
         return 1;
     }
 
@@ -208,6 +309,8 @@ struct HostLooper::Impl {
             if (it != loopers.end()) wake_fd = it->second->wake_fd;
         }
         if (wake_fd >= 0) signal_eventfd(wake_fd);
+        report_wakes.fetch_add(1, std::memory_order_relaxed);
+        report_wakes_line();
     }
 
     int poll_once(GuestThread& thread, int timeout, std::uint32_t out_fd,
@@ -230,6 +333,22 @@ struct HostLooper::Impl {
             }
         }
 
+        // Diagnostics only: every exit path below runs through `finish`, which counts the
+        // poll and records this thread's "last" state in the runtime report.
+        auto finish = [&](int result) {
+            report_polls.fetch_add(1, std::memory_order_relaxed);
+            switch (result) {
+            case kPollWake: report_polls_wake.fetch_add(1, std::memory_order_relaxed); break;
+            case kPollCallback: report_polls_callback.fetch_add(1, std::memory_order_relaxed); break;
+            case kPollTimeout: report_polls_timeout.fetch_add(1, std::memory_order_relaxed); break;
+            case kPollError: report_polls_error.fetch_add(1, std::memory_order_relaxed); break;
+            default: if (result >= 0) report_polls_ident.fetch_add(1, std::memory_order_relaxed); break;
+            }
+            report_polls_line();
+            report_last(thread, registrations.size(), result);
+            return result;
+        };
+
         std::vector<pollfd> poll_fds;
         poll_fds.reserve(registrations.size() + 1);
         poll_fds.push_back(pollfd{wake_fd, POLLIN, 0});
@@ -241,8 +360,8 @@ struct HostLooper::Impl {
         do {
             ready = poll(poll_fds.data(), static_cast<nfds_t>(poll_fds.size()), timeout);
         } while (ready < 0 && errno == EINTR);
-        if (ready < 0) return kPollError;
-        if (ready == 0) return kPollTimeout;
+        if (ready < 0) return finish(kPollError);
+        if (ready == 0) return finish(kPollTimeout);
 
         const bool woke = poll_fds[0].revents != 0;
         if (woke) drain_eventfd(wake_fd);
@@ -258,9 +377,11 @@ struct HostLooper::Impl {
                 call.regs = {static_cast<std::uint32_t>(registration.fd),
                              static_cast<std::uint32_t>(events), registration.data, 0};
                 const auto result = runtime.call_on_current(registration.callback, call);
-                if (!result) return kPollError;
+                if (!result) return finish(kPollError);
                 callback_invoked = true;
+                report_callbacks.fetch_add(1, std::memory_order_relaxed);
                 if (result->r0 == 0) {
+                    report_callbacks_unregistered.fetch_add(1, std::memory_order_relaxed);
                     std::lock_guard<std::mutex> lock(mutex);
                     const auto looper_it = loopers.find(looper_handle);
                     if (looper_it != loopers.end()) {
@@ -271,6 +392,7 @@ struct HostLooper::Impl {
                         }
                     }
                 }
+                report_callbacks_line();
                 continue;
             }
             if (non_callback == nullptr) {
@@ -278,16 +400,16 @@ struct HostLooper::Impl {
                 non_callback_events = events;
             }
         }
-        if (callback_invoked) return kPollCallback;
+        if (callback_invoked) return finish(kPollCallback);
         if (non_callback != nullptr) {
             if (!write_guest(out_fd, static_cast<std::uint32_t>(non_callback->fd)) ||
                 !write_guest(out_events, static_cast<std::uint32_t>(non_callback_events)) ||
                 !write_guest(out_data, non_callback->data)) {
-                return kPollError;
+                return finish(kPollError);
             }
-            return non_callback->ident;
+            return finish(non_callback->ident);
         }
-        return woke ? kPollWake : kPollError;
+        return finish(woke ? kPollWake : kPollError);
     }
 
     LibraryRuntime& runtime;

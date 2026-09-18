@@ -66,6 +66,11 @@ public:
     void note_jni_detail(const std::string& key, const std::string& value, bool overwrite);
     void note_crash_detail(const std::string& key, const std::string& value);
 
+    // HostLooper diagnostics (Flutter callback-looper hunt): one "looper-<key>: <value>" line
+    // per key, in first-note order, later notes of the same key overwriting the value when
+    // `overwrite` is set. At most kMaxLooperDetails keys; later new keys are dropped.
+    void note_looper_detail(const std::string& key, const std::string& value, bool overwrite);
+
     // Hang watchdog (no crash, no progress): one "watch-<key>: <value>" line per key, in
     // first-note order, later notes of the same key overwriting the value. At most
     // kMaxWatchDetails keys; later new keys are dropped.
@@ -155,6 +160,8 @@ private:
     std::vector<std::pair<std::string, std::string>> jni_details_;
     static constexpr std::size_t kMaxWatchDetails = 8;
     std::vector<std::pair<std::string, std::string>> watch_details_;
+    static constexpr std::size_t kMaxLooperDetails = 16;
+    std::vector<std::pair<std::string, std::string>> looper_details_;
 
     std::vector<std::pair<std::string, std::string>> egl_objects_;
     bool egl_current_known_ = false;

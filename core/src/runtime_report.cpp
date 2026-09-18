@@ -260,6 +260,27 @@ void RuntimeReport::note_jni_detail(const std::string& key, const std::string& v
     if (observer) (*observer)(structural);
 }
 
+void RuntimeReport::note_looper_detail(const std::string& key, const std::string& value, bool overwrite) {
+    bool structural = false;
+    std::shared_ptr<Observer> observer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const std::string line = one_line(value, 600);
+        auto found = std::find_if(looper_details_.begin(), looper_details_.end(),
+                                  [&](const auto& entry) { return entry.first == key; });
+        if (found != looper_details_.end()) {
+            if (!overwrite || found->second == line) return;
+            found->second = line;
+        } else {
+            if (looper_details_.size() >= kMaxLooperDetails) return;
+            looper_details_.emplace_back(one_line(key, 64), line);
+            structural = true;
+        }
+        observer = take_observer();
+    }
+    if (observer) (*observer)(structural);
+}
+
 void RuntimeReport::note_watch_detail(const std::string& key, const std::string& value) {
     bool structural = false;
     std::shared_ptr<Observer> observer;
@@ -485,6 +506,7 @@ std::string RuntimeReport::text() const {
     for (const auto& [key, value] : jni_details_) out += "jni-" + key + ": " + value + '\n';
     for (const auto& [key, value] : crash_details_) out += "crash-" + key + ": " + value + '\n';
     for (const auto& [key, value] : watch_details_) out += "watch-" + key + ": " + value + '\n';
+    for (const auto& [key, value] : looper_details_) out += "looper-" + key + ": " + value + '\n';
     return out;
 }
 
@@ -525,6 +547,7 @@ void RuntimeReport::clear() {
     crash_details_.clear();
     jni_details_.clear();
     watch_details_.clear();
+    looper_details_.clear();
 }
 
 RuntimeReport& runtime_report() {

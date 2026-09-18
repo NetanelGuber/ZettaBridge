@@ -19,6 +19,7 @@
 #include "zb/library_protocol.h"
 #include "zb/platform_compat_hostcalls.h"
 #include "zb/proxy_runtime.h"
+#include "zb/runtime_report.h"
 
 namespace {
 
@@ -158,10 +159,25 @@ void run_guest(int argc, char** argv) {
     CHECK(library != 0);
     const std::uint32_t probe = runtime.find_symbol(library, "zb_looper_probe", error);
     CHECK(probe != 0);
+
+    // The probe calls ALooper_prepare, addFd/removeFd and pollOnce (twice with a registered
+    // callback: one that keeps itself registered, one that unregisters). The runtime report
+    // must observe all of that as "looper-*" diagnostics.
+    const std::string before = zb::runtime_report().text();
+    CHECK(before.find("looper-loopers:") == std::string::npos);
+
     const auto result = runtime.call_on_service(probe, zb::GuestCall{});
     CHECK(result.has_value());
     if (result->r0 != 0) std::fprintf(stderr, "looper probe failed at guest line %u\n", result->r0);
     CHECK(result->r0 == 0);
+
+    const std::string after = zb::runtime_report().text();
+    CHECK(after.find("looper-loopers: 1") != std::string::npos);
+    CHECK(after.find("looper-fds: added=2 removed=1") != std::string::npos);
+    CHECK(after.find("looper-callbacks: dispatched=2 unregistered=1") != std::string::npos);
+    CHECK(after.find("looper-polls: total=2") != std::string::npos);
+    CHECK(after.find("looper-last-0: ") != std::string::npos);
+    CHECK(after.find("result=callback") != std::string::npos);
 
     std::puts("host_looper_test guest PASS");
     std::fflush(stdout);
