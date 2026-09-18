@@ -1,3 +1,5 @@
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -324,10 +326,14 @@ bool zbegl_manual_eglCreateContext(HostEgl& host, HostEgl::Call& call) {
         for (std::size_t i = 0; i + 1 < attribs.size(); i += 2) {
             if (attribs[i] == kEglContextClientVersionAttrib) client_version = attribs[i + 1];
         }
-        char detail[64];
-        std::snprintf(detail, sizeof detail, "config=%d client-version=%d", config_id,
-                      client_version);
-        runtime_report().note_egl_object("context", detail);
+        // Flutter creates a resource context that must share objects with the render context;
+        // textures uploaded on one are invisible to the other unless share is carried across.
+        char detail[128];
+        std::snprintf(detail, sizeof detail, "config=%d client-version=%d share-handle=0x%x share=%p tid=%ld",
+                      config_id, client_version, call.arg(2), static_cast<const void*>(share),
+                      static_cast<long>(::syscall(SYS_gettid)));
+        static std::atomic<unsigned> contexts{0};
+        runtime_report().note_egl_object("context-" + std::to_string(contexts.fetch_add(1) + 1), detail);
     }
     call.set_handle(context, EglObject::Context);
     return true;

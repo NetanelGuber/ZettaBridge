@@ -5,6 +5,8 @@
 
 #include "gl/gl_diagnostics.h"
 
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <algorithm>
 #include <atomic>
 #include <cstdarg>
@@ -376,7 +378,10 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
             for (std::uint64_t i = 0; data != nullptr && i < std::min<std::uint64_t>(bytes, 12); ++i) {
                 head += format("%02x", data[i]);
             }
-            const std::string key = "texsub-" + std::to_string(s.texsub_details);
+            // The thread matters: Flutter uploads on its resource context and draws on the render
+            // context, which only works when the two contexts share objects.
+            const std::string key = "texsub-" + std::to_string(s.texsub_details) + "-tid" +
+                                    std::to_string(::syscall(SYS_gettid));
             detail(key.c_str(),
                    format("target=0x%x level=%d x=%d y=%d %dx%d format=0x%x type=0x%x pbo=%d texture=%d "
                           "readable=%d nonzero=%llu/%llu head=",
