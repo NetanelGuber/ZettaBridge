@@ -3,6 +3,8 @@
 // guest semantics change here; a stuck thread is only ever described, never touched.
 #include "zb/hang_watchdog.h"
 
+#include <dirent.h>
+
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -140,6 +142,38 @@ std::string thread_kernel_state(std::int32_t tid) {
     return text;
 }
 
+// Every thread of this process with its name, scheduler state and wait channel, whether or not it
+// ever ran guest code. Engine threads carry telling names (Flutter uses "1.ui", "1.raster",
+// "1.io"), so this says which part of the guest is missing or waiting, and shows ART's own threads
+// next to ours.
+std::string all_threads_census() {
+    DIR* dir = ::opendir("/proc/self/task");
+    if (dir == nullptr) return "(unavailable)";
+    std::string out;
+    unsigned shown = 0;
+    while (const dirent* entry = ::readdir(dir)) {
+        if (entry->d_name[0] == '.') continue;
+        if (shown >= 32) break;
+        const std::int32_t tid = std::atoi(entry->d_name);
+        if (tid == 0) continue;
+        char path[64];
+        std::snprintf(path, sizeof path, "/proc/self/task/%d/comm", tid);
+        char name[64] = {};
+        if (std::FILE* comm = std::fopen(path, "re")) {
+            if (std::fgets(name, sizeof name, comm) != nullptr) {
+                char* newline = std::strchr(name, '\n');
+                if (newline != nullptr) *newline = '\0';
+            }
+            std::fclose(comm);
+        }
+        out += (out.empty() ? "" : " | ") + std::to_string(tid) + ":" + name + " " +
+               thread_kernel_state(tid);
+        ++shown;
+    }
+    ::closedir(dir);
+    return out;
+}
+
 std::string describe_thread_activity(const ThreadActivitySample& sample) {
     char text[64];
     switch (sample.kind) {
@@ -214,6 +248,12 @@ bool HangWatchdog::sample(Clock::time_point now) {
         ++shown;
     }
     value += " | recent-jni: " + jni_recent_calls();
+    // Once, with the first report: the whole thread census is long and does not change much.
+    static bool census_written = false;
+    if (!census_written) {
+        census_written = true;
+        runtime_report().note_watch_detail("threads", all_threads_census());
+    }
 
     ++notes_written_;
     runtime_report().note_watch_detail(std::to_string(notes_written_), value);
