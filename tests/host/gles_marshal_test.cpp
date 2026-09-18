@@ -588,6 +588,28 @@ int main() {
                               "existing-map=1 existing-context=0xc0ffee existing-buffer=77") !=
           std::string::npos);
 
+    // Impeller uploads a combined array/uniform buffer through GL_ARRAY_BUFFER, then binds
+    // slices of that same object as UBOs. Preserve enough of the upload to correlate a later
+    // glBindBufferRange with the exact bytes that fed its std140 block.
+    zb::runtime_report().clear();
+    backend.set_integer(0x8894, 91);  // GL_ARRAY_BUFFER_BINDING
+    pointer_words = {0x8892, 64, 0, 0x88E8};  // orphan a 64-byte GL_ARRAY_BUFFER
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glBufferData, thread));
+    for (std::uint32_t i = 0; i < 64; ++i) runtime.memory().base()[kData + 0x600 + i] = i;
+    pointer_words = {0x8892, 0, 64, kData + 0x600};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glBufferSubData, thread));
+    pointer_words = {0x8A11, 0, 91, 16, 16};  // GL_UNIFORM_BUFFER, binding 0
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glBindBufferRange, thread));
+
+    const std::string upload_report = zb::runtime_report().text();
+    CHECK(upload_report.find("gl-buffer-upload-1: target=0x8892 buffer=91 offset=0 size=64 "
+                             "fnv=8368214f77995ee5") != std::string::npos);
+    CHECK(upload_report.find("gl-ubo-bind-1-data: buffer=91 offset=16 size=16 captured=yes "
+                             "fnv=f091c81ae28d2c75") != std::string::npos);
+
     // The asset range is deliberately not swallowed by HostGl.
     CHECK(!host.handle_host_call(142, thread));
     CHECK(!host.handle_host_call(UINT32_MAX, thread));

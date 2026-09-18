@@ -1460,3 +1460,38 @@ render the affected screen, then send the complete Last run report. Compare ever
 with its `gl-map-flush-N`/`gl-map-unmap-N`: unequal post-copy checksums prove the mirror path;
 any `gl-map-collision-N` proves the target-only key is wrong. If both are clean, stop changing
 mapped buffers and investigate the four broken image assets separately from the text pipeline.
+
+### Device result: avtobuy does not use the mapped-buffer mirror
+
+The full report from the diagnostic APK had 122,018 GL calls, 4,608 draws and 63 swaps, but no
+`gl-map-*` line at all. There was no guest exit, unimplemented call, GL error or rejection. The
+map/flush/unmap hypothesis is therefore rejected for this run; do not change that bridge path to
+fix the missing text.
+
+The report instead confirms the real Impeller upload shape: it orphans a 1,024,000-byte
+`GL_ARRAY_BUFFER` with null data, then binds slices of the same buffer id 1 through
+`glBindBufferRange(GL_UNIFORM_BUFFER, ...)`. Existing diagnostics ignored
+`glBufferSubData(GL_ARRAY_BUFFER)`, so the uniform bytes were invisible even though the bind
+arguments were correct.
+
+### Done 2026-09-18: correlate combined buffer uploads with UBO ranges
+
+The diagnostic state now keeps a bounded (four buffers, 2 MiB each) byte/knownness shadow for
+`glBufferData` and `glBufferSubData` targeting either `GL_ARRAY_BUFFER` or `GL_UNIFORM_BUFFER`.
+The first 12 sub-data uploads report buffer, offset, size and FNV. Each of the first eight
+`glBindBufferRange` records whether its exact range is fully captured, partially captured or
+absent; a fully known range includes its FNV. This changes no driver call or guest semantics.
+
+TDD evidence: `gles_marshal_test` first failed on the absent `gl-buffer-upload-1`. It now orphans
+buffer 91, uploads independently known bytes 0..63 through `GL_ARRAY_BUFFER`, binds bytes 16..31
+as a UBO, and checks the exact whole-upload and bound-slice FNV values. Fresh gate: host 47/47,
+guest 11/11, Android `zbridge`/`zbproxy`, launcher bundle and Gradle debug APK all pass.
+
+Ready APK: `/sdcard/ZettaBridge-debug.apk`, 9,376,552 bytes, SHA-256
+`4e367d04cc471ccbe56d92183d3bd27b40a94872ee29e261b84f02ddd4912829`.
+
+**NEXT/device gate:** install this APK, force-stop the launcher, reproduce the missing text, and
+send the complete Last run report. The decisive lines are `gl-buffer-upload-*` and
+`gl-ubo-bind-*-data`. `captured=no/partial` identifies a missed upload path; `captured=yes` gives
+the real uniform bytes' checksum and rules out pointer loss in the bridge. Keep the four broken
+raster assets as a separate decoder issue unless the new evidence links them.

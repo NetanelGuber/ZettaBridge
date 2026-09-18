@@ -14,6 +14,8 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "zb/gl_hostcalls.h"
 #include "zb/runtime_report.h"
@@ -95,6 +97,11 @@ struct Attrib {
 constexpr std::uint64_t kSampleDraws[] = {1, 300, 3000, 30000};
 
 struct State {
+    struct BufferSnapshot {
+        std::vector<std::uint8_t> bytes;
+        std::vector<std::uint8_t> known;
+    };
+
     std::mutex mutex;
     std::uint64_t shaders_ok = 0;
     std::uint64_t shaders_failed = 0;
@@ -151,6 +158,11 @@ struct State {
 
     std::uint64_t map_calls = 0;
     std::uint64_t map_collisions = 0;
+
+    // Bounded shadow of buffers fed through glBufferData/SubData. Impeller uploads one combined
+    // vertex/uniform buffer as GL_ARRAY_BUFFER, then binds slices of it as GL_UNIFORM_BUFFER.
+    std::unordered_map<GLuint, BufferSnapshot> buffer_snapshots;
+    std::uint64_t buffer_uploads = 0;
 };
 
 State& state() {
@@ -282,6 +294,89 @@ void record_ubo_buffer(HostGl& host, HostGl::Call& call, State& s, bool sub_data
                                sub_data ? "glBufferSubData" : "glBufferData", bound, offset_arg,
                                size_arg) +
                              dual_words(host, data_ptr, words));
+}
+
+constexpr std::uint64_t kMaxTrackedBufferBytes = 2u << 20;
+constexpr std::size_t kMaxTrackedBuffers = 4;
+
+void record_buffer_upload(HostGl& host, HostGl::Call& call, State& s, bool sub_data) {
+    const GLenum target = call.arg(0);
+    if (target != kArrayBuffer && target != kUniformBuffer) return;
+    const GLuint buffer = current_buffer(host, target);
+    if (buffer == 0) return;
+
+    const GLintptr signed_offset = sub_data ? call.scalar<GLintptr>(1) : 0;
+    const GLsizeiptr signed_size = call.scalar<GLsizeiptr>(sub_data ? 2 : 1);
+    if (signed_offset < 0 || signed_size < 0) return;
+    const std::uint64_t offset = static_cast<std::uint64_t>(signed_offset);
+    const std::uint64_t size = static_cast<std::uint64_t>(signed_size);
+    if (offset > kMaxTrackedBufferBytes || size > kMaxTrackedBufferBytes - offset) return;
+    const std::uint32_t data_address = call.arg(sub_data ? 3 : 2);
+    const std::uint8_t* data = data_address == 0
+                                   ? nullptr
+                                   : host.runtime().memory().host_ptr(data_address, size, kPageRead);
+
+    auto found = s.buffer_snapshots.find(buffer);
+    if (found == s.buffer_snapshots.end()) {
+        if (s.buffer_snapshots.size() >= kMaxTrackedBuffers) return;
+        found = s.buffer_snapshots.emplace(buffer, State::BufferSnapshot{}).first;
+    }
+    State::BufferSnapshot& snapshot = found->second;
+    if (!sub_data) {
+        snapshot.bytes.assign(static_cast<std::size_t>(size), 0);
+        snapshot.known.assign(static_cast<std::size_t>(size), data != nullptr ? 1 : 0);
+        if (data != nullptr) std::memcpy(snapshot.bytes.data(), data, static_cast<std::size_t>(size));
+    } else {
+        const std::uint64_t end = offset + size;
+        if (snapshot.bytes.size() < end) {
+            snapshot.bytes.resize(static_cast<std::size_t>(end));
+            snapshot.known.resize(static_cast<std::size_t>(end));
+        }
+        if (data != nullptr) {
+            std::memcpy(snapshot.bytes.data() + offset, data, static_cast<std::size_t>(size));
+            std::fill(snapshot.known.begin() + static_cast<std::ptrdiff_t>(offset),
+                      snapshot.known.begin() + static_cast<std::ptrdiff_t>(end), 1);
+        }
+    }
+
+    if (sub_data && ++s.buffer_uploads <= 12) {
+        const std::string key = "buffer-upload-" + std::to_string(s.buffer_uploads);
+        detail(key.c_str(),
+               data == nullptr
+                   ? format("target=0x%x buffer=%u offset=%llu size=%llu data=null", target,
+                            buffer, (unsigned long long)offset, (unsigned long long)size)
+                   : format("target=0x%x buffer=%u offset=%llu size=%llu fnv=%016llx", target,
+                            buffer, (unsigned long long)offset, (unsigned long long)size,
+                            (unsigned long long)fnv1a(data, size)));
+    }
+}
+
+void record_bound_ubo_data(HostGl::Call& call, State& s, std::uint64_t bind_number) {
+    const GLuint buffer = call.arg(2);
+    const std::uint64_t offset = call.arg(3);
+    const std::uint64_t size = call.arg(4);
+    const std::string key = "ubo-bind-" + std::to_string(bind_number) + "-data";
+    const auto found = s.buffer_snapshots.find(buffer);
+    if (found == s.buffer_snapshots.end() || offset > found->second.bytes.size() ||
+        size > found->second.bytes.size() - offset) {
+        detail(key.c_str(), format("buffer=%u offset=%llu size=%llu captured=no", buffer,
+                                  (unsigned long long)offset, (unsigned long long)size));
+        return;
+    }
+    const State::BufferSnapshot& snapshot = found->second;
+    const auto known_begin = snapshot.known.begin() + static_cast<std::ptrdiff_t>(offset);
+    const std::size_t known = static_cast<std::size_t>(
+        std::count(known_begin, known_begin + static_cast<std::ptrdiff_t>(size), std::uint8_t{1}));
+    if (known != size) {
+        detail(key.c_str(), format("buffer=%u offset=%llu size=%llu captured=partial known=%llu/%llu",
+                                  buffer, (unsigned long long)offset, (unsigned long long)size,
+                                  (unsigned long long)known, (unsigned long long)size));
+        return;
+    }
+    const std::uint8_t* bytes = snapshot.bytes.data() + offset;
+    detail(key.c_str(), format("buffer=%u offset=%llu size=%llu captured=yes fnv=%016llx", buffer,
+                              (unsigned long long)offset, (unsigned long long)size,
+                              (unsigned long long)fnv1a(bytes, size)));
 }
 
 void sample(HostGl& host, std::uint64_t draw, GLenum mode, GLsizei count) {
@@ -712,9 +807,11 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
             detail(key.c_str(), format("target=0x%x size=%u usage=0x%x floats=", call.arg(0), size, call.arg(3)) +
                                     float_words(host, call.arg(2), size >= 32 ? 8 : size / 4));
         }
+        record_buffer_upload(host, call, s, false);
         record_ubo_buffer(host, call, s, false);
         break;
     case ZB_GL_HC_glBufferSubData:
+        record_buffer_upload(host, call, s, true);
         record_ubo_buffer(host, call, s, true);
         break;
     case ZB_GL_HC_glBindBufferBase:
@@ -739,6 +836,7 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
                           "size-raw32=0x%x size-passed64=%lld",
                           is_range ? "glBindBufferRange" : "glBindBufferBase", index, buffer,
                           offset_raw, (long long)offset_passed, size_raw, (long long)size_passed));
+            if (is_range) record_bound_ubo_data(call, s, s.ubo_bind_calls);
         }
         break;
     }
