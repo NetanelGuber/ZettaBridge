@@ -31,9 +31,10 @@ void dispatch_all_pointerless(zb::HostGl& host, zb::GuestThread& thread,
                               MockGles& backend, zb::LibraryRuntime& runtime) {
     const std::array<std::uint32_t, 12> words{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
     // The sync entry points validate their 32-bit handle before anything reaches the driver, so
-    // the junk arguments below stop at HostGl by design.
-    const std::array<const char*, 4> handle_only{"glClientWaitSync", "glDeleteSync", "glIsSync",
-                                                 "glWaitSync"};
+    // the junk arguments below stop at HostGl by design. glMapBufferOES is here for a different
+    // reason: it asks the backend for GL_BUFFER_SIZE first, and the junk target has no buffer.
+    const std::array<const char*, 5> handle_only{"glClientWaitSync", "glDeleteSync", "glIsSync",
+                                                 "glWaitSync", "glMapBufferOES"};
     std::size_t seen = 0;
     for (const zb::GlHostCallInfo& info : zb::kGlHostCalls) {
         if (info.has_pointer) continue;
@@ -62,8 +63,9 @@ void dispatch_all_pointerless(zb::HostGl& host, zb::GuestThread& thread,
 int main() {
     CHECK(zb::kGlHostCallCount == 142);
     CHECK(zb::kGlHostCall3Count == 104);
-    CHECK(zb::kGlHostCallTotalCount == 246);
-    CHECK(zb::kGlPointerlessHostCallCount == 126);
+    CHECK(zb::kGlHostCallExtCount == 12);
+    CHECK(zb::kGlHostCallTotalCount == 258);
+    CHECK(zb::kGlPointerlessHostCallCount == 134);
     CHECK(zb::ZB_GL_HC_glActiveTexture == 0);
     CHECK(zb::ZB_GL_HC_glViewport == 141);
     // GLES 3.0 is appended after every other stub library, so the GLES 2.0, AAsset*,
@@ -74,6 +76,15 @@ int main() {
     CHECK(zb::gl_host_call(141) != nullptr && zb::gl_host_call(142) == nullptr);
     CHECK(zb::gl_host_call(227) == nullptr);
     CHECK(std::strcmp(zb::gl_host_call_name(228), "glBeginQuery") == 0);
+    // The extension block is appended after GLES 3.0 for the same reason it was appended after
+    // every other stub library: nothing established moves.
+    CHECK(zb::kGlHostCallExtFirst == 332);
+    CHECK(zb::kGlHostCallExtLast == 343);
+    CHECK(zb::ZB_GL_HC_glFramebufferTexture2DMultisampleEXT == 333);
+    CHECK(zb::ZB_GL_HC_glMapBufferOES == 339);
+    CHECK(std::strcmp(zb::gl_host_call_name(332), "glRenderbufferStorageMultisampleEXT") == 0);
+    CHECK(std::strcmp(zb::gl_host_call_name(343), "glTexStorage3DEXT") == 0);
+    CHECK(zb::gl_host_call(344) == nullptr);
 
     zb::LibraryRuntime runtime;
     CHECK(runtime.memory().map_anon(kStack, 0x1000, PROT_READ | PROT_WRITE));
@@ -387,6 +398,143 @@ int main() {
     pointer_words = {0x8892};
     set_words(runtime, thread, pointer_words);
     CHECK(host.handle_host_call(zb::ZB_GL_HC_glUnmapBuffer, thread));
+
+    // GLES extension entry points (eglGetProcAddress names guests call without a null check).
+    // EXT_multisampled_render_to_texture: both take only scalars, the shape that killed the
+    // Flutter guest (glFramebufferTexture2DMultisampleEXT with samples on the stack).
+    backend.clear_calls();
+    pointer_words = {0x8D41, 4, 0x8058, 640, 480};  // GL_RENDERBUFFER, 4x, GL_RGBA8
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glRenderbufferStorageMultisampleEXT, thread));
+    CHECK(backend.calls().size() == 1);
+    CHECK(backend.calls()[0].name == "glRenderbufferStorageMultisampleEXT");
+    CHECK(backend.calls()[0].arguments.size() == 5);
+    CHECK(backend.calls()[0].arguments[1] == 4 && backend.calls()[0].arguments[4] == 480);
+
+    backend.clear_calls();
+    pointer_words = {0x8D40, 0x8CE0, 0x0DE1, 7, 0, 4};  // FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glFramebufferTexture2DMultisampleEXT, thread));
+    CHECK(backend.calls().size() == 1);
+    CHECK(backend.calls()[0].name == "glFramebufferTexture2DMultisampleEXT");
+    CHECK(backend.calls()[0].arguments.size() == 6);
+    CHECK(backend.calls()[0].arguments[3] == 7);
+    // level and samples come off the guest stack, not r0-r3.
+    CHECK(backend.calls()[0].arguments[4] == 0 && backend.calls()[0].arguments[5] == 4);
+
+    // EXT_discard_framebuffer: a counted attachment array is translated like any other.
+    const std::uint32_t attachments[] = {0x8CE0, 0x8D00};
+    std::memcpy(runtime.memory().base() + kData + 0x300, attachments, sizeof(attachments));
+    backend.clear_calls();
+    pointer_words = {0x8D40, 2, kData + 0x300};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glDiscardFramebufferEXT, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glDiscardFramebufferEXT");
+    CHECK(backend.calls()[0].arguments[2] ==
+          reinterpret_cast<std::uintptr_t>(runtime.memory().base() + kData + 0x300));
+
+    // OES_vertex_array_object: the whole set, including the GLboolean return.
+    backend.clear_calls();
+    pointer_words = {11};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glBindVertexArrayOES, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glBindVertexArrayOES");
+    CHECK(backend.calls()[0].arguments.size() == 1 && backend.calls()[0].arguments[0] == 11);
+
+    backend.clear_calls();
+    pointer_words = {2, kData + 0x310};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGenVertexArraysOES, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glGenVertexArraysOES");
+    CHECK(backend.calls()[0].arguments[1] ==
+          reinterpret_cast<std::uintptr_t>(runtime.memory().base() + kData + 0x310));
+
+    backend.clear_calls();
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glDeleteVertexArraysOES, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glDeleteVertexArraysOES");
+
+    backend.clear_calls();
+    backend.set_result("glIsVertexArrayOES", 0x101);
+    pointer_words = {11};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glIsVertexArrayOES, thread));
+    CHECK(thread.regs()[0] == 1 && thread.regs()[1] == 0);
+
+    // A guest pointer that is not accessible is refused before the driver is called.
+    backend.clear_calls();
+    backend.set_error(0);
+    pointer_words = {4, kData + 0xFFC};  // 4 GLuints do not fit before the page end
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGenVertexArraysOES, thread));
+    CHECK(backend.calls().empty() && backend.error() == zb::kGlInvalidValue);
+
+    // EXT_texture_storage.
+    backend.clear_calls();
+    pointer_words = {0x0DE1, 3, 0x8058, 64, 32};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glTexStorage2DEXT, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glTexStorage2DEXT");
+
+    backend.clear_calls();
+    pointer_words = {0x806F, 3, 0x8058, 64, 32, 8};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glTexStorage3DEXT, thread));
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glTexStorage3DEXT");
+    CHECK(backend.calls()[0].arguments.size() == 6 && backend.calls()[0].arguments[5] == 8);
+
+    // OES_mapbuffer mirrors the whole data store exactly like the GLES 3 glMapBufferRange path:
+    // the driver's pointer never reaches the guest, and the mirror is written back on unmap.
+    std::array<std::uint8_t, 32> oes_range;
+    oes_range.fill(0x3C);
+    backend.clear_calls();
+    backend.set_integer(0x8764, static_cast<zb::GLint>(oes_range.size()));  // GL_BUFFER_SIZE
+    backend.set_result("glMapBufferOES", reinterpret_cast<std::uint64_t>(oes_range.data()));
+    backend.set_result("glUnmapBufferOES", 1);
+    pointer_words = {0x8892, 0x88B9};  // GL_ARRAY_BUFFER, GL_WRITE_ONLY_OES
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glMapBufferOES, thread));
+    const std::uint32_t oes_mapped = thread.regs()[0];
+    CHECK(oes_mapped != 0);
+    CHECK(oes_mapped != reinterpret_cast<std::uintptr_t>(oes_range.data()));
+    // A whole-buffer map keeps the data store's contents, so they are copied into the mirror.
+    CHECK(std::memcmp(runtime.memory().base() + oes_mapped, oes_range.data(),
+                      oes_range.size()) == 0);
+
+    backend.clear_calls();
+    pointer_words = {0x8892, 0x88BD, kData + 0xFF8};  // GL_BUFFER_MAP_POINTER
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetBufferPointervOES, thread));
+    std::memcpy(&reported, runtime.memory().base() + kData + 0xFF8, sizeof(reported));
+    CHECK(reported == oes_mapped);
+    CHECK(backend.calls().empty());  // answered from the mirror, never from the driver
+
+    std::memset(runtime.memory().base() + oes_mapped, 0xC3, oes_range.size());
+    backend.clear_calls();
+    pointer_words = {0x8892};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glUnmapBufferOES, thread));
+    CHECK(thread.regs()[0] == 1);
+    CHECK(backend.calls().size() == 1 && backend.calls()[0].name == "glUnmapBufferOES");
+    CHECK(std::count(oes_range.begin(), oes_range.end(), 0xC3) ==
+          static_cast<long>(oes_range.size()));
+
+    // Unmapped again: the mirror is gone and the target maps cleanly a second time.
+    backend.clear_calls();
+    pointer_words = {0x8892, 0x88BD, kData + 0xFF8};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glGetBufferPointervOES, thread));
+    std::memcpy(&reported, runtime.memory().base() + kData + 0xFF8, sizeof(reported));
+    CHECK(reported == 0);
+
+    // An access enum OES_mapbuffer does not define is refused before the driver is called.
+    backend.clear_calls();
+    backend.set_error(0);
+    pointer_words = {0x8892, 0x1234};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glMapBufferOES, thread));
+    CHECK(backend.calls().empty() && backend.error() == 0x0500);  // GL_INVALID_ENUM
+    CHECK(thread.regs()[0] == 0);
 
     // The asset range is deliberately not swallowed by HostGl.
     CHECK(!host.handle_host_call(142, thread));

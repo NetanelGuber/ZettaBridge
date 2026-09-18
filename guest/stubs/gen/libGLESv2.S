@@ -1978,3 +1978,99 @@ glWaitSync:
     svc #0x5a014b
     bx lr
 .size glWaitSync, . - glWaitSync
+
+.global glRenderbufferStorageMultisampleEXT
+.type glRenderbufferStorageMultisampleEXT, %function
+.p2align 2
+glRenderbufferStorageMultisampleEXT:
+    svc #0x5a014c
+    bx lr
+.size glRenderbufferStorageMultisampleEXT, . - glRenderbufferStorageMultisampleEXT
+
+.global glFramebufferTexture2DMultisampleEXT
+.type glFramebufferTexture2DMultisampleEXT, %function
+.p2align 2
+glFramebufferTexture2DMultisampleEXT:
+    svc #0x5a014d
+    bx lr
+.size glFramebufferTexture2DMultisampleEXT, . - glFramebufferTexture2DMultisampleEXT
+
+.global glDiscardFramebufferEXT
+.type glDiscardFramebufferEXT, %function
+.p2align 2
+glDiscardFramebufferEXT:
+    svc #0x5a014e
+    bx lr
+.size glDiscardFramebufferEXT, . - glDiscardFramebufferEXT
+
+.global glBindVertexArrayOES
+.type glBindVertexArrayOES, %function
+.p2align 2
+glBindVertexArrayOES:
+    svc #0x5a014f
+    bx lr
+.size glBindVertexArrayOES, . - glBindVertexArrayOES
+
+.global glDeleteVertexArraysOES
+.type glDeleteVertexArraysOES, %function
+.p2align 2
+glDeleteVertexArraysOES:
+    svc #0x5a0150
+    bx lr
+.size glDeleteVertexArraysOES, . - glDeleteVertexArraysOES
+
+.global glGenVertexArraysOES
+.type glGenVertexArraysOES, %function
+.p2align 2
+glGenVertexArraysOES:
+    svc #0x5a0151
+    bx lr
+.size glGenVertexArraysOES, . - glGenVertexArraysOES
+
+.global glIsVertexArrayOES
+.type glIsVertexArrayOES, %function
+.p2align 2
+glIsVertexArrayOES:
+    svc #0x5a0152
+    bx lr
+.size glIsVertexArrayOES, . - glIsVertexArrayOES
+
+.global glMapBufferOES
+.type glMapBufferOES, %function
+.p2align 2
+glMapBufferOES:
+    svc #0x5a0153
+    bx lr
+.size glMapBufferOES, . - glMapBufferOES
+
+.global glUnmapBufferOES
+.type glUnmapBufferOES, %function
+.p2align 2
+glUnmapBufferOES:
+    svc #0x5a0154
+    bx lr
+.size glUnmapBufferOES, . - glUnmapBufferOES
+
+.global glGetBufferPointervOES
+.type glGetBufferPointervOES, %function
+.p2align 2
+glGetBufferPointervOES:
+    svc #0x5a0155
+    bx lr
+.size glGetBufferPointervOES, . - glGetBufferPointervOES
+
+.global glTexStorage2DEXT
+.type glTexStorage2DEXT, %function
+.p2align 2
+glTexStorage2DEXT:
+    svc #0x5a0156
+    bx lr
+.size glTexStorage2DEXT, . - glTexStorage2DEXT
+
+.global glTexStorage3DEXT
+.type glTexStorage3DEXT, %function
+.p2align 2
+glTexStorage3DEXT:
+    svc #0x5a0157
+    bx lr
+.size glTexStorage3DEXT, . - glTexStorage3DEXT

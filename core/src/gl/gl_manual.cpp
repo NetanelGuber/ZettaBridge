@@ -866,6 +866,65 @@ bool serve_uniform(HostGl& host, HostGl::Call& call,
     return true;
 }
 
+// GL_OES_mapbuffer maps a whole data store rather than a range, so it needs the buffer's size
+// and translates its access enum to the glMapBufferRange bits the mirror logic is written in.
+constexpr GLenum kGlBufferSize = 0x8764;
+constexpr GLenum kGlReadOnlyOes = 0x88B8;
+constexpr GLenum kGlWriteOnlyOes = 0x88B9;
+constexpr GLenum kGlReadWriteOes = 0x88BA;
+
+// glUnmapBuffer (GLES 3.0) and glUnmapBufferOES (GL_OES_mapbuffer) differ only in which driver
+// entry point ends the mapping: both write the guest mirror back first.
+bool unmap_mirrored(HostGl& host, HostGl::Call& call, bool oes) {
+    const GLenum target = call.scalar<GLenum>(0);
+    if (!call.valid()) return true;
+    BufferMapping mapping;
+    bool mirrored = false;
+    {
+        std::lock_guard<std::mutex> lock(mapping_mutex);
+        const auto found = mappings.find(target);
+        if (found != mappings.end()) {
+            mapping = found->second;
+            mappings.erase(found);
+            mirrored = true;
+        }
+    }
+    if (mirrored && (mapping.access & kGlMapWrite) != 0) {
+        const std::uint8_t* mirror =
+            host.runtime().memory().host_ptr(mapping.guest, mapping.length, kPageRead);
+        if (mirror == nullptr) {
+            host.reject(call, kGlInvalidOperation, "mapped buffer mirror is unreadable");
+        } else {
+            std::memcpy(mapping.data, mirror, static_cast<std::size_t>(mapping.length));
+        }
+    }
+    const GLboolean result =
+        oes ? host.backend().glUnmapBufferOES(target) : host.backend().glUnmapBuffer(target);
+    if (mirrored) host.free_guest(mapping.guest);
+    call.set_result(result);
+    return true;
+}
+
+// glGetBufferPointerv / glGetBufferPointervOES. void** in the guest is one 32-bit slot, and what
+// belongs in it is the mirror's guest address, never the driver's mapped pointer.
+bool report_buffer_pointer(HostGl& host, HostGl::Call& call) {
+    const GLenum target = call.scalar<GLenum>(0);
+    const GLenum pname = call.scalar<GLenum>(1);
+    std::uint32_t* params = call.pointer<std::uint32_t>(2, 1, kPageRead | kPageWrite);
+    if (!call.valid()) return true;
+    if (params == nullptr) {
+        host.reject(call, kGlInvalidValue, "buffer pointer output is null");
+        return true;
+    }
+    if (pname != kGlBufferMapPointer) {
+        host.reject(call, kGlInvalidEnum, "buffer pointer pname is not GL_BUFFER_MAP_POINTER");
+        return true;
+    }
+    BufferMapping mapping;
+    *params = find_mapping(target, mapping) ? mapping.guest : 0;
+    return true;
+}
+
 // The guest passes an array of 32-bit pointers to strings; the driver needs host-width pointers.
 bool guest_string_array(HostGl& host, HostGl::Call& call, unsigned position, std::uint64_t items,
                         std::vector<const GLchar*>& strings) {
@@ -964,32 +1023,7 @@ bool zbgl_manual_glMapBufferRange(HostGl& host, HostGl::Call& call) {
 }
 
 bool zbgl_manual_glUnmapBuffer(HostGl& host, HostGl::Call& call) {
-    const GLenum target = call.scalar<GLenum>(0);
-    if (!call.valid()) return true;
-    BufferMapping mapping;
-    bool mirrored = false;
-    {
-        std::lock_guard<std::mutex> lock(mapping_mutex);
-        const auto found = mappings.find(target);
-        if (found != mappings.end()) {
-            mapping = found->second;
-            mappings.erase(found);
-            mirrored = true;
-        }
-    }
-    if (mirrored && (mapping.access & kGlMapWrite) != 0) {
-        const std::uint8_t* mirror =
-            host.runtime().memory().host_ptr(mapping.guest, mapping.length, kPageRead);
-        if (mirror == nullptr) {
-            host.reject(call, kGlInvalidOperation, "mapped buffer mirror is unreadable");
-        } else {
-            std::memcpy(mapping.data, mirror, static_cast<std::size_t>(mapping.length));
-        }
-    }
-    const GLboolean result = host.backend().glUnmapBuffer(target);
-    if (mirrored) host.free_guest(mapping.guest);
-    call.set_result(result);
-    return true;
+    return unmap_mirrored(host, call, false);
 }
 
 bool zbgl_manual_glFlushMappedBufferRange(HostGl& host, HostGl::Call& call) {
@@ -1020,23 +1054,66 @@ bool zbgl_manual_glFlushMappedBufferRange(HostGl& host, HostGl::Call& call) {
 }
 
 bool zbgl_manual_glGetBufferPointerv(HostGl& host, HostGl::Call& call) {
+    return report_buffer_pointer(host, call);
+}
+
+// GL_OES_mapbuffer: the GLES 2.0 spelling of the same three entry points. glMapBufferOES maps
+// the whole data store, so the mirror is the buffer's GL_BUFFER_SIZE bytes.
+bool zbgl_manual_glMapBufferOES(HostGl& host, HostGl::Call& call) {
     const GLenum target = call.scalar<GLenum>(0);
-    const GLenum pname = call.scalar<GLenum>(1);
-    // void** in the guest is one 32-bit slot, and what belongs in it is the mirror's guest
-    // address, never the driver's mapped pointer.
-    std::uint32_t* params = call.pointer<std::uint32_t>(2, 1, kPageRead | kPageWrite);
+    const GLenum access = call.scalar<GLenum>(1);
     if (!call.valid()) return true;
-    if (params == nullptr) {
-        host.reject(call, kGlInvalidValue, "buffer pointer output is null");
+    GLbitfield bits = 0;
+    switch (access) {
+    case kGlReadOnlyOes: bits = kGlMapRead; break;
+    case kGlWriteOnlyOes: bits = kGlMapWrite; break;
+    case kGlReadWriteOes: bits = kGlMapRead | kGlMapWrite; break;
+    default:
+        host.reject(call, kGlInvalidEnum, "glMapBufferOES access is not a GL_*_ONLY enum");
         return true;
     }
-    if (pname != kGlBufferMapPointer) {
-        host.reject(call, kGlInvalidEnum, "glGetBufferPointerv pname is not GL_BUFFER_MAP_POINTER");
+    BufferMapping existing;
+    if (find_mapping(target, existing)) {
+        host.reject(call, kGlInvalidOperation, "buffer target is already mapped");
         return true;
     }
-    BufferMapping mapping;
-    *params = find_mapping(target, mapping) ? mapping.guest : 0;
+    GLint size = 0;
+    host.backend().glGetBufferParameteriv(target, kGlBufferSize, &size);
+    if (size <= 0) {
+        host.reject(call, kGlInvalidOperation, "no buffer with a data store is bound to the target");
+        return true;
+    }
+    void* mapped = host.backend().glMapBufferOES(target, access);
+    if (mapped == nullptr) return true;  // The driver queued its own error; the guest gets NULL.
+    const auto address = host.allocate_guest(static_cast<std::size_t>(size));
+    std::uint8_t* mirror =
+        address ? host.runtime().memory().host_ptr(*address, static_cast<std::uint64_t>(size),
+                                                   kPageRead | kPageWrite)
+                : nullptr;
+    if (mirror == nullptr) {
+        if (address) host.free_guest(*address);
+        host.backend().glUnmapBufferOES(target);
+        host.reject(call, kGlOutOfMemory, "guest mirror for the mapped buffer failed");
+        return true;
+    }
+    // Unlike glMapBufferRange there is no invalidate bit: the data store keeps its contents, so
+    // a partial writer must see them.
+    std::memcpy(mirror, mapped, static_cast<std::size_t>(size));
+    {
+        std::lock_guard<std::mutex> lock(mapping_mutex);
+        mappings[target] = BufferMapping{*address, static_cast<std::uint8_t*>(mapped),
+                                         static_cast<std::uint64_t>(size), bits};
+    }
+    call.set_result(*address);
     return true;
+}
+
+bool zbgl_manual_glUnmapBufferOES(HostGl& host, HostGl::Call& call) {
+    return unmap_mirrored(host, call, true);
+}
+
+bool zbgl_manual_glGetBufferPointervOES(HostGl& host, HostGl::Call& call) {
+    return report_buffer_pointer(host, call);
 }
 
 bool zbgl_manual_glTexImage3D(HostGl& host, HostGl::Call& call) {

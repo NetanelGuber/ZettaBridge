@@ -1735,6 +1735,91 @@ bool HostGl::dispatch(Call& call) {
     case ZB_GL_HC_glWaitSync: {
         return zbgl_manual_glWaitSync(*this, call);
     }
+    case ZB_GL_HC_glRenderbufferStorageMultisampleEXT: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLsizei samples = call.scalar<GLsizei>(1);
+        const GLenum internalformat = call.scalar<GLenum>(2);
+        const GLsizei width = call.scalar<GLsizei>(3);
+        const GLsizei height = call.scalar<GLsizei>(4);
+        if (!call.valid()) return true;
+        backend_.glRenderbufferStorageMultisampleEXT(target, samples, internalformat, width, height);
+        return true;
+    }
+    case ZB_GL_HC_glFramebufferTexture2DMultisampleEXT: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLenum attachment = call.scalar<GLenum>(1);
+        const GLenum textarget = call.scalar<GLenum>(2);
+        const GLuint texture = call.scalar<GLuint>(3);
+        const GLint level = call.scalar<GLint>(4);
+        const GLsizei samples = call.scalar<GLsizei>(5);
+        if (!call.valid()) return true;
+        backend_.glFramebufferTexture2DMultisampleEXT(target, attachment, textarget, texture, level, samples);
+        return true;
+    }
+    case ZB_GL_HC_glDiscardFramebufferEXT: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLsizei numAttachments = call.scalar<GLsizei>(1);
+        const GLenum * attachments = call.pointer<const GLenum>(2, call.length(numAttachments, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glDiscardFramebufferEXT(target, numAttachments, attachments);
+        return true;
+    }
+    case ZB_GL_HC_glBindVertexArrayOES: {
+        const GLuint array = call.scalar<GLuint>(0);
+        if (!call.valid()) return true;
+        backend_.glBindVertexArrayOES(array);
+        return true;
+    }
+    case ZB_GL_HC_glDeleteVertexArraysOES: {
+        const GLsizei n = call.scalar<GLsizei>(0);
+        const GLuint * arrays = call.pointer<const GLuint>(1, call.length(n, 1u), kPageRead);
+        if (!call.valid()) return true;
+        backend_.glDeleteVertexArraysOES(n, arrays);
+        return true;
+    }
+    case ZB_GL_HC_glGenVertexArraysOES: {
+        const GLsizei n = call.scalar<GLsizei>(0);
+        GLuint * arrays = call.pointer<GLuint>(1, call.length(n, 1u), kPageRead | kPageWrite);
+        if (!call.valid()) return true;
+        backend_.glGenVertexArraysOES(n, arrays);
+        return true;
+    }
+    case ZB_GL_HC_glIsVertexArrayOES: {
+        const GLuint array = call.scalar<GLuint>(0);
+        if (!call.valid()) return true;
+        call.set_result(backend_.glIsVertexArrayOES(array));
+        return true;
+    }
+    case ZB_GL_HC_glMapBufferOES: {
+        return zbgl_manual_glMapBufferOES(*this, call);
+    }
+    case ZB_GL_HC_glUnmapBufferOES: {
+        return zbgl_manual_glUnmapBufferOES(*this, call);
+    }
+    case ZB_GL_HC_glGetBufferPointervOES: {
+        return zbgl_manual_glGetBufferPointervOES(*this, call);
+    }
+    case ZB_GL_HC_glTexStorage2DEXT: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLsizei levels = call.scalar<GLsizei>(1);
+        const GLenum internalformat = call.scalar<GLenum>(2);
+        const GLsizei width = call.scalar<GLsizei>(3);
+        const GLsizei height = call.scalar<GLsizei>(4);
+        if (!call.valid()) return true;
+        backend_.glTexStorage2DEXT(target, levels, internalformat, width, height);
+        return true;
+    }
+    case ZB_GL_HC_glTexStorage3DEXT: {
+        const GLenum target = call.scalar<GLenum>(0);
+        const GLsizei levels = call.scalar<GLsizei>(1);
+        const GLenum internalformat = call.scalar<GLenum>(2);
+        const GLsizei width = call.scalar<GLsizei>(3);
+        const GLsizei height = call.scalar<GLsizei>(4);
+        const GLsizei depth = call.scalar<GLsizei>(5);
+        if (!call.valid()) return true;
+        backend_.glTexStorage3DEXT(target, levels, internalformat, width, height, depth);
+        return true;
+    }
     default:
         return false;
     }

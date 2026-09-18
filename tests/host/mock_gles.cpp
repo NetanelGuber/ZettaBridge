@@ -10,6 +10,10 @@ std::uint64_t MockGles::invoke(const char* name,
     if (calls_.back().name == "glGetIntegerv" && args.size() == 2 && args[1] != 0) {
         const auto value = integers_.find(static_cast<zb::GLenum>(args[0]));
         if (value != integers_.end()) *reinterpret_cast<zb::GLint*>(args[1]) = value->second;
+    } else if (calls_.back().name == "glGetBufferParameteriv" && args.size() == 3 && args[2] != 0) {
+        // GL_OES_mapbuffer maps a whole data store, so glMapBufferOES asks for GL_BUFFER_SIZE.
+        const auto value = integers_.find(static_cast<zb::GLenum>(args[1]));
+        if (value != integers_.end()) *reinterpret_cast<zb::GLint*>(args[2]) = value->second;
     } else if (calls_.back().name == "glGetProgramiv" && args.size() == 3 && args[2] != 0 &&
                (args[1] == 0x8B86 || args[1] == 0x8B87)) {
         const auto& uniforms = uniforms_[static_cast<zb::GLuint>(args[0])];

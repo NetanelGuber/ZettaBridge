@@ -786,6 +786,42 @@ public:
     virtual void glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) {
         (void)invoke("glWaitSync", {gl_backend_word(sync), gl_backend_word(flags), gl_backend_word(timeout)});
     }
+    virtual void glRenderbufferStorageMultisampleEXT(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height) {
+        (void)invoke("glRenderbufferStorageMultisampleEXT", {gl_backend_word(target), gl_backend_word(samples), gl_backend_word(internalformat), gl_backend_word(width), gl_backend_word(height)});
+    }
+    virtual void glFramebufferTexture2DMultisampleEXT(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples) {
+        (void)invoke("glFramebufferTexture2DMultisampleEXT", {gl_backend_word(target), gl_backend_word(attachment), gl_backend_word(textarget), gl_backend_word(texture), gl_backend_word(level), gl_backend_word(samples)});
+    }
+    virtual void glDiscardFramebufferEXT(GLenum target, GLsizei numAttachments, const GLenum *attachments) {
+        (void)invoke("glDiscardFramebufferEXT", {gl_backend_word(target), gl_backend_word(numAttachments), gl_backend_word(attachments)});
+    }
+    virtual void glBindVertexArrayOES(GLuint array) {
+        (void)invoke("glBindVertexArrayOES", {gl_backend_word(array)});
+    }
+    virtual void glDeleteVertexArraysOES(GLsizei n, const GLuint *arrays) {
+        (void)invoke("glDeleteVertexArraysOES", {gl_backend_word(n), gl_backend_word(arrays)});
+    }
+    virtual void glGenVertexArraysOES(GLsizei n, GLuint *arrays) {
+        (void)invoke("glGenVertexArraysOES", {gl_backend_word(n), gl_backend_word(arrays)});
+    }
+    virtual GLboolean glIsVertexArrayOES(GLuint array) {
+        return static_cast<GLboolean>(invoke("glIsVertexArrayOES", {gl_backend_word(array)}));
+    }
+    virtual void * glMapBufferOES(GLenum target, GLenum access) {
+        return reinterpret_cast<void *>(static_cast<std::uintptr_t>(invoke("glMapBufferOES", {gl_backend_word(target), gl_backend_word(access)})));
+    }
+    virtual GLboolean glUnmapBufferOES(GLenum target) {
+        return static_cast<GLboolean>(invoke("glUnmapBufferOES", {gl_backend_word(target)}));
+    }
+    virtual void glGetBufferPointervOES(GLenum target, GLenum pname, void **params) {
+        (void)invoke("glGetBufferPointervOES", {gl_backend_word(target), gl_backend_word(pname), gl_backend_word(params)});
+    }
+    virtual void glTexStorage2DEXT(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height) {
+        (void)invoke("glTexStorage2DEXT", {gl_backend_word(target), gl_backend_word(levels), gl_backend_word(internalformat), gl_backend_word(width), gl_backend_word(height)});
+    }
+    virtual void glTexStorage3DEXT(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth) {
+        (void)invoke("glTexStorage3DEXT", {gl_backend_word(target), gl_backend_word(levels), gl_backend_word(internalformat), gl_backend_word(width), gl_backend_word(height), gl_backend_word(depth)});
+    }
 
 protected:
     virtual std::uint64_t invoke(const char* name,

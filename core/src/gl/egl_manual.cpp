@@ -284,10 +284,24 @@ bool zbegl_manual_eglGetProcAddress(HostEgl& host, HostEgl::Call& call) {
     // A miss is what an engine sees as "this GL function does not exist", so name the first few:
     // they are the exact list a later GLES 3 generator pass has to cover.
     if (address == 0) {
-        static std::atomic<unsigned> missed{0};
-        const unsigned seen = missed.fetch_add(1) + 1;
+        // The first 8 misses name what the engine probed early; the last 8 are kept in a ring
+        // because the miss that kills a guest is usually late (Impeller stores a proc table and
+        // calls through it without a null check, long after the first probe).
+        constexpr std::size_t kRecentMisses = 8;
+        static std::mutex miss_mutex;
+        static std::string recent[kRecentMisses];
+        static unsigned missed = 0;
+        std::lock_guard<std::mutex> lock(miss_mutex);
+        const unsigned seen = ++missed;
         if (seen <= 8) runtime_report().note_egl_object("procaddress-miss-" + std::to_string(seen), name);
         runtime_report().note_egl_object("procaddress-misses", std::to_string(seen));
+        recent[(seen - 1) % kRecentMisses] = name;
+        const unsigned kept = seen < kRecentMisses ? seen : static_cast<unsigned>(kRecentMisses);
+        for (unsigned i = 0; i < kept; ++i) {
+            runtime_report().note_egl_object(
+                "procaddress-last-" + std::to_string(i + 1),
+                recent[(seen - kept + i) % kRecentMisses]);
+        }
     }
     return true;
 }

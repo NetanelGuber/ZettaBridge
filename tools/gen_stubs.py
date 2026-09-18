@@ -47,6 +47,33 @@ def gles3_names():
     return sorted(names - set(gles2_names()))
 
 
+# Curated GLES extension entry points, the ones guests resolve through eglGetProcAddress and
+# then call without checking the result for NULL. gen_gles.py takes the signatures from
+# gl.xml and checks every name below against that extension's <require> block, so this list
+# holds names only, never prototypes.
+#
+# APPEND ONLY, at the end: adding an extension is one line here, and appending keeps every
+# established host-call index where it is.
+GLES_EXTENSIONS = [
+    ("GL_EXT_multisampled_render_to_texture",
+     ["glRenderbufferStorageMultisampleEXT", "glFramebufferTexture2DMultisampleEXT"]),
+    ("GL_EXT_discard_framebuffer", ["glDiscardFramebufferEXT"]),
+    ("GL_OES_vertex_array_object",
+     ["glBindVertexArrayOES", "glDeleteVertexArraysOES", "glGenVertexArraysOES",
+      "glIsVertexArrayOES"]),
+    ("GL_OES_mapbuffer", ["glMapBufferOES", "glUnmapBufferOES", "glGetBufferPointervOES"]),
+    ("GL_EXT_texture_storage", ["glTexStorage2DEXT", "glTexStorage3DEXT"]),
+]
+
+
+def gles_ext_names():
+    """Every name in GLES_EXTENSIONS, in declaration order."""
+    names = [name for _, extension_names in GLES_EXTENSIONS for name in extension_names]
+    if len(names) != len(set(names)):
+        sys.exit("GLES_EXTENSIONS lists a name twice")
+    return names
+
+
 def android_asset_names():
     names = set()
     decl = re.compile(r"^[A-Za-z_][\w \*]*\b(AAsset\w*)\(")
@@ -135,6 +162,8 @@ LIBRARIES = [
     # (142-159), ANativeWindow_* (160-167) and EGL (168-211) are hand-referenced elsewhere
     # (core/include/zb/asset_hostcalls.h, window_hostcalls.h, egl_hostcalls.h) and must not move.
     ("libGLESv2", gles3_names),
+    # GLES extension entry points, after GLES 3.0 for the same reason.
+    ("libGLESv2", gles_ext_names),
 ]
 
 

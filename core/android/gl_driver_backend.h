@@ -2,7 +2,11 @@
 
 #include <GLES3/gl3.h>
 
+#include <array>
+#include <atomic>
+
 #include "zb/gl_backend.h"
+#include "zb/gl_hostcalls.h"
 
 namespace zb {
 
@@ -26,13 +30,27 @@ public:
     // forwarding straight to the ::gl* driver entry point of the same name.
 #include "gl_driver_backend_overrides.inc"
 
+    // The extension entry points (tools/gen_stubs.py's GLES_EXTENSIONS). None of them is a
+    // linkable NDK symbol, so each is resolved lazily through the real eglGetProcAddress on
+    // first use and cached in extension_entries_. A driver that does not have one answers the
+    // way it would itself: GL_INVALID_OPERATION and no call through a null pointer.
+#define ZB_GL_EXT_ENTRY(slot, name, result, declaration, types, arguments) \
+    result name declaration override;
+#include "zb/gl_ext_entries.inc"
+#undef ZB_GL_EXT_ENTRY
+
 protected:
     // Never called: every method above is overridden directly, matching the design ("The real
     // GlBackend calls the driver directly").
     std::uint64_t invoke(const char* name, std::initializer_list<std::uint64_t> arguments) override;
 
 private:
+    // The cached eglGetProcAddress result for extension slot `slot`, or nullptr when the driver
+    // does not have it. Safe from any thread; resolving twice in a race is harmless.
+    void* extension_entry(unsigned slot, const char* name);
+
     GLenum pending_error_ = 0;  // GL_NO_ERROR
+    std::array<std::atomic<void*>, kGlHostCallExtCount> extension_entries_{};
 };
 
 // eglGetCurrentContext() != EGL_NO_CONTEXT on the calling thread. Links EGL only for this check,

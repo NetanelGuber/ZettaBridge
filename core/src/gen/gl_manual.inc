@@ -44,3 +44,6 @@ bool zbgl_manual_glTransformFeedbackVaryings(HostGl& host, HostGl::Call& call);
 bool zbgl_manual_glUnmapBuffer(HostGl& host, HostGl::Call& call);
 bool zbgl_manual_glVertexAttribIPointer(HostGl& host, HostGl::Call& call);
 bool zbgl_manual_glWaitSync(HostGl& host, HostGl::Call& call);
+bool zbgl_manual_glMapBufferOES(HostGl& host, HostGl::Call& call);
+bool zbgl_manual_glUnmapBufferOES(HostGl& host, HostGl::Call& call);
+bool zbgl_manual_glGetBufferPointervOES(HostGl& host, HostGl::Call& call);

@@ -7,16 +7,20 @@
 
 namespace zb {
 
-// Two blocks: GLES 2.0 at 0-141, GLES 3.0 appended after every other stub library so no
-// established host-call index moved.
+// Three blocks: GLES 2.0 at 0-141, then GLES 3.0 and the curated extension entry
+// points, both appended after every other stub library so no established host-call
+// index moved.
 inline constexpr std::uint32_t kGlHostCallFirst = 0;
 inline constexpr std::uint32_t kGlHostCallLast = 141u;
 inline constexpr std::size_t kGlHostCallCount = 142u;
 inline constexpr std::uint32_t kGlHostCall3First = 228u;
 inline constexpr std::uint32_t kGlHostCall3Last = 331u;
 inline constexpr std::size_t kGlHostCall3Count = 104u;
-inline constexpr std::size_t kGlHostCallTotalCount = 246u;
-inline constexpr std::size_t kGlPointerlessHostCallCount = 126u;
+inline constexpr std::uint32_t kGlHostCallExtFirst = 332u;
+inline constexpr std::uint32_t kGlHostCallExtLast = 343u;
+inline constexpr std::size_t kGlHostCallExtCount = 12u;
+inline constexpr std::size_t kGlHostCallTotalCount = 258u;
+inline constexpr std::size_t kGlPointerlessHostCallCount = 134u;
 
 inline constexpr std::uint32_t ZB_GL_HC_glActiveTexture = 0u;
 inline constexpr std::uint32_t ZB_GL_HC_glAttachShader = 1u;
@@ -264,6 +268,18 @@ inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribI4ui = 328u;
 inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribI4uiv = 329u;
 inline constexpr std::uint32_t ZB_GL_HC_glVertexAttribIPointer = 330u;
 inline constexpr std::uint32_t ZB_GL_HC_glWaitSync = 331u;
+inline constexpr std::uint32_t ZB_GL_HC_glRenderbufferStorageMultisampleEXT = 332u;
+inline constexpr std::uint32_t ZB_GL_HC_glFramebufferTexture2DMultisampleEXT = 333u;
+inline constexpr std::uint32_t ZB_GL_HC_glDiscardFramebufferEXT = 334u;
+inline constexpr std::uint32_t ZB_GL_HC_glBindVertexArrayOES = 335u;
+inline constexpr std::uint32_t ZB_GL_HC_glDeleteVertexArraysOES = 336u;
+inline constexpr std::uint32_t ZB_GL_HC_glGenVertexArraysOES = 337u;
+inline constexpr std::uint32_t ZB_GL_HC_glIsVertexArrayOES = 338u;
+inline constexpr std::uint32_t ZB_GL_HC_glMapBufferOES = 339u;
+inline constexpr std::uint32_t ZB_GL_HC_glUnmapBufferOES = 340u;
+inline constexpr std::uint32_t ZB_GL_HC_glGetBufferPointervOES = 341u;
+inline constexpr std::uint32_t ZB_GL_HC_glTexStorage2DEXT = 342u;
+inline constexpr std::uint32_t ZB_GL_HC_glTexStorage3DEXT = 343u;
 
 struct GlHostCallInfo {
     std::uint32_t index;
@@ -271,7 +287,8 @@ struct GlHostCallInfo {
     bool has_pointer;
 };
 
-// GLES 2.0 first, then GLES 3.0; use gl_host_call() rather than indexing by host call.
+// GLES 2.0 first, then GLES 3.0, then the extensions; use gl_host_call() rather than
+// indexing by host call.
 inline constexpr std::array<GlHostCallInfo, kGlHostCallTotalCount> kGlHostCalls{{
     {0u, "glActiveTexture", false},
     {1u, "glAttachShader", false},
@@ -519,12 +536,28 @@ inline constexpr std::array<GlHostCallInfo, kGlHostCallTotalCount> kGlHostCalls{
     {329u, "glVertexAttribI4uiv", true},
     {330u, "glVertexAttribIPointer", true},
     {331u, "glWaitSync", false},
+    {332u, "glRenderbufferStorageMultisampleEXT", false},
+    {333u, "glFramebufferTexture2DMultisampleEXT", false},
+    {334u, "glDiscardFramebufferEXT", true},
+    {335u, "glBindVertexArrayOES", false},
+    {336u, "glDeleteVertexArraysOES", true},
+    {337u, "glGenVertexArraysOES", true},
+    {338u, "glIsVertexArrayOES", false},
+    {339u, "glMapBufferOES", false},
+    {340u, "glUnmapBufferOES", false},
+    {341u, "glGetBufferPointervOES", true},
+    {342u, "glTexStorage2DEXT", false},
+    {343u, "glTexStorage3DEXT", false},
 }};
 
 inline constexpr const GlHostCallInfo* gl_host_call(std::uint32_t index) {
     if (index <= kGlHostCallLast) return &kGlHostCalls[index];
     if (index >= kGlHostCall3First && index <= kGlHostCall3Last) {
         return &kGlHostCalls[kGlHostCallCount + (index - kGlHostCall3First)];
+    }
+    if (index >= kGlHostCallExtFirst && index <= kGlHostCallExtLast) {
+        return &kGlHostCalls[kGlHostCallCount + kGlHostCall3Count +
+                             (index - kGlHostCallExtFirst)];
     }
     return nullptr;
 }
