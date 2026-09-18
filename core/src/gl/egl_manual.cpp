@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -275,14 +276,20 @@ bool zbegl_manual_eglQueryString(HostEgl& host, HostEgl::Call& call) {
 bool zbegl_manual_eglGetProcAddress(HostEgl& host, HostEgl::Call& call) {
     std::string name;
     if (!read_guest_string(host, call, 0, name)) return true;
-    for (const EglHostCallInfo& info : kEglHostCalls) {
-        if (name == info.name) {
-            // The guest gets the address of our own trap stub, never a host function pointer.
-            call.set_result(host.stub_address(name));
-            return true;
-        }
+    // Only our own gl*/egl* stubs may be handed out, never an arbitrary guest symbol. The guest
+    // gets the address of a trap stub, never a host function pointer.
+    const bool ours = name.rfind("egl", 0) == 0 || name.rfind("gl", 0) == 0;
+    const std::uint32_t address = ours ? host.stub_address(name) : 0;
+    call.set_result(address);
+    // A miss is what an engine sees as "this GL function does not exist", so name the first few:
+    // they are the exact list a later GLES 3 generator pass has to cover.
+    if (address == 0) {
+        static std::atomic<unsigned> missed{0};
+        const unsigned seen = missed.fetch_add(1) + 1;
+        if (seen <= 8) runtime_report().note_egl_object("procaddress-miss-" + std::to_string(seen), name);
+        runtime_report().note_egl_object("procaddress-misses", std::to_string(seen));
     }
-    return true;  // 0: a name we do not stub
+    return true;
 }
 
 bool zbegl_manual_eglCreateContext(HostEgl& host, HostEgl::Call& call) {

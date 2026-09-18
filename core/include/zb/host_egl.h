@@ -166,6 +166,7 @@ private:
     std::unordered_map<const void*, std::uint32_t> by_value_;
     std::unordered_map<std::uint32_t, EglObject> kinds_;
     std::uint32_t libegl_ = 0;
+    std::uint32_t libgles_ = 0;
     bool libegl_tried_ = false;
 };
 

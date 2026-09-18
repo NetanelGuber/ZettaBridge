@@ -77,7 +77,10 @@ int main() {
         [](std::uint32_t handle) -> const void* {
             return handle == 42 ? reinterpret_cast<const void*>(0x5000) : nullptr;
         },
-        [](const std::string&) -> std::uint32_t { return 0x9000; });
+        // Stands in for the guest linker: it answers for the stubs the guest really has.
+        [](const std::string& name) -> std::uint32_t {
+            return name == "eglCreateContext" || name == "glClear" ? 0x9000 : 0;
+        });
     Dynarmic::ExclusiveMonitor monitor(1);
     zb::GuestThread thread(runtime.memory(), &monitor, 0, false, zb::kCarrierCodeCacheSize);
     g_runtime = &runtime;
@@ -140,13 +143,22 @@ int main() {
     CHECK(call_egl(zb::ZB_EGL_HC_eglDestroySurface, {display, config}) == 0);
     CHECK(call_egl(zb::ZB_EGL_HC_eglGetError, {}) == 0x300d);  // EGL_BAD_SURFACE
 
-    // eglGetProcAddress answers with the guest stub of a name we generate, and 0 otherwise.
+    // eglGetProcAddress answers with the guest stub of any gl*/egl* name the guest has (Skia and
+    // Impeller resolve every GL entry point this way), and 0 otherwise.
     const std::uint32_t known_name = kData + 0x300;
     std::memcpy(runtime.memory().base() + known_name, "eglCreateContext", 17);
     const std::uint32_t unknown_name = kData + 0x320;
     std::memcpy(runtime.memory().base() + unknown_name, "eglNoSuchThing", 15);
     CHECK(call_egl(zb::ZB_EGL_HC_eglGetProcAddress, {known_name}) == 0x9000);
     CHECK(call_egl(zb::ZB_EGL_HC_eglGetProcAddress, {unknown_name}) == 0);
+
+    // A GLES entry point resolves too; a name that is neither gl* nor egl* never does.
+    const std::uint32_t gl_name = kData + 0x340;
+    std::memcpy(runtime.memory().base() + gl_name, "glClear", 8);
+    CHECK(call_egl(zb::ZB_EGL_HC_eglGetProcAddress, {gl_name}) == 0x9000);
+    const std::uint32_t other_name = kData + 0x360;
+    std::memcpy(runtime.memory().base() + other_name, "system", 7);
+    CHECK(call_egl(zb::ZB_EGL_HC_eglGetProcAddress, {other_name}) == 0);
 
     // eglQueryString copies into guest memory and caches one copy per (display, name).
     backend.set_string(kEglVendor, "ZettaBridge");

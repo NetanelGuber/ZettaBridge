@@ -159,15 +159,26 @@ std::optional<const void*> HostEgl::lookup(std::uint32_t handle, EglObject kind)
 
 std::uint32_t HostEgl::stub_address(const std::string& name) {
     if (stubs_) return stubs_(name);
-    if (!libegl_tried_) {
-        libegl_tried_ = true;
-        std::string error;
-        libegl_ = runtime_.load_library("libEGL.so", ZB_GUEST_RTLD_NOW, error);
-        if (libegl_ == 0) log("eglGetProcAddress: guest libEGL.so is not loadable: %s", error.c_str());
-    }
-    if (libegl_ == 0) return 0;
+    // Any guest library already loaded, which covers gl* in libGLESv2.so as well as egl*: Skia and
+    // Impeller resolve every GL entry point through eglGetProcAddress, so an EGL-only lookup left
+    // them without a single GL function.
     std::string error;
-    return runtime_.find_symbol(libegl_, name, error);
+    const std::uint32_t global = runtime_.find_symbol(ZB_GUEST_RTLD_DEFAULT, name, error);
+    if (global != 0) return global;
+    for (const char* library : {"libEGL.so", "libGLESv2.so"}) {
+        std::uint32_t& handle = std::strcmp(library, "libEGL.so") == 0 ? libegl_ : libgles_;
+        if (handle == 0) {
+            std::string load_error;
+            handle = runtime_.load_library(library, ZB_GUEST_RTLD_NOW, load_error);
+            if (handle == 0) {
+                log("eglGetProcAddress: guest %s is not loadable: %s", library, load_error.c_str());
+                continue;
+            }
+        }
+        const std::uint32_t address = runtime_.find_symbol(handle, name, error);
+        if (address != 0) return address;
+    }
+    return 0;
 }
 
 std::optional<std::uint32_t> HostEgl::allocate_guest(std::size_t size) {
