@@ -438,8 +438,24 @@ bool HostLooper::handle_host_call(std::uint32_t index, GuestThread& thread) {
     switch (index) {
     case ZB_COMPAT_HC_ALooper_forThread:
         return finish(static_cast<std::int32_t>(impl_->for_thread(thread)));
-    case ZB_COMPAT_HC_ALooper_prepare:
-        return finish(static_cast<std::int32_t>(impl_->prepare(thread, static_cast<int>(r0))));
+    case ZB_COMPAT_HC_ALooper_prepare: {
+        const std::uint32_t looper = impl_->prepare(thread, static_cast<int>(r0));
+        // Which threads own a looper, whether or not they ever poll it: a looper prepared on a
+        // thread that never polls means that thread's message loop is not being run at all.
+        static std::mutex prepared_mutex;
+        static std::string prepared;
+        {
+            std::lock_guard<std::mutex> lock(prepared_mutex);
+            if (prepared.size() < 200) {
+                char text[48];
+                std::snprintf(text, sizeof text, "%s%d=0x%x", prepared.empty() ? "" : " ",
+                              static_cast<int>(thread.tid), looper);
+                prepared += text;
+            }
+            runtime_report().note_looper_detail("prepared", prepared, true);
+        }
+        return finish(static_cast<std::int32_t>(looper));
+    }
     case ZB_COMPAT_HC_ALooper_acquire:
         impl_->acquire(r0);
         return finish(0);
@@ -450,9 +466,19 @@ bool HostLooper::handle_host_call(std::uint32_t index, GuestThread& thread) {
         const std::uint32_t callback = impl_->argument(thread, 4, valid);
         const std::uint32_t data = impl_->argument(thread, 5, valid);
         if (!valid) return finish(-1);
-        return finish(impl_->add_fd(r0, static_cast<std::int32_t>(r1),
-                                    static_cast<std::int32_t>(r2), static_cast<int>(r3),
-                                    callback, data));
+        const int added = impl_->add_fd(r0, static_cast<std::int32_t>(r1),
+                                        static_cast<std::int32_t>(r2), static_cast<int>(r3),
+                                        callback, data);
+        static std::atomic<unsigned> add_fd_calls{0};
+        const unsigned seen = add_fd_calls.fetch_add(1) + 1;
+        if (seen <= 4) {
+            char text[128];
+            std::snprintf(text, sizeof text, "tid=%d looper=0x%x fd=%d ident=%d events=0x%x result=%d",
+                          static_cast<int>(thread.tid), r0, static_cast<int>(r1),
+                          static_cast<int>(r2), r3, added);
+            runtime_report().note_looper_detail("addfd-" + std::to_string(seen), text, false);
+        }
+        return finish(added);
     }
     case ZB_COMPAT_HC_ALooper_removeFd:
         return finish(impl_->remove_fd(r0, static_cast<std::int32_t>(r1)));
