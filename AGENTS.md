@@ -1390,3 +1390,44 @@ Gradle debug APK all pass. `/sdcard/ZettaBridge-debug.apk` is 9,353,448 bytes, S
 
 **NEXT/device gate:** install it and run the Flutter plugin past PNG decoding; the previous SIGILL
 at `libflutter.so+0x3cd85e` must be gone.
+
+## Flutter status 2026-09-18 evening: it runs, text and some images are missing
+
+The Flutter guest (`com.example.perecup_simulator`) starts, runs Dart, presents frames and takes
+touch: `egl-swaps` in the hundreds, `gl-draws: 5376+`, `native-calls` includes
+`nativeDispatchPointerDataPacket`, no crash, `unimplemented-host-calls: 0`. Gradients, glows,
+vector icons and most raster icons are correct on screen. What is wrong: **no text at all**, and
+4 of 12 raster icons show Flutter's "broken image" placeholder.
+
+Hypotheses ELIMINATED by device evidence (do not revisit without new data):
+- Glyphs rasterize and upload fine: `gl-glyph-atlas: uploads=38 bytes=4622226 nonzero=161022`,
+  individual uploads are real glyph shapes (`76x74 GL_ALPHA nonzero=4482/5624`).
+- The atlas is uploaded and drawn on the same thread and context (tid of `1.raster`).
+- Both EGL contexts share correctly (`egl-context-2: share-handle=0x202 share=0xb4000075...`).
+- Image uploads are fully populated (`2048x2048 nonzero=16777216/16777216`) from the io thread.
+- Uniform block wiring is right: `FragInfo`->binding 0, `FrameInfo`->binding 1 per program.
+- `glBindBufferRange` marshaling is right: `offset-raw32=0x2400 offset-passed64=9216`,
+  `size-raw32=0x40 size-passed64=64`.
+- No GL errors and no marshaling rejections in any run (`gl-first-error: (none)`, no
+  `gl-rejections` line).
+
+**The open lead.** There are no `gl-ubo-buffer-*` lines at all: Impeller never uploads uniforms
+with glBufferData/glBufferSubData. It orphans one 1 MB buffer (`gl-buffer-data-1: target=
+GL_ARRAY_BUFFER size=1024000 usage=GL_STREAM_DRAW data=null`) and writes both vertex and uniform
+data through **glMapBufferRange**, which we serve with a guest mirror
+(`core/src/gl/gl_manual.cpp`, `zbgl_manual_glMapBufferRange` / `glFlushMappedBufferRange` /
+`glUnmapBuffer`). Vertex data evidently survives that path (shapes draw), so the mirror works in
+the common case, but anything subtler about it (when the copy-back happens relative to the draw,
+explicit-flush ranges, a second thread mapping the same target, the mapping table being keyed by
+target alone in `mappings`) would corrupt exactly the uniform side and leave shapes intact.
+
+NEXT, in order:
+1. Record the mirror traffic: for the first mapped ranges, the access flags, the guest mirror
+   address, and a checksum of the bytes at map, at each flush and at unmap. If the uniform bytes
+   the guest wrote never reach the driver buffer, that is the bug.
+2. `mappings` in `gl_manual.cpp` is keyed by GLenum target only and is process-wide. Two contexts
+   (raster and io) mapping the same target at once would collide; a collision currently rejects
+   the second map. No rejection was observed, but the key should be (context, target, buffer).
+3. `gl-text-draw-N` readbacks came back `changed=no` with an all-zero "before", which is expected
+   when the draw targets an offscreen framebuffer (`gl-sample-draw-3000: fb=38`). Read from the
+   framebuffer that is actually bound at that draw before concluding anything.
