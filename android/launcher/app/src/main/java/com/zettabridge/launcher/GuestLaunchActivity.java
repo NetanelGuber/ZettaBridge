@@ -34,6 +34,13 @@ public class GuestLaunchActivity extends Activity {
         try {
             launch(packageName);
         } catch (Throwable t) {
+            // One plugin per :guest process (the guest runtime is process-lifetime). A game that
+            // never exits keeps the process, so switching games means restarting it.
+            if (t.toString().contains("already runs plugin")) {
+                startActivity(PluginSwitchActivity.intent(this, packageName));
+                finish();
+                return;
+            }
             String bridgeError = null;
             try {
                 bridgeError = ZBridge.lastLoadError();

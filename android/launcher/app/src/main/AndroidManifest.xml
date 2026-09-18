@@ -25,6 +25,14 @@
         </activity>
 
         <!-- Target of pinned shortcuts: loads the plugin in :guest and starts its launcher activity. -->
+        <!-- Runs in the launcher's own process: it ends the :guest process so another plugin can
+             start in a fresh one. -->
+        <activity
+            android:name=".PluginSwitchActivity"
+            android:exported="false"
+            android:taskAffinity="com.zettabridge.launcher.guest"
+            android:theme="@android:style/Theme.NoDisplay" />
+
         <activity
             android:name=".GuestLaunchActivity"
             android:exported="true"
