@@ -249,6 +249,14 @@ std::size_t Process::thread_count() const {
     return threads_.size();
 }
 
+bool Process::is_borrower(const GuestThread& thread) const {
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    for (const GuestThread* t : borrowers_) {
+        if (t == &thread) return true;
+    }
+    return false;
+}
+
 int Process::allocate_processor_id() {
     std::lock_guard<std::mutex> lock(threads_mutex_);
     for (std::size_t i = 0; i < processor_ids_.size(); ++i) {

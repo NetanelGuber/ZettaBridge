@@ -14,16 +14,20 @@
 #include <utility>
 #include <vector>
 
+#include "zb/android_looper_backend.h"
 #include "zb/guest_memory.h"
 #include "zb/guest_thread.h"
 #include "zb/library_runtime.h"
+#include "zb/log.h"
 #include "zb/platform_compat_hostcalls.h"
 #include "zb/runtime_report.h"
 
 #include <atomic>
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <string>
+#include <utility>
 
 namespace zb {
 
@@ -99,11 +103,30 @@ struct HostLooper::Impl {
         std::uint32_t handle = 0;
         int options = 0;
         std::uint32_t references = 1;
-        int wake_fd = -1;
+        int wake_fd = -1;  // guest-path wake eventfd; -1 on an attached looper
+        // Attached: this looper lives on a host thread whose own Android looper does the polling.
+        bool attached = false;
+        std::uint64_t real = 0;  // backend handle while attached
         std::unordered_map<int, Registration> registrations;
     };
 
-    explicit Impl(LibraryRuntime& runtime_) : runtime(runtime_) {}
+    // What the real Android looper hands back to us as the callback's `data`. Bindings are never
+    // freed: the looper may still hold the pointer after we stopped using it, and one process
+    // registers only a handful of descriptors.
+    struct Binding {
+        Impl* impl = nullptr;
+        std::uint32_t handle = 0;
+        int fd = -1;
+        std::uint32_t callback = 0;
+        std::uint32_t data = 0;
+        std::uint64_t serial = 0;
+        std::atomic<bool> active{true};
+    };
+
+    Impl(LibraryRuntime& runtime_, AndroidLooperBackend* backend_, GuestInvoker invoker_,
+         BorrowerProbe borrower_probe_)
+        : runtime(runtime_), backend(backend_), invoker(std::move(invoker_)),
+          borrower_probe(std::move(borrower_probe_)) {}
 
     ~Impl() {
         for (const auto& [handle, looper] : loopers) {
@@ -126,6 +149,10 @@ struct HostLooper::Impl {
     std::atomic<std::uint64_t> report_callbacks{0};
     std::atomic<std::uint64_t> report_callbacks_unregistered{0};
     std::atomic<std::uint64_t> report_wakes{0};
+    std::atomic<std::uint64_t> report_attached{0};
+    std::atomic<std::uint64_t> report_host_callbacks{0};
+    std::atomic<std::uint64_t> report_host_callbacks_guest{0};
+    std::atomic<std::uint64_t> report_host_callbacks_failed{0};
 
     static constexpr std::size_t kMaxReportSlots = 4;
     std::mutex report_mutex;
@@ -168,6 +195,23 @@ struct HostLooper::Impl {
     void report_wakes_line() {
         runtime_report().note_looper_detail(
             "wakes", std::to_string(report_wakes.load(std::memory_order_relaxed)), true);
+    }
+
+    // Loopers that live on a host thread and were handed to the real Android looper.
+    void report_attached_line() {
+        runtime_report().note_looper_detail(
+            "attached", std::to_string(report_attached.load(std::memory_order_relaxed)), true);
+    }
+
+    // Callbacks the real Android looper delivered on a host thread, and how many of them got
+    // into the guest. fired > guest means the guest could not be entered.
+    void report_host_callbacks_line() {
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "fired=%llu guest=%llu failed=%llu",
+                      static_cast<unsigned long long>(report_host_callbacks.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(report_host_callbacks_guest.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(report_host_callbacks_failed.load(std::memory_order_relaxed)));
+        runtime_report().note_looper_detail("host-callbacks", buf, true);
     }
 
     void report_last(const GuestThread& thread, std::size_t fd_count, int result) {
@@ -218,24 +262,130 @@ struct HostLooper::Impl {
         return true;
     }
 
+    bool is_borrower(const GuestThread& thread) {
+        return borrower_probe ? borrower_probe(thread) : runtime.is_borrower(thread);
+    }
+
+    std::optional<GuestResult> invoke(std::uint32_t function, const GuestCall& args) {
+        if (invoker) return invoker(function, args);
+        return runtime.call_on_current(function, args);
+    }
+
+    // Publishes a new binding for (handle, fd) and retires any previous one. Call under `mutex`.
+    Binding* bind_locked(std::uint32_t handle, int fd, std::uint32_t callback, std::uint32_t data,
+                         std::uint64_t serial) {
+        retire_locked(handle, fd);
+        auto owned = std::make_unique<Binding>();
+        owned->impl = this;
+        owned->handle = handle;
+        owned->fd = fd;
+        owned->callback = callback;
+        owned->data = data;
+        owned->serial = serial;
+        Binding* raw = owned.get();
+        binding_storage.push_back(std::move(owned));
+        bindings.emplace(std::make_pair(handle, fd), raw);
+        return raw;
+    }
+
+    // Marks the binding of (handle, fd) dead so a callback still in flight does nothing but
+    // unregister itself. Call under `mutex`.
+    void retire_locked(std::uint32_t handle, int fd) {
+        const auto it = bindings.find(std::make_pair(handle, fd));
+        if (it == bindings.end()) return;
+        it->second->active.store(false, std::memory_order_relaxed);
+        bindings.erase(it);
+    }
+
+    // Forgets an fd registered by that exact addFd call; a later re-registration is untouched.
+    void drop_registration_locked(std::uint32_t handle, int fd, std::uint64_t serial) {
+        const auto looper_it = loopers.find(handle);
+        if (looper_it == loopers.end()) return;
+        const auto current = looper_it->second->registrations.find(fd);
+        if (current == looper_it->second->registrations.end() || current->second.serial != serial) return;
+        looper_it->second->registrations.erase(current);
+        retire_locked(handle, fd);
+    }
+
+    static int attached_callback(int fd, int events, void* data) {
+        auto* binding = static_cast<Binding*>(data);
+        return binding->impl->dispatch_attached(*binding, fd, events);
+    }
+
+    // Runs on the host thread that owns the real looper, from its own loop, with no guest code
+    // running on it. Enters the guest and runs the guest callback with (fd, events, data), like
+    // the guest path does from pollOnce. Returning 0 makes the real looper drop the fd.
+    int dispatch_attached(Binding& binding, int fd, int events) {
+        report_host_callbacks.fetch_add(1, std::memory_order_relaxed);
+        if (!binding.active.load(std::memory_order_relaxed)) {
+            report_host_callbacks_line();
+            return 0;
+        }
+        GuestCall call;
+        call.regs = {static_cast<std::uint32_t>(fd), static_cast<std::uint32_t>(events),
+                     binding.data, 0};
+        const auto result = invoke(binding.callback, call);
+        if (!result) {
+            report_host_callbacks_failed.fetch_add(1, std::memory_order_relaxed);
+            static std::atomic<bool> logged{false};
+            if (!logged.exchange(true)) {
+                log("ALooper callback on fd %d could not enter the guest; unregistering it", fd);
+            }
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                drop_registration_locked(binding.handle, fd, binding.serial);
+            }
+            report_host_callbacks_line();
+            return 0;  // never let a fd we cannot serve spin the host thread's loop
+        }
+        report_host_callbacks_guest.fetch_add(1, std::memory_order_relaxed);
+        report_callbacks.fetch_add(1, std::memory_order_relaxed);
+        const bool keep = result->r0 != 0;
+        if (!keep) {
+            report_callbacks_unregistered.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(mutex);
+            drop_registration_locked(binding.handle, fd, binding.serial);
+        }
+        report_callbacks_line();
+        report_host_callbacks_line();
+        return keep ? 1 : 0;
+    }
+
     std::uint32_t prepare(GuestThread& thread, int options) {
-        std::lock_guard<std::mutex> lock(mutex);
-        const auto existing = thread_loopers.find(&thread);
-        if (existing != thread_loopers.end()) return existing->second;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            const auto existing = thread_loopers.find(&thread);
+            if (existing != thread_loopers.end()) return existing->second;
+        }
         if ((options & ~kAllowNonCallbacks) != 0) return 0;
 
-        const int wake_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-        if (wake_fd < 0) return 0;
+        // A borrower came from Java and goes back to Java: its own Android looper is what polls,
+        // so hand the fds to that one instead of building a poll set nobody ever runs.
+        std::uint64_t real = 0;
+        if (backend != nullptr && is_borrower(thread)) real = backend->prepare(options);
+
+        int wake_fd = -1;
+        if (real == 0) {
+            wake_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+            if (wake_fd < 0) return 0;
+        }
+        std::lock_guard<std::mutex> lock(mutex);
         auto looper = std::make_unique<Looper>();
         looper->handle = next_handle;
         looper->options = options;
         looper->wake_fd = wake_fd;
+        looper->attached = real != 0;
+        looper->real = real;
         const std::uint32_t handle = looper->handle;
         next_handle += 4;
         thread_loopers.emplace(&thread, handle);
         loopers.emplace(handle, std::move(looper));
         report_loopers.fetch_add(1, std::memory_order_relaxed);
         report_loopers_line();
+        if (real != 0) {
+            report_attached.fetch_add(1, std::memory_order_relaxed);
+            report_attached_line();
+        }
         return handle;
     }
 
@@ -246,23 +396,37 @@ struct HostLooper::Impl {
     }
 
     void acquire(std::uint32_t handle) {
-        std::lock_guard<std::mutex> lock(mutex);
-        const auto it = loopers.find(handle);
-        if (it != loopers.end() && it->second->references !=
-                                       std::numeric_limits<std::uint32_t>::max()) {
-            ++it->second->references;
+        std::uint64_t real = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            const auto it = loopers.find(handle);
+            if (it == loopers.end()) return;
+            if (it->second->references != std::numeric_limits<std::uint32_t>::max()) {
+                ++it->second->references;
+            }
+            real = it->second->real;
         }
+        if (real != 0) backend->acquire(real);
     }
 
     void release(std::uint32_t handle) {
-        std::lock_guard<std::mutex> lock(mutex);
-        const auto it = loopers.find(handle);
-        if (it != loopers.end() && it->second->references > 1) --it->second->references;
+        std::uint64_t real = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            const auto it = loopers.find(handle);
+            if (it == loopers.end()) return;
+            if (it->second->references > 1) --it->second->references;
+            real = it->second->real;
+        }
+        if (real != 0) backend->release(real);
     }
 
     int add_fd(std::uint32_t handle, int fd, int ident, int events,
                std::uint32_t callback, std::uint32_t data) {
         int wake_fd = -1;
+        std::uint64_t real = 0;
+        Binding* binding = nullptr;
+        std::uint64_t serial = 0;
         {
             std::lock_guard<std::mutex> lock(mutex);
             const auto it = loopers.find(handle);
@@ -275,11 +439,26 @@ struct HostLooper::Impl {
                 (ident < 0 || (looper.options & kAllowNonCallbacks) == 0)) {
                 return -1;
             }
-            looper.registrations[fd] =
-                Registration{fd, ident, events, callback, data, next_serial++};
-            wake_fd = looper.wake_fd;
+            serial = next_serial++;
+            looper.registrations[fd] = Registration{fd, ident, events, callback, data, serial};
+            if (looper.attached) {
+                real = looper.real;
+                binding = bind_locked(handle, fd, callback, data, serial);
+            } else {
+                wake_fd = looper.wake_fd;
+            }
         }
-        signal_eventfd(wake_fd);
+        if (real != 0) {
+            // The real looper needs a host callback even for a guest ident registration: only a
+            // callback gets control on the host thread, and nothing here ever calls pollOnce.
+            if (backend->add_fd(real, fd, ident, events, &Impl::attached_callback, binding) != 1) {
+                std::lock_guard<std::mutex> lock(mutex);
+                drop_registration_locked(handle, fd, serial);
+                return -1;
+            }
+        } else {
+            signal_eventfd(wake_fd);
+        }
         report_fds_added.fetch_add(1, std::memory_order_relaxed);
         report_fds_line();
         return 1;
@@ -287,15 +466,25 @@ struct HostLooper::Impl {
 
     int remove_fd(std::uint32_t handle, int fd) {
         int wake_fd = -1;
+        std::uint64_t real = 0;
         {
             std::lock_guard<std::mutex> lock(mutex);
             const auto it = loopers.find(handle);
             if (it == loopers.end()) return -1;
             Looper& looper = *it->second;
             if (looper.registrations.erase(fd) == 0) return 0;
-            wake_fd = looper.wake_fd;
+            if (looper.attached) {
+                real = looper.real;
+                retire_locked(handle, fd);
+            } else {
+                wake_fd = looper.wake_fd;
+            }
         }
-        signal_eventfd(wake_fd);
+        if (real != 0) {
+            backend->remove_fd(real, fd);
+        } else {
+            signal_eventfd(wake_fd);
+        }
         report_fds_removed.fetch_add(1, std::memory_order_relaxed);
         report_fds_line();
         return 1;
@@ -303,12 +492,20 @@ struct HostLooper::Impl {
 
     void wake(std::uint32_t handle) {
         int wake_fd = -1;
+        std::uint64_t real = 0;
         {
             std::lock_guard<std::mutex> lock(mutex);
             const auto it = loopers.find(handle);
-            if (it != loopers.end()) wake_fd = it->second->wake_fd;
+            if (it != loopers.end()) {
+                wake_fd = it->second->wake_fd;
+                real = it->second->real;
+            }
         }
-        if (wake_fd >= 0) signal_eventfd(wake_fd);
+        if (real != 0) {
+            backend->wake(real);
+        } else if (wake_fd >= 0) {
+            signal_eventfd(wake_fd);
+        }
         report_wakes.fetch_add(1, std::memory_order_relaxed);
         report_wakes_line();
     }
@@ -317,6 +514,7 @@ struct HostLooper::Impl {
                   std::uint32_t out_events, std::uint32_t out_data) {
         std::uint32_t looper_handle = 0;
         int wake_fd = -1;
+        bool attached = false;
         std::vector<Registration> registrations;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -326,6 +524,7 @@ struct HostLooper::Impl {
             if (looper_it == loopers.end()) return kPollError;
             looper_handle = thread_it->second;
             wake_fd = looper_it->second->wake_fd;
+            attached = looper_it->second->attached;
             registrations.reserve(looper_it->second->registrations.size());
             for (const auto& [fd, registration] : looper_it->second->registrations) {
                 (void)fd;
@@ -348,6 +547,18 @@ struct HostLooper::Impl {
             report_last(thread, registrations.size(), result);
             return result;
         };
+
+        if (attached) {
+            // The guest is asking to run a loop the host thread's Java Looper.loop() already
+            // runs. Blocking here would stall that loop, so report a wake and let the guest
+            // return; its callbacks arrive through attached_callback instead.
+            static std::atomic<bool> logged{false};
+            if (!logged.exchange(true)) {
+                log("ALooper_pollOnce on a looper owned by the host thread's Android looper: "
+                    "returning WAKE without polling");
+            }
+            return finish(kPollWake);
+        }
 
         std::vector<pollfd> poll_fds;
         poll_fds.reserve(registrations.size() + 1);
@@ -413,14 +624,21 @@ struct HostLooper::Impl {
     }
 
     LibraryRuntime& runtime;
+    AndroidLooperBackend* backend = nullptr;
+    GuestInvoker invoker;
+    BorrowerProbe borrower_probe;
     std::mutex mutex;
     std::unordered_map<const GuestThread*, std::uint32_t> thread_loopers;
     std::unordered_map<std::uint32_t, std::unique_ptr<Looper>> loopers;
+    std::map<std::pair<std::uint32_t, int>, Binding*> bindings;
+    std::vector<std::unique_ptr<Binding>> binding_storage;  // never shrinks; see Binding
     std::uint32_t next_handle = 0x7a000000u;
     std::uint64_t next_serial = 1;
 };
 
-HostLooper::HostLooper(LibraryRuntime& runtime) : impl_(std::make_unique<Impl>(runtime)) {}
+HostLooper::HostLooper(LibraryRuntime& runtime, AndroidLooperBackend* backend, GuestInvoker invoker,
+                       BorrowerProbe borrower_probe)
+    : impl_(std::make_unique<Impl>(runtime, backend, std::move(invoker), std::move(borrower_probe))) {}
 HostLooper::~HostLooper() = default;
 
 bool HostLooper::handle_host_call(std::uint32_t index, GuestThread& thread) {

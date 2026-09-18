@@ -6,12 +6,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <dynarmic/interface/exclusive_monitor.h>
 
 #include "check.h"
 #include "mock_jvm.h"
+#include "mock_looper.h"
+#include "zb/android_looper_backend.h"
 #include "zb/guest_memory.h"
 #include "zb/guest_thread.h"
 #include "zb/host_looper.h"
@@ -139,6 +143,116 @@ void run_unit() {
     std::puts("host_looper_test PASS");
 }
 
+// A borrower is a host thread that entered the guest and returns to Java: its loopers belong to
+// the real Android looper of that host thread, not to our poll set.
+void run_borrower() {
+    zb::LibraryRuntime runtime;
+    CHECK(runtime.memory().map_anon(kGuestPage, 0x1000, PROT_READ | PROT_WRITE));
+    Dynarmic::ExclusiveMonitor monitor(2);
+    zb::GuestThread guest(runtime.memory(), &monitor, 0, false, zb::kCarrierCodeCacheSize);
+    zb::GuestThread borrower(runtime.memory(), &monitor, 1, false, zb::kCarrierCodeCacheSize);
+
+    MockAndroidLooper backend;
+    struct Invocation {
+        std::uint32_t function = 0;
+        std::uint32_t fd = 0;
+        std::uint32_t events = 0;
+        std::uint32_t data = 0;
+    };
+    std::vector<Invocation> invocations;
+    std::uint32_t guest_callback_result = 1;
+    bool guest_reachable = true;
+    const zb::HostLooper::GuestInvoker invoker =
+        [&](std::uint32_t function, const zb::GuestCall& args) -> std::optional<zb::GuestResult> {
+        invocations.push_back(Invocation{function, args.regs[0], args.regs[1], args.regs[2]});
+        if (!guest_reachable) return std::nullopt;
+        zb::GuestResult result;
+        result.r0 = guest_callback_result;
+        return result;
+    };
+    const zb::HostLooper::BorrowerProbe probe = [&](const zb::GuestThread& thread) {
+        return &thread == &borrower;
+    };
+    zb::HostLooper looper(runtime, &backend, invoker, probe);
+
+    const int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    CHECK(fd >= 0);
+
+    // A guest-created thread never touches the backend.
+    const std::uint32_t guest_handle = call(looper, guest, zb::ZB_COMPAT_HC_ALooper_prepare, 1);
+    CHECK(guest_handle != 0);
+    CHECK(backend.prepares() == 0);
+    CHECK(add_fd(looper, guest, runtime.memory(), guest_handle, fd, 9, 1, 0x1000, 0x11) == 1);
+    CHECK(backend.registrations() == 0);
+
+    // The borrower's looper is the real one.
+    const std::uint32_t handle = call(looper, borrower, zb::ZB_COMPAT_HC_ALooper_prepare, 0);
+    CHECK(handle != 0);
+    CHECK(handle != guest_handle);
+    CHECK(backend.prepares() == 1);
+    CHECK(backend.last_options() == 0);
+    const std::uint64_t real = backend.current();
+    CHECK(real != 0);
+    CHECK(call(looper, borrower, zb::ZB_COMPAT_HC_ALooper_forThread) == handle);
+
+    CHECK(add_fd(looper, borrower, runtime.memory(), handle, fd, -1, 1, 0x2000, 0xfeed) == 1);
+    CHECK(backend.registered(real, fd));
+    CHECK(backend.registrations() == 1);
+
+    // acquire/release and wake reach the real looper.
+    CHECK(call(looper, borrower, zb::ZB_COMPAT_HC_ALooper_acquire, handle) == 0);
+    CHECK(call(looper, borrower, zb::ZB_COMPAT_HC_ALooper_release, handle) == 0);
+    CHECK(backend.acquires() == 1);
+    CHECK(backend.releases() == 1);
+    CHECK(call(looper, borrower, zb::ZB_COMPAT_HC_ALooper_wake, handle) == 0);
+    CHECK(backend.wakes() == 1);
+
+    // pollOnce is Java's loop to run: report a wake at once instead of blocking for a second.
+    CHECK(static_cast<std::int32_t>(call(looper, borrower, zb::ZB_COMPAT_HC_ALooper_pollOnce,
+                                         1000, 0, 0, 0)) == -1);
+    CHECK(invocations.empty());
+
+    // A host callback delivered by the real looper runs the guest callback with (fd, events, data).
+    CHECK(backend.deliver(real, fd, 1) == 1);
+    CHECK(invocations.size() == 1);
+    CHECK(invocations[0].function == 0x2000);
+    CHECK(invocations[0].fd == static_cast<std::uint32_t>(fd));
+    CHECK(invocations[0].events == 1);
+    CHECK(invocations[0].data == 0xfeed);
+    CHECK(backend.registered(real, fd));
+
+    // A guest callback returning 0 unregisters the fd on both sides.
+    guest_callback_result = 0;
+    CHECK(backend.deliver(real, fd, 1) == 0);
+    CHECK(invocations.size() == 2);
+    CHECK(!backend.registered(real, fd));
+    CHECK(call(looper, borrower, zb::ZB_COMPAT_HC_ALooper_removeFd, handle,
+               static_cast<std::uint32_t>(fd)) == 0);
+
+    // An unreachable guest unregisters too, instead of spinning the host thread's loop.
+    guest_callback_result = 1;
+    guest_reachable = false;
+    CHECK(add_fd(looper, borrower, runtime.memory(), handle, fd, -1, 1, 0x2000, 0xfeed) == 1);
+    CHECK(backend.deliver(real, fd, 1) == 0);
+    CHECK(!backend.registered(real, fd));
+    guest_reachable = true;
+
+    // A backend that refuses the fd fails the guest call and leaves nothing behind.
+    backend.fail_add_fd = true;
+    CHECK(add_fd(looper, borrower, runtime.memory(), handle, fd, -1, 1, 0x2000, 0xfeed) ==
+          static_cast<std::uint32_t>(-1));
+    backend.fail_add_fd = false;
+    CHECK(call(looper, borrower, zb::ZB_COMPAT_HC_ALooper_removeFd, handle,
+               static_cast<std::uint32_t>(fd)) == 0);
+
+    const std::string report = zb::runtime_report().text();
+    CHECK(report.find("looper-attached: 1") != std::string::npos);
+    CHECK(report.find("looper-host-callbacks: fired=3 guest=2 failed=1") != std::string::npos);
+    CHECK(close(fd) == 0);
+
+    std::puts("host_looper_test borrower PASS");
+}
+
 void run_guest(int argc, char** argv) {
     CHECK(argc == 4);
     auto* vm = new zb::mock::MockJvm();
@@ -187,6 +301,7 @@ void run_guest(int argc, char** argv) {
 int main(int argc, char** argv) {
     if (argc == 1) {
         run_unit();
+        run_borrower();
         return 0;
     }
     run_guest(argc, argv);

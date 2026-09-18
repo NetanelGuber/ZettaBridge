@@ -1,18 +1,43 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
+
+#include "zb/guest_thread.h"
+#include "zb/native_call.h"
 
 namespace zb {
 
-class GuestThread;
+class AndroidLooperBackend;
 class LibraryRuntime;
 
 // Bridges the callback-based Android looper ABI used by arm32 guests. Guest file descriptors
 // are process file descriptors, but ALooper objects and callback addresses remain guest values.
+//
+// Two worlds, decided per calling thread:
+// - a guest-created thread owns its looper here: addFd records the fd and ALooper_pollOnce polls
+//   it and dispatches the guest callbacks. This is the original behaviour and never changes.
+// - a borrower (a host thread that entered the guest on a leased carrier, i.e. a Java thread)
+//   builds its message loop here but returns to Java and never polls again; its own Android
+//   looper is what polls. Its fds are registered with that real looper through
+//   AndroidLooperBackend, and the host callback re-enters the guest to run the guest callback.
 class HostLooper {
 public:
-    explicit HostLooper(LibraryRuntime& runtime);
+    // Runs a guest function on the calling host thread. The default asks LibraryRuntime for the
+    // guest thread that host thread already runs; the Android build passes HostJni's version,
+    // which also uses that host thread's cached carrier when it currently runs no guest code
+    // (an Android looper callback arrives with the thread back in Java).
+    using GuestInvoker = std::function<std::optional<GuestResult>(std::uint32_t function,
+                                                                  const GuestCall& args)>;
+    // True when this guest thread is a borrower. The default asks the LibraryRuntime.
+    using BorrowerProbe = std::function<bool(const GuestThread& thread)>;
+
+    // backend nullptr (the host build, and any process without an Android looper) keeps every
+    // thread on the guest path.
+    explicit HostLooper(LibraryRuntime& runtime, AndroidLooperBackend* backend = nullptr,
+                        GuestInvoker invoker = {}, BorrowerProbe borrower_probe = {});
     ~HostLooper();
     HostLooper(const HostLooper&) = delete;
     HostLooper& operator=(const HostLooper&) = delete;

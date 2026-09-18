@@ -496,6 +496,10 @@ std::size_t LibraryRuntime::guest_thread_count() const {
     return impl_->process.thread_count();
 }
 
+bool LibraryRuntime::is_borrower(const GuestThread& thread) const {
+    return impl_->process.is_borrower(thread);
+}
+
 LibraryRuntime::Carrier::Carrier(std::unique_ptr<State> state) : state_(std::move(state)) {}
 
 LibraryRuntime::Carrier::~Carrier() {
