@@ -53,7 +53,9 @@ if (ANDROID)
     add_library(zbridge SHARED src/zbridge_c_api.cpp android/zbridge_jni.cpp android/jni_env_backend.cpp
         android/guest_jni_runtime.cpp android/gl_driver_backend.cpp android/asset_driver_backend.cpp
         android/egl_driver_backend.cpp android/native_window_driver_backend.cpp)
-    target_link_libraries(zbridge PRIVATE zbcore GLESv2 EGL android)
+    # GLESv3 for the GLES 3.0 half of GlDriverBackend. On the device both live in the one real
+    # libGLESv2.so; the NDK splits the stub libraries by version.
+    target_link_libraries(zbridge PRIVATE zbcore GLESv2 GLESv3 EGL android)
     set_target_properties(zbridge PROPERTIES CXX_VISIBILITY_PRESET hidden)
     target_compile_definitions(zbridge PRIVATE ZB_EXPORT_C_API)
     # --exclude-libs keeps the statically linked libc++ and friends from being exported, so
