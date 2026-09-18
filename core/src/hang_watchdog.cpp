@@ -146,14 +146,32 @@ std::string thread_kernel_state(std::int32_t tid) {
 // ever ran guest code. Engine threads carry telling names (Flutter uses "1.ui", "1.raster",
 // "1.io"), so this says which part of the guest is missing or waiting, and shows ART's own threads
 // next to ours.
-std::string all_threads_census() {
+// Threads of the runtime itself (binder, ART daemons) crowd out the engine's own, and one report
+// line holds only so much, so they are counted rather than listed and the rest goes out in chunks.
+bool is_platform_thread(const char* name) {
+    static const char* const kNoise[] = {"binder:", "Jit thread pool", "Profile Saver", "ADB-JDWP",
+                                         "Signal Catcher", "perfetto", "HeapTaskDaemon",
+                                         "ReferenceQueueD", "FinalizerDaemon", "FinalizerWatchd",
+                                         "hwuiTask", "RenderThread", "queued-work-loo", "Timer-",
+                                         "GPU completion", "SurfaceSyncGrou"};
+    for (const char* prefix : kNoise) {
+        if (std::strncmp(name, prefix, std::strlen(prefix)) == 0) return true;
+    }
+    return false;
+}
+
+void write_threads_census() {
     DIR* dir = ::opendir("/proc/self/task");
-    if (dir == nullptr) return "(unavailable)";
-    std::string out;
-    unsigned shown = 0;
+    if (dir == nullptr) {
+        runtime_report().note_watch_detail("threads", "(unavailable)");
+        return;
+    }
+    std::string chunk;
+    unsigned chunk_index = 0;
+    unsigned platform = 0;
+    unsigned listed = 0;
     while (const dirent* entry = ::readdir(dir)) {
         if (entry->d_name[0] == '.') continue;
-        if (shown >= 32) break;
         const std::int32_t tid = std::atoi(entry->d_name);
         if (tid == 0) continue;
         char path[64];
@@ -166,12 +184,22 @@ std::string all_threads_census() {
             }
             std::fclose(comm);
         }
-        out += (out.empty() ? "" : " | ") + std::to_string(tid) + ":" + name + " " +
-               thread_kernel_state(tid);
-        ++shown;
+        if (is_platform_thread(name)) {
+            ++platform;
+            continue;
+        }
+        if (listed >= 48) break;
+        ++listed;
+        chunk += (chunk.empty() ? "" : " | ") + std::to_string(tid) + ":" + name + " " +
+                 thread_kernel_state(tid);
+        if (chunk.size() > 420) {
+            runtime_report().note_watch_detail("threads-" + std::to_string(++chunk_index), chunk);
+            chunk.clear();
+        }
     }
     ::closedir(dir);
-    return out;
+    if (!chunk.empty()) runtime_report().note_watch_detail("threads-" + std::to_string(++chunk_index), chunk);
+    runtime_report().note_watch_detail("threads-platform", std::to_string(platform) + " runtime threads hidden");
 }
 
 std::string describe_thread_activity(const ThreadActivitySample& sample) {
@@ -252,7 +280,7 @@ bool HangWatchdog::sample(Clock::time_point now) {
     static bool census_written = false;
     if (!census_written) {
         census_written = true;
-        runtime_report().note_watch_detail("threads", all_threads_census());
+        write_threads_census();
     }
 
     ++notes_written_;
