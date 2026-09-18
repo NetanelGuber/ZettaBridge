@@ -32,7 +32,7 @@ private:
         Engine(JniEnvBackend& backend, GlBackend& gl_backend, AssetBackend& asset_backend,
                EglBackend& egl_backend, NativeWindowBackend& window_backend,
                AndroidLooperBackend& looper_backend)
-            : GuestJniEngine(backend, &gl_backend, gl_egl_context_current, &asset_backend,
+            : GuestJniEngine(backend, &gl_backend, gl_egl_context, &asset_backend,
                              &egl_backend, &window_backend, &looper_backend),
               jni_backend_(backend) {
             enable_gl_diagnostics();

@@ -13,6 +13,7 @@
 #include "mock_gles.h"
 #include "zb/gl_hostcalls.h"
 #include "zb/host_gl.h"
+#include "zb/runtime_report.h"
 
 namespace {
 
@@ -91,12 +92,15 @@ int main() {
     CHECK(runtime.memory().map_anon(kData, 0x1000, PROT_READ | PROT_WRITE));
     MockGles backend;
     std::uint32_t next_allocation = kData + 0x800;
-    zb::HostGl host(runtime, backend, [&](std::size_t size) -> std::optional<std::uint32_t> {
-        const std::uint32_t result = next_allocation;
-        next_allocation += static_cast<std::uint32_t>((size + 7) & ~std::size_t{7});
-        if (next_allocation > kData + 0xF00) return std::nullopt;
-        return result;
-    });
+    zb::HostGl host(
+        runtime, backend,
+        [&](std::size_t size) -> std::optional<std::uint32_t> {
+            const std::uint32_t result = next_allocation;
+            next_allocation += static_cast<std::uint32_t>((size + 7) & ~std::size_t{7});
+            if (next_allocation > kData + 0xF00) return std::nullopt;
+            return result;
+        },
+        [] { return std::uintptr_t{0xC0FFEE}; });
     Dynarmic::ExclusiveMonitor monitor(1);
     zb::GuestThread thread(runtime.memory(), &monitor, 0, false, zb::kCarrierCodeCacheSize);
 
@@ -535,6 +539,54 @@ int main() {
     CHECK(host.handle_host_call(zb::ZB_GL_HC_glMapBufferOES, thread));
     CHECK(backend.calls().empty() && backend.error() == 0x0500);  // GL_INVALID_ENUM
     CHECK(thread.regs()[0] == 0);
+
+    // The bounded device diagnostics must show whether bytes written through a guest mirror
+    // reached the real driver mapping, and identify the context/buffer owning that mapping.
+    // Without these three records, a missing Flutter uniform cannot be localized to map, flush,
+    // or unmap.
+    zb::runtime_report().clear();
+    zb::enable_gl_diagnostics();
+    std::array<std::uint8_t, 16> diagnosed_range;
+    diagnosed_range.fill(0x11);
+    backend.clear_calls();
+    backend.set_integer(0x8894, 77);  // GL_ARRAY_BUFFER_BINDING
+    backend.set_result("glMapBufferRange",
+                       reinterpret_cast<std::uint64_t>(diagnosed_range.data()));
+    backend.set_result("glUnmapBuffer", 1);
+    pointer_words = {0x8892, 0, static_cast<std::uint32_t>(diagnosed_range.size()), 0x0013};
+    set_words(runtime, thread, pointer_words);  // READ | WRITE | FLUSH_EXPLICIT
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glMapBufferRange, thread));
+    const std::uint32_t diagnosed_mirror = thread.regs()[0];
+    CHECK(diagnosed_mirror != 0);
+
+    // A process-wide target-only collision is visible with both contexts/buffers instead of
+    // looking like an unexplained GL_INVALID_OPERATION on a second rendering context.
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glMapBufferRange, thread));
+    CHECK(thread.regs()[0] == 0);
+    std::memset(runtime.memory().base() + diagnosed_mirror + 4, 0x5A, 8);
+
+    pointer_words = {0x8892, 4, 8};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glFlushMappedBufferRange, thread));
+    pointer_words = {0x8892};
+    set_words(runtime, thread, pointer_words);
+    CHECK(host.handle_host_call(zb::ZB_GL_HC_glUnmapBuffer, thread));
+
+    const std::string mapping_report = zb::runtime_report().text();
+    CHECK(mapping_report.find("gl-map-1: context=0xc0ffee target=0x8892 buffer=77 offset=0 "
+                              "length=16 access=0x13 guest=0x") != std::string::npos);
+    CHECK(mapping_report.find("mirror-fnv=0c50476a8dc2d715 "
+                              "driver-fnv=0c50476a8dc2d715") != std::string::npos);
+    CHECK(mapping_report.find("gl-map-flush-1: map=1 offset=4 length=8 "
+                              "mirror-fnv=65c229a27a840fe5 driver-fnv=65c229a27a840fe5") !=
+          std::string::npos);
+    CHECK(mapping_report.find("gl-map-unmap-1: map=1 length=16 "
+                              "mirror-fnv=b39844b9e6cdebed driver-fnv=b39844b9e6cdebed") !=
+          std::string::npos);
+    CHECK(mapping_report.find("gl-map-collision-1: context=0xc0ffee target=0x8892 buffer=77 "
+                              "existing-map=1 existing-context=0xc0ffee existing-buffer=77") !=
+          std::string::npos);
 
     // The asset range is deliberately not swallowed by HostGl.
     CHECK(!host.handle_host_call(142, thread));

@@ -1431,3 +1431,32 @@ NEXT, in order:
 3. `gl-text-draw-N` readbacks came back `changed=no` with an all-zero "before", which is expected
    when the draw targets an offscreen framebuffer (`gl-sample-draw-3000: fb=38`). Read from the
    framebuffer that is actually bound at that draw before concluding anything.
+
+### Done 2026-09-18: mapped-buffer mirror traffic diagnostics
+
+The first lead above is implemented without changing map/copy semantics. The first 12 successful
+`glMapBufferRange`/`glMapBufferOES` calls now get a stable diagnostic id and report:
+
+- actual host EGL context, target, currently bound buffer, mapped offset/length/access and guest
+  mirror address;
+- FNV-1a checksums of mirror and driver bytes immediately after map;
+- the flushed subrange's mirror and driver checksums after copy-back;
+- the complete mirror and driver checksums after unmap copy-back.
+
+A process-wide target collision records both the new and existing context/buffer/map id before
+the existing `GL_INVALID_OPERATION` rejection. This will distinguish broken copy-back from the
+known architectural risk that the mapping table is keyed only by target.
+
+TDD evidence: `gles_marshal_test` first failed because `gl-map-1` was absent. It now verifies the
+real host-call path with context `0xc0ffee`, buffer 77, exact independently computed FNV values at
+map/flush/unmap, and a second-map collision. Fresh gate: host 47/47, guest 11/11, Android
+`zbridge`/`zbproxy`, launcher bundle and Gradle debug APK all pass.
+
+Ready APK: `/sdcard/ZettaBridge-debug.apk`, 9,370,184 bytes, SHA-256
+`6c86772a0d3aa15e4d0e6bb5f44bfa9922512395887585b351d255f1dc62ad40`.
+
+**NEXT/device gate:** install this APK, force-stop the launcher, run avtobuy for long enough to
+render the affected screen, then send the complete Last run report. Compare every `gl-map-N`
+with its `gl-map-flush-N`/`gl-map-unmap-N`: unequal post-copy checksums prove the mirror path;
+any `gl-map-collision-N` proves the target-only key is wrong. If both are clean, stop changing
+mapped buffers and investigate the four broken image assets separately from the text pipeline.

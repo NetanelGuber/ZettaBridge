@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "gl/gl_diagnostics.h"
 #include "zb/log.h"
 
 namespace zb {
@@ -838,6 +839,7 @@ struct BufferMapping {
     std::uint8_t* data = nullptr;
     std::uint64_t length = 0;
     GLbitfield access = 0;
+    GlMapDiagnostic diagnostic;
 };
 
 std::mutex mapping_mutex;
@@ -896,6 +898,7 @@ bool unmap_mirrored(HostGl& host, HostGl::Call& call, bool oes) {
             host.reject(call, kGlInvalidOperation, "mapped buffer mirror is unreadable");
         } else {
             std::memcpy(mapping.data, mirror, static_cast<std::size_t>(mapping.length));
+            gl_diagnose_map_unmap(mapping.diagnostic, mapping.length, mirror, mapping.data);
         }
     }
     const GLboolean result =
@@ -990,6 +993,7 @@ bool zbgl_manual_glMapBufferRange(HostGl& host, HostGl::Call& call) {
     }
     BufferMapping existing;
     if (find_mapping(target, existing)) {
+        gl_diagnose_map_collision(host, target, existing.diagnostic);
         host.reject(call, kGlInvalidOperation, "buffer target is already mapped");
         return true;
     }
@@ -1013,10 +1017,14 @@ bool zbgl_manual_glMapBufferRange(HostGl& host, HostGl::Call& call) {
     if (!invalidated && (access & (kGlMapRead | kGlMapWrite)) != 0) {
         std::memcpy(mirror, mapped, static_cast<std::size_t>(length));
     }
+    const GlMapDiagnostic diagnostic =
+        gl_diagnose_map(host, target, offset, length, access, *address, mirror,
+                        static_cast<const std::uint8_t*>(mapped));
     {
         std::lock_guard<std::mutex> lock(mapping_mutex);
-        mappings[target] = BufferMapping{*address, static_cast<std::uint8_t*>(mapped),
-                                         static_cast<std::uint64_t>(length), access};
+        mappings[target] = BufferMapping{
+            *address, static_cast<std::uint8_t*>(mapped), static_cast<std::uint64_t>(length),
+            access, diagnostic};
     }
     call.set_result(*address);
     return true;
@@ -1048,6 +1056,8 @@ bool zbgl_manual_glFlushMappedBufferRange(HostGl& host, HostGl::Call& call) {
             return true;
         }
         std::memcpy(mapping.data + offset, mirror, static_cast<std::size_t>(length));
+        gl_diagnose_map_flush(mapping.diagnostic, offset, length, mirror,
+                              mapping.data + offset);
     }
     host.backend().glFlushMappedBufferRange(target, offset, length);
     return true;
@@ -1099,10 +1109,14 @@ bool zbgl_manual_glMapBufferOES(HostGl& host, HostGl::Call& call) {
     // Unlike glMapBufferRange there is no invalidate bit: the data store keeps its contents, so
     // a partial writer must see them.
     std::memcpy(mirror, mapped, static_cast<std::size_t>(size));
+    const GlMapDiagnostic diagnostic =
+        gl_diagnose_map(host, target, 0, size, bits, *address, mirror,
+                        static_cast<const std::uint8_t*>(mapped));
     {
         std::lock_guard<std::mutex> lock(mapping_mutex);
-        mappings[target] = BufferMapping{*address, static_cast<std::uint8_t*>(mapped),
-                                         static_cast<std::uint64_t>(size), bits};
+        mappings[target] = BufferMapping{
+            *address, static_cast<std::uint8_t*>(mapped), static_cast<std::uint64_t>(size), bits,
+            diagnostic};
     }
     call.set_result(*address);
     return true;

@@ -81,8 +81,8 @@ std::uint64_t GlDriverBackend::invoke(const char*, std::initializer_list<std::ui
     return 0;
 }
 
-bool gl_egl_context_current() {
-    return eglGetCurrentContext() != EGL_NO_CONTEXT;
+std::uintptr_t gl_egl_context() {
+    return reinterpret_cast<std::uintptr_t>(eglGetCurrentContext());
 }
 
 }  // namespace zb

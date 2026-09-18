@@ -4,6 +4,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 
 #include "zb/gl_backend.h"
 #include "zb/gl_hostcalls.h"
@@ -53,8 +54,8 @@ private:
     std::array<std::atomic<void*>, kGlHostCallExtCount> extension_entries_{};
 };
 
-// eglGetCurrentContext() != EGL_NO_CONTEXT on the calling thread. Links EGL only for this check,
-// called once by HostGl on the first GLES host call (see RuntimeReport's GL section).
-bool gl_egl_context_current();
+// The current EGLContext as an opaque integer. HostGl uses zero/nonzero for its top-level check
+// and the identity for bounded mapped-buffer diagnostics.
+std::uintptr_t gl_egl_context();
 
 }  // namespace zb

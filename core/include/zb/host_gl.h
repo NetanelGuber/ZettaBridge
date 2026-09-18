@@ -104,9 +104,10 @@ public:
         bool valid_ = true;
     };
 
-    // Called at most once, on the first GLES host call, to check eglGetCurrentContext() on the
-    // calling thread. Left empty on the host (no EGL); the Android wiring supplies it.
-    using EglContextProbe = std::function<bool()>;
+    // Returns the current host EGLContext as an opaque integer. Called once for the top-level
+    // report check and by bounded mapped-buffer diagnostics. Left empty on the host (no EGL);
+    // the Android wiring supplies it.
+    using EglContextProbe = std::function<std::uintptr_t()>;
 
     HostGl(LibraryRuntime& runtime, GlBackend& backend, GuestAllocator allocator = {},
            EglContextProbe egl_context_probe = {})
@@ -118,6 +119,7 @@ public:
     bool handle_host_call(std::uint32_t index, GuestThread& thread);
     LibraryRuntime& runtime() { return runtime_; }
     GlBackend& backend() { return backend_; }
+    std::uintptr_t egl_context() const { return egl_context_probe_ ? egl_context_probe_() : 0; }
     void reject(Call& call, GLenum error, const char* reason);
     void note_pixel_store(GLenum pname, GLint param);
     void note_bind_buffer(GLenum target, GLuint buffer);

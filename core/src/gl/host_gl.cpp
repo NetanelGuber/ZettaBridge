@@ -96,7 +96,7 @@ bool HostGl::handle_host_call(std::uint32_t index, GuestThread& thread) {
     }
     if (!egl_context_checked_) {
         egl_context_checked_ = true;
-        if (egl_context_probe_) runtime_report().note_gl_egl_context(egl_context_probe_());
+        if (egl_context_probe_) runtime_report().note_gl_egl_context(egl_context() != 0);
     }
     Call call(*this, thread, index);
     if (gl_diagnostics_enabled()) gl_diagnose_before(*this, call);

@@ -27,6 +27,7 @@ constexpr GLenum kFramebufferBinding = 0x8CA6;
 constexpr GLenum kViewport = 0x0BA2;
 constexpr GLenum kScissorBox = 0x0C10;
 constexpr GLenum kCurrentProgram = 0x8B8D;
+constexpr GLenum kArrayBuffer = 0x8892;
 constexpr GLenum kArrayBufferBinding = 0x8894;
 constexpr GLenum kColorWritemask = 0x0C23;
 constexpr GLenum kScissorTest = 0x0C11;
@@ -55,6 +56,17 @@ constexpr GLenum kR8 = 0x8229;
 constexpr GLenum kPixelUnpackBufferBinding = 0x88EF;
 constexpr GLenum kUniformBuffer = 0x8A11;
 constexpr GLenum kUniformBufferBinding = 0x8A28;
+constexpr GLenum kElementArrayBuffer = 0x8893;
+constexpr GLenum kElementArrayBufferBinding = 0x8895;
+constexpr GLenum kCopyReadBuffer = 0x8F36;
+constexpr GLenum kCopyReadBufferBinding = 0x8F36;
+constexpr GLenum kCopyWriteBuffer = 0x8F37;
+constexpr GLenum kCopyWriteBufferBinding = 0x8F37;
+constexpr GLenum kPixelPackBuffer = 0x88EB;
+constexpr GLenum kPixelPackBufferBinding = 0x88ED;
+constexpr GLenum kPixelUnpackBuffer = 0x88EC;
+constexpr GLenum kTransformFeedbackBuffer = 0x8C8E;
+constexpr GLenum kTransformFeedbackBufferBinding = 0x8C8F;
 
 // Bytes per pixel for GL_UNSIGNED_BYTE uploads of the formats seen in practice. Returns 0 for
 // anything else (compressed, float, or a format this diagnostic does not know), in which case the
@@ -136,6 +148,9 @@ struct State {
     GLint text_snapshot_x = 0;
     GLint text_snapshot_y = 0;
     std::uint8_t text_snapshot_before[32 * 32 * 4] = {};
+
+    std::uint64_t map_calls = 0;
+    std::uint64_t map_collisions = 0;
 };
 
 State& state() {
@@ -155,6 +170,37 @@ std::string format(const char* fmt, ...) {
 
 void detail(const char* key, const std::string& value, bool overwrite = false) {
     runtime_report().note_gl_detail(key, value, overwrite);
+}
+
+std::uint64_t fnv1a(const std::uint8_t* bytes, std::uint64_t length) {
+    std::uint64_t hash = 14695981039346656037ull;
+    for (std::uint64_t i = 0; i < length; ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+GLenum buffer_binding(GLenum target) {
+    switch (target) {
+    case kArrayBuffer: return kArrayBufferBinding;
+    case kElementArrayBuffer: return kElementArrayBufferBinding;
+    case kCopyReadBuffer: return kCopyReadBufferBinding;
+    case kCopyWriteBuffer: return kCopyWriteBufferBinding;
+    case kPixelPackBuffer: return kPixelPackBufferBinding;
+    case kPixelUnpackBuffer: return kPixelUnpackBufferBinding;
+    case kTransformFeedbackBuffer: return kTransformFeedbackBufferBinding;
+    case kUniformBuffer: return kUniformBufferBinding;
+    default: return 0;
+    }
+}
+
+GLuint current_buffer(HostGl& host, GLenum target) {
+    const GLenum binding = buffer_binding(target);
+    if (binding == 0) return 0;
+    GLint buffer = 0;
+    host.backend().glGetIntegerv(binding, &buffer);
+    return buffer > 0 ? static_cast<GLuint>(buffer) : 0;
 }
 
 std::string shader_text(GlBackend& gl, GLuint object, bool source) {
@@ -327,6 +373,68 @@ std::atomic<bool> g_enabled{false};
 void enable_gl_diagnostics() { g_enabled.store(true, std::memory_order_relaxed); }
 
 bool gl_diagnostics_enabled() { return g_enabled.load(std::memory_order_relaxed); }
+
+GlMapDiagnostic gl_diagnose_map(HostGl& host, GLenum target, GLintptr offset, GLsizeiptr length,
+                                GLbitfield access, std::uint32_t guest, const std::uint8_t* mirror,
+                                const std::uint8_t* driver) {
+    if (!gl_diagnostics_enabled()) return {};
+    GlMapDiagnostic diagnostic;
+    diagnostic.context = host.egl_context();
+    diagnostic.buffer = current_buffer(host, target);
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    diagnostic.id = ++s.map_calls;
+    if (diagnostic.id > 12) return {};
+    const std::string key = "map-" + std::to_string(diagnostic.id);
+    detail(key.c_str(),
+           format("context=0x%llx target=0x%x buffer=%u offset=%lld length=%lld access=0x%x "
+                  "guest=0x%x mirror-fnv=%016llx driver-fnv=%016llx",
+                  (unsigned long long)diagnostic.context, target, diagnostic.buffer,
+                  (long long)offset, (long long)length, access, guest,
+                  (unsigned long long)fnv1a(mirror, static_cast<std::uint64_t>(length)),
+                  (unsigned long long)fnv1a(driver, static_cast<std::uint64_t>(length))));
+    return diagnostic;
+}
+
+void gl_diagnose_map_flush(const GlMapDiagnostic& mapping, GLintptr offset, GLsizeiptr length,
+                           const std::uint8_t* mirror, const std::uint8_t* driver) {
+    if (mapping.id == 0) return;
+    const std::string key = "map-flush-" + std::to_string(mapping.id);
+    detail(key.c_str(),
+           format("map=%llu offset=%lld length=%lld mirror-fnv=%016llx driver-fnv=%016llx",
+                  (unsigned long long)mapping.id, (long long)offset, (long long)length,
+                  (unsigned long long)fnv1a(mirror, static_cast<std::uint64_t>(length)),
+                  (unsigned long long)fnv1a(driver, static_cast<std::uint64_t>(length))));
+}
+
+void gl_diagnose_map_unmap(const GlMapDiagnostic& mapping, std::uint64_t length,
+                           const std::uint8_t* mirror, const std::uint8_t* driver) {
+    if (mapping.id == 0) return;
+    const std::string key = "map-unmap-" + std::to_string(mapping.id);
+    detail(key.c_str(),
+           format("map=%llu length=%llu mirror-fnv=%016llx driver-fnv=%016llx",
+                  (unsigned long long)mapping.id, (unsigned long long)length,
+                  (unsigned long long)fnv1a(mirror, length),
+                  (unsigned long long)fnv1a(driver, length)));
+}
+
+void gl_diagnose_map_collision(HostGl& host, GLenum target,
+                               const GlMapDiagnostic& existing) {
+    if (!gl_diagnostics_enabled()) return;
+    const std::uintptr_t context = host.egl_context();
+    const GLuint buffer = current_buffer(host, target);
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    const std::uint64_t number = ++s.map_collisions;
+    if (number > 4) return;
+    const std::string key = "map-collision-" + std::to_string(number);
+    detail(key.c_str(),
+           format("context=0x%llx target=0x%x buffer=%u existing-map=%llu "
+                  "existing-context=0x%llx existing-buffer=%u",
+                  (unsigned long long)context, target, buffer,
+                  (unsigned long long)existing.id, (unsigned long long)existing.context,
+                  existing.buffer));
+}
 
 void gl_diagnose(HostGl& host, HostGl::Call& call) {
     GlBackend& gl = host.backend();
