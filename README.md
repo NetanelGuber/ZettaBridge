@@ -59,10 +59,16 @@ ZettaBridge launcher (arm64 app)
   - Java -> guest native calls from multiple Java threads;
   - `RegisterNatives`;
   - library loading and `Java_*` binding.
-- **First test game.** All native libraries of Orange Roulette (a 2014 Haxe/OpenFL game)
-  load with their JNI entry points.
+- **GLES 2.0 and 3.0 passthrough, EGL and ANativeWindow.** Guests create their own GL context
+  on their own thread; ~490 entry points are generated from the Khronos registry.
+- **Games running on the phone.**
+  - *Orange Roulette* (2014, Haxe/OpenFL): menus and gameplay, with sound.
+  - *Flappy Bird* (AndEngine): playable.
+  - A modern Flutter app starts, runs its Dart code, presents frames and takes touch input,
+    though rendering is not yet complete.
 
-In progress: wiring the JNI bridge into the launcher on a real phone.
+Not supported yet: `NativeActivity` (so Unity and pure-NDK guests do not start), Vulkan, and
+anything that needs a real package installation.
 
 ## Roadmap
 
