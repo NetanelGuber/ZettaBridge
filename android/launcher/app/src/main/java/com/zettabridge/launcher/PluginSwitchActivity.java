@@ -42,9 +42,15 @@ public class PluginSwitchActivity extends Activity {
             return;
         }
         String active = ActivePlugin.of(this);
-        if (active == null || active.equals(packageName)) {
-            // No guest process, or it already holds this plugin: launching brings it to the front.
-            startGuest(packageName);
+        if (packageName.equals(active)) {
+            // The guest process already holds this plugin: launching brings its task to the front.
+            startGuest(packageName, false);
+            return;
+        }
+        if (active == null) {
+            // No guest process. A task may still be left over from a game that ended, so it has
+            // to go: a stale task is otherwise recreated from its own intent, the previous game.
+            startGuest(packageName, true);
             return;
         }
         Toast.makeText(this, "Closing the previous game...", Toast.LENGTH_SHORT).show();
@@ -59,11 +65,11 @@ public class PluginSwitchActivity extends Activity {
                     () -> waitForGuestToGo(step + 1, packageName), WAIT_STEP_MS);
             return;
         }
-        startGuest(packageName);
+        startGuest(packageName, true);
     }
 
-    private void startGuest(String packageName) {
-        startActivity(GuestLaunchActivity.intent(this, packageName));
+    private void startGuest(String packageName, boolean clearTask) {
+        startActivity(GuestLaunchActivity.intent(this, packageName, clearTask));
         finish();
     }
 }

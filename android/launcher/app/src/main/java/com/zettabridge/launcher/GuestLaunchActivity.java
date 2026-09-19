@@ -3,6 +3,7 @@ package com.zettabridge.launcher;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -20,11 +21,21 @@ public class GuestLaunchActivity extends Activity {
     private static final String TAG = "zb-launcher";
     static final String EXTRA_PACKAGE = "com.zettabridge.launcher.PACKAGE";
 
-    static Intent intent(Context context, String packageName) {
-        return new Intent(Intent.ACTION_MAIN)
+    /**
+     * The intent that opens a plugin. The data names the plugin, because Android matches an
+     * existing task against the intent that created it and ignores extras: with no data, a launch
+     * of one plugin matches the task of another and revives that one instead. {@code clearTask}
+     * discards a task left by a different plugin; without it a task whose process is gone is
+     * recreated from its own old intent, which is the previous game.
+     */
+    static Intent intent(Context context, String packageName, boolean clearTask) {
+        Intent intent = new Intent(Intent.ACTION_MAIN)
                 .setClass(context, GuestLaunchActivity.class)
+                .setData(Uri.parse("zbguest://" + packageName))
                 .putExtra(EXTRA_PACKAGE, packageName)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (clearTask) intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        return intent;
     }
 
     @Override
