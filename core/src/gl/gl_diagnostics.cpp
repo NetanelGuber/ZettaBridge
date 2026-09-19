@@ -35,6 +35,10 @@ constexpr GLenum kColorWritemask = 0x0C23;
 constexpr GLenum kScissorTest = 0x0C11;
 constexpr GLenum kDepthTest = 0x0B71;
 constexpr GLenum kBlend = 0x0BE2;
+constexpr GLenum kBlendDstRgb = 0x80C8;
+constexpr GLenum kBlendSrcRgb = 0x80C9;
+constexpr GLenum kBlendDstAlpha = 0x80CA;
+constexpr GLenum kBlendSrcAlpha = 0x80CB;
 constexpr GLenum kCullFace = 0x0B44;
 constexpr GLenum kStencilTest = 0x0B90;
 constexpr GLenum kFramebuffer = 0x8D40;
@@ -148,7 +152,14 @@ struct State {
     // First 8 glUniformBlockBinding/glGetUniformBlockIndex calls.
     std::uint64_t uniform_block_calls = 0;
 
-    // Before/after framebuffer readback around the first 3 draws with the glyph atlas
+    // Every draw with the glyph atlas texture bound, split by the framebuffer bound at that
+    // draw. "onscreen" here means fb 0 with a viewport bigger than 64x64: real content, not
+    // Impeller's 2x2 offscreen warm-up draws.
+    std::uint64_t atlas_draws_total = 0;
+    std::uint64_t atlas_draws_fb0 = 0;
+    std::uint64_t atlas_draws_onscreen = 0;
+
+    // Before/after framebuffer readback around the first 3 onscreen draws with the glyph atlas
     // texture bound to the active texture unit.
     std::uint64_t text_draws_captured = 0;
     bool text_snapshot_pending = false;
@@ -606,12 +617,46 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
                                p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10],
                                p[11], p[12], p[13], p[14], p[15]);
             };
-            const std::string key = "text-draw-" + std::to_string(s.text_draws_captured);
-            detail(key.c_str(), format("region=%d,%d 32x32 texture=%u ", s.text_snapshot_x,
-                                       s.text_snapshot_y, s.glyph_atlas_texture) +
-                                     "before=" + pixels4(s.text_snapshot_before) +
-                                     " after=" + pixels4(after) +
-                                     format(" changed=%s", changed ? "yes" : "no"));
+
+            GLint program = -1, array_buffer = -1;
+            gl.glGetIntegerv(kCurrentProgram, &program);
+            gl.glGetIntegerv(kArrayBufferBinding, &array_buffer);
+            const GLboolean blend_enabled = gl.glIsEnabled(kBlend);
+            GLint blend_src_rgb = -1, blend_dst_rgb = -1, blend_src_alpha = -1, blend_dst_alpha = -1;
+            gl.glGetIntegerv(kBlendSrcRgb, &blend_src_rgb);
+            gl.glGetIntegerv(kBlendDstRgb, &blend_dst_rgb);
+            gl.glGetIntegerv(kBlendSrcAlpha, &blend_src_alpha);
+            gl.glGetIntegerv(kBlendDstAlpha, &blend_dst_alpha);
+            GLboolean mask[4] = {9, 9, 9, 9};
+            gl.glGetBooleanv(kColorWritemask, mask);
+            GLint scissor[4] = {0, 0, 0, 0};
+            gl.glGetIntegerv(kScissorBox, scissor);
+            const GLboolean depth_enabled = gl.glIsEnabled(kDepthTest);
+            const GLboolean stencil_enabled = gl.glIsEnabled(kStencilTest);
+
+            const std::string key = "onscreen-text-" + std::to_string(s.text_draws_captured);
+            detail(key.c_str(),
+                   format("program=%d vertices=%d mode=0x%x region=%d,%d 32x32 texture=%u "
+                          "blend=%d blend-src-alpha=0x%x blend-dst-alpha=0x%x blend-src-rgb=0x%x "
+                          "blend-dst-rgb=0x%x colormask=%d%d%d%d scissor=%d,%d,%dx%d depth=%d "
+                          "stencil=%d array-buffer=%d ",
+                          program, count, mode, s.text_snapshot_x, s.text_snapshot_y,
+                          s.glyph_atlas_texture, blend_enabled, blend_src_alpha, blend_dst_alpha,
+                          blend_src_rgb, blend_dst_rgb, mask[0], mask[1], mask[2], mask[3],
+                          scissor[0], scissor[1], scissor[2], scissor[3], depth_enabled,
+                          stencil_enabled, array_buffer) +
+                       "before=" + pixels4(s.text_snapshot_before) + " after=" + pixels4(after) +
+                       format(" changed=%s", changed ? "yes" : "no"));
+        }
+        if (draw == 1 || draw % 256 == 0) {
+            detail("atlas-draws",
+                   format("total=%llu fb0=%llu onscreen-first-frame=%llu",
+                          (unsigned long long)s.atlas_draws_total, (unsigned long long)s.atlas_draws_fb0,
+                          (unsigned long long)s.atlas_draws_onscreen),
+                   true);
+        }
+        if (draw == 20000 && s.atlas_draws_onscreen == 0) {
+            detail("atlas-draws-onscreen", "none");
         }
         if (draw == 1 || draw % 256 == 0) {
             detail("draws", format("total=%llu empty=%llu offscreen=%llu clears=%llu",
@@ -912,11 +957,23 @@ void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
     if (index != ZB_GL_HC_glDrawArrays && index != ZB_GL_HC_glDrawElements) return;
     State& s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
-    if (s.text_draws_captured >= 3 || s.glyph_atlas_texture == 0) return;
+    if (s.glyph_atlas_texture == 0) return;
     GlBackend& gl = host.backend();
     GLint active_texture = -1;
     gl.glGetIntegerv(kTextureBinding2d, &active_texture);
     if (active_texture != static_cast<GLint>(s.glyph_atlas_texture)) return;
+
+    ++s.atlas_draws_total;
+    GLint framebuffer = -1;
+    gl.glGetIntegerv(kFramebufferBinding, &framebuffer);
+    const bool fb0 = framebuffer == 0;
+    if (fb0) ++s.atlas_draws_fb0;
+    GLint viewport[4] = {0, 0, 0, 0};
+    gl.glGetIntegerv(kViewport, viewport);
+    const bool onscreen = fb0 && viewport[2] > 64 && viewport[3] > 64;
+    if (onscreen) ++s.atlas_draws_onscreen;
+
+    if (s.text_draws_captured >= 3 || !onscreen) return;
     GLint scissor[4] = {0, 0, 0, 0};
     gl.glGetIntegerv(kScissorBox, scissor);
     GLint x = scissor[0] + scissor[2] / 2 - 16;
