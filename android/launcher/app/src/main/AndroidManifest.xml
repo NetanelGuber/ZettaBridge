@@ -29,9 +29,10 @@
              start in a fresh one. -->
         <activity
             android:name=".PluginSwitchActivity"
-            android:exported="false"
-            android:taskAffinity="com.zettabridge.launcher.guest"
-            android:theme="@android:style/Theme.NoDisplay" />
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="com.zettabridge.launcher.switch"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <activity
             android:name=".GuestLaunchActivity"

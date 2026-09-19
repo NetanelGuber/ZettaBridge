@@ -86,6 +86,7 @@ final class GuestRuntime {
         // package manager queries already see the plugin's meta-data.
         p = LoadedPlugin.load(host, record, loaded -> current = loaded);
         plugins.put(packageName, p);
+        ActivePlugin.record(host, packageName);
         return p;
     }
 

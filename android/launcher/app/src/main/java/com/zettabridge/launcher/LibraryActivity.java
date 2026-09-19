@@ -3,6 +3,7 @@ package com.zettabridge.launcher;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.AlertDialog;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
@@ -103,6 +104,33 @@ public class LibraryActivity extends Activity {
         plugins.addAll(PluginStore.list(this));
         emptyView.setVisibility(plugins.isEmpty() ? View.VISIBLE : View.GONE);
         adapter.notifyDataSetChanged();
+        repointPinnedShortcuts();
+    }
+
+    /**
+     * Points shortcuts pinned by an older version at the router. They were pinned straight at the
+     * guest entry point, which Android resolves to the running game's task instead of launching.
+     */
+    private void repointPinnedShortcuts() {
+        ShortcutManager sm = getSystemService(ShortcutManager.class);
+        if (sm == null) return;
+        try {
+            List<ShortcutInfo> updated = new ArrayList<>();
+            for (ShortcutInfo pinned : sm.getPinnedShortcuts()) {
+                for (PluginRecord r : plugins) {
+                    if (!shortcutId(r).equals(pinned.getId())) continue;
+                    ComponentName target = pinned.getIntent() != null ? pinned.getIntent().getComponent() : null;
+                    if (target != null && PluginSwitchActivity.class.getName().equals(target.getClassName())) break;
+                    updated.add(new ShortcutInfo.Builder(this, pinned.getId())
+                            .setIntent(PluginSwitchActivity.intent(this, r.packageName))
+                            .build());
+                    break;
+                }
+            }
+            if (!updated.isEmpty()) sm.updateShortcuts(updated);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "cannot repoint the pinned shortcuts: " + e);
+        }
     }
 
     private View row(PluginRecord r) {
@@ -179,7 +207,7 @@ public class LibraryActivity extends Activity {
             Toast.makeText(this, r.label + ": " + r.status(), Toast.LENGTH_LONG).show();
             return;
         }
-        startActivity(GuestLaunchActivity.intent(this, r.packageName));
+        startActivity(PluginSwitchActivity.intent(this, r.packageName));
     }
 
     private void showActions(PluginRecord r) {
@@ -296,7 +324,7 @@ public class LibraryActivity extends Activity {
                 .setShortLabel(r.label)
                 .setLongLabel(r.label)
                 .setIcon(icon)
-                .setIntent(GuestLaunchActivity.intent(this, r.packageName))
+                .setIntent(PluginSwitchActivity.intent(this, r.packageName))
                 .build();
         sm.requestPinShortcut(info, null);
     }
