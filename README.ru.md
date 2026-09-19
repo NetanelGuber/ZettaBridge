@@ -137,6 +137,11 @@ tools/extract_sysroot.sh; tools/build_guest.sh; ctest --test-dir build/host; too
 32-битные системные библиотеки в `sysroot/`. Сборка `libzbridge.so` под Android и
 лаунчера описана в `CLAUDE.md` и `docs/`.
 
+## Поддержать проект
+
+ZettaBridge пишет один человек. Если он запустил нужное вам приложение — [Boosty](https://boosty.to/zailox)
+помогает продолжать.
+
 ## Как помочь
 
 Проект молодой. Самое полезное сейчас — issues с названиями старых 32-битных приложений,

@@ -124,6 +124,11 @@ tools/extract_sysroot.sh; tools/build_guest.sh; ctest --test-dir build/host; too
 system libraries into `sysroot/`. The Android build of `libzbridge.so` and the launcher are
 described in `CLAUDE.md` and `docs/`.
 
+## Supporting the project
+
+ZettaBridge is written by one person. If it runs an app you needed, [Boosty](https://boosty.to/zailox)
+keeps the work going.
+
 ## Contributing
 
 The project is young. The most useful contributions right now are issues that name
