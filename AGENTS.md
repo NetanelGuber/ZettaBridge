@@ -1563,3 +1563,10 @@ Ready A/B APK: `/sdcard/ZettaBridge-debug.apk`, 9,377,272 bytes, SHA-256
 missing images change and whether either run exits. If there is no improvement, revert this A/B
 compatibility commit and instrument a real onscreen text draw (the current first three text samples
 are Impeller's 2x2 offscreen warm-up and do not prove the later onscreen draw output).
+
+### A/B result: reverted
+
+The device run with the GL_R8/GL_RED swizzle A/B showed no text improvement, only partial image
+recovery and occasional crashes, so the acceptance criterion failed. The A/B compatibility commit
+is reverted; the sampling-semantic boundary it targeted is ruled out. Next: instrument the real
+onscreen text draws instead of the offscreen warm-up samples.
