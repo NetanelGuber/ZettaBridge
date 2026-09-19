@@ -123,7 +123,16 @@ from, and what happens.
 
 ## License
 
-ZettaBridge is licensed under the **GNU General Public License v3.0**; see
-[LICENSE](LICENSE). Third-party code keeps its own license; see `third_party/README.md`.
-Dynarmic is 0BSD. AOSP system libraries used at run time are Apache-2.0 and are not part of
-this repository.
+ZettaBridge is **source-available, not open source**. Two licences apply cumulatively (see
+[LICENSE](LICENSE)): **PolyForm Noncommercial 1.0.0** and **PolyForm Perimeter 1.0.1**. Read it,
+change it, share it for noncommercial purposes. What both together forbid: making money from it,
+and providing others a competing product - a competing product counts even when it is free.
+
+Commercial use of any kind - selling it, shipping it inside a product, preinstalling it in a
+device ROM - needs a separate licence from the author, which is available on request.
+
+Contributions are accepted with a copyright assignment; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Third-party code keeps its own licence; see `third_party/README.md`. Dynarmic is 0BSD and the
+Khronos registry files are Apache-2.0. AOSP system libraries used at run time are Apache-2.0 and
+are not part of this repository.
