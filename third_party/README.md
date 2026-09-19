@@ -1,5 +1,14 @@
 # Third-party code
 
+## Khronos registries
+
+- `third_party/registry/gl.xml` and `third_party/registry/egl.xml`, copied from the Khronos
+  OpenGL-Registry and EGL-Registry.
+- Copyright The Khronos Group Inc., SPDX-License-Identifier: Apache-2.0 (the headers are in the
+  files themselves).
+- They are the input of `tools/gen_stubs.py`, `tools/gen_gles.py` and `tools/gen_egl.py`, which
+  generate the guest trap stubs and the host-side marshaling.
+
 ## dynarmic
 
 - Source: https://github.com/Vita3K/dynarmic (git submodule `third_party/dynarmic`)
