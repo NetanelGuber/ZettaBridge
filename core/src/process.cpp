@@ -6,6 +6,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <atomic>
+
 #include <cerrno>
 #include <climits>
 #include <csignal>
@@ -237,7 +239,18 @@ std::string Process::translate_path(const char* guest_path) const {
                 std::string out = sysroot_;
                 out += m.sysroot_prefix;
                 out += path.substr(m.guest_prefix.size());
-                return out;
+                // The sysroot holds the 32-bit libraries and nothing else, but guests also read
+                // plain data from the system: fonts (/system/fonts, /system/etc/fonts.xml),
+                // timezone tables, configuration. Those are architecture-independent, so a path
+                // the sysroot does not have falls through to the device's own file. Flutter drew
+                // its icons (a font inside the APK) and no text at all until this fallback
+                // existed, because every /system/fonts lookup landed in the sysroot and failed.
+                if (::access(out.c_str(), F_OK) == 0) return out;
+                static std::atomic<unsigned> fallbacks{0};
+                const unsigned seen = fallbacks.fetch_add(1) + 1;
+                if (seen <= 8) log("sysroot has no %.*s; using the device file",
+                                   static_cast<int>(path.size()), path.data());
+                return std::string(path);
             }
         }
     }

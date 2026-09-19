@@ -126,10 +126,14 @@ bool open_worth_watching(const char* path) {
     if (path == nullptr) return false;
     const std::string_view name(path);
     if (name.find("flutter_assets") != std::string_view::npos) return true;
+    // Fonts decide whether a guest can draw text at all, so their opens and failures deserve the
+    // same attention as libraries.
+    if (name.find("/fonts") != std::string_view::npos) return true;
     auto ends_with = [&](std::string_view suffix) {
         return name.size() >= suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
     };
-    return ends_with(".so") || ends_with(".dat") || ends_with(".bin");
+    return ends_with(".so") || ends_with(".dat") || ends_with(".bin") || ends_with(".ttf") ||
+           ends_with(".otf") || ends_with(".ttc") || ends_with("fonts.xml");
 }
 
 // Records an openat() of a watched path in the runtime report. Only called after a matching
