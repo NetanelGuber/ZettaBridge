@@ -31,3 +31,10 @@ Screenshot_*.jpg
 3.jpg
 crash.txt
 tools/__pycache__/
+
+# release signing material: never in the repository
+*.keystore
+*.jks
+signing.properties
+local.properties
+crash.txt.bak

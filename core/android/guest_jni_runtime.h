@@ -2,6 +2,7 @@
 
 #include <jni.h>
 
+#include <cstdlib>
 #include <string>
 
 #include "asset_driver_backend.h"
@@ -35,7 +36,11 @@ private:
             : GuestJniEngine(backend, &gl_backend, gl_egl_context, &asset_backend,
                              &egl_backend, &window_backend, &looper_backend),
               jni_backend_(backend) {
-            enable_gl_diagnostics();
+            // Opt-in only: the GL instrumentation reads back whole framebuffers and diffs pixels
+            // per draw, which is far too expensive for a release run. Gated exactly like
+            // ZB_PRECISE_FAULTS (see Process): ZB_GL_DIAGNOSTICS=1 turns it on.
+            const char* diagnostics = std::getenv("ZB_GL_DIAGNOSTICS");
+            if (diagnostics != nullptr && diagnostics[0] == '1') enable_gl_diagnostics();
         }
         bool bind_class_loader(JniBackend::Env env, JniBackend::Ref loader, std::string& error) override;
 

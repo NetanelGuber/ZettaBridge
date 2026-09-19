@@ -106,4 +106,12 @@ public final class ZBridge {
      * reads the variable only once.
      */
     public static native void setPreciseFaults(boolean enabled);
+
+    /**
+     * Sets ZB_GL_DIAGNOSTICS in this process's environment (setenv), which turns on the GL
+     * instrumentation: whole-framebuffer readbacks, per-draw pixel diffs and ASCII frame maps.
+     * Debugging only and very slow; off in a normal run. Must be called before the guest JNI
+     * runtime of this plugin is constructed, since it reads the variable only once.
+     */
+    public static native void setGlDiagnostics(boolean enabled);
 }

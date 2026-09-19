@@ -86,6 +86,8 @@ final class LoadedPlugin {
             // Must precede activatePlugin: the guest runtime is process-lifetime and reads
             // ZB_PRECISE_FAULTS only once, at the first Process construction it triggers.
             ZBridge.setPreciseFaults(record.preciseFaults);
+            // Same rule: the GL instrumentation is read once, when the guest JNI runtime is built.
+            ZBridge.setGlDiagnostics(record.diagnostics);
             // Must precede every plugin class initialization, provider and Application callback.
             ZBridge.activatePlugin(record.dir.getCanonicalPath(), record.targetSdk, cl);
         }

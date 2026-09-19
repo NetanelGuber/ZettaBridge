@@ -209,4 +209,10 @@ JNIEXPORT void JNICALL Java_com_zettabridge_core_ZBridge_setPreciseFaults(JNIEnv
     ::setenv("ZB_PRECISE_FAULTS", enabled ? "1" : "0", 1);
 }
 
+// static native void setGlDiagnostics(boolean enabled)
+// Must be called before the guest JNI runtime is constructed: it reads ZB_GL_DIAGNOSTICS once.
+JNIEXPORT void JNICALL Java_com_zettabridge_core_ZBridge_setGlDiagnostics(JNIEnv*, jclass, jboolean enabled) {
+    ::setenv("ZB_GL_DIAGNOSTICS", enabled ? "1" : "0", 1);
+}
+
 }  // extern "C"

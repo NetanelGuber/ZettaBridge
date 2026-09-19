@@ -1,8 +1,22 @@
 // ZettaBridge launcher. Generated native/runtime inputs come only from build/launcher.
 // Plain Java, UI built in code, no AndroidX.
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
 }
+
+// The release key lives outside the repository: ~/.zettabridge/signing.properties names the
+// keystore and its passwords. Without that file the release build stays unsigned, so a clone
+// without the key still builds.
+val signingProps = Properties()
+val signingPropsFile = File(System.getProperty("user.home"), ".zettabridge/signing.properties")
+if (signingPropsFile.isFile) {
+    signingPropsFile.inputStream().use { stream -> signingProps.load(stream) }
+}
+val releaseKeystore: File? = signingProps.getProperty("storeFile")?.let { path -> File(path) }
+val hasReleaseKey = releaseKeystore != null && releaseKeystore.isFile
 
 android {
     namespace = "com.zettabridge.launcher"
@@ -13,12 +27,25 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.0.1"
+        versionName = "0.1.0"
         ndk { abiFilters += "arm64-v8a" }
     }
 
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = signingProps.getProperty("storePassword")
+                keyAlias = signingProps.getProperty("keyAlias")
+                keyPassword = signingProps.getProperty("keyPassword")
+            }
+        }
+    }
     buildTypes {
-        release { isMinifyEnabled = false }
+        release {
+            isMinifyEnabled = false
+            if (hasReleaseKey) signingConfig = signingConfigs.getByName("release")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

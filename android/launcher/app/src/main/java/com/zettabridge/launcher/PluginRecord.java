@@ -31,6 +31,8 @@ final class PluginRecord {
     boolean hideAds = true;
     /** Diagnostic: stop memory faults at the exact instruction instead of the block end. Slow. */
     boolean preciseFaults = false;
+    /** Debugging: GL instrumentation (framebuffer readbacks, per-draw pixel diffs). Very slow. */
+    boolean diagnostics = false;
     /** Every ABI directory found under lib/ in the APK. */
     final Set<String> abis = new TreeSet<>();
 
@@ -105,6 +107,7 @@ final class PluginRecord {
         if (selectedAbi != null) p.setProperty("selectedAbi", selectedAbi);
         p.setProperty("hideAds", Boolean.toString(hideAds));
         p.setProperty("preciseFaults", Boolean.toString(preciseFaults));
+        p.setProperty("diagnostics", Boolean.toString(diagnostics));
         try (OutputStream out = new FileOutputStream(new File(dir, "meta.properties"))) {
             p.store(out, "ZettaBridge plugin");
         }
@@ -136,6 +139,7 @@ final class PluginRecord {
         r.selectedAbi = p.getProperty("selectedAbi");
         r.hideAds = !"false".equals(p.getProperty("hideAds"));
         r.preciseFaults = "true".equals(p.getProperty("preciseFaults"));
+        r.diagnostics = "true".equals(p.getProperty("diagnostics"));
         // Phase 0 arm64 imports are already complete. Old 32-bit records must be reimported so
         // every library passes through the non-atomic ELF fixer before metadata says ready.
         if (r.selectedAbi == null && r.abis.contains(ABI_ARM64)) r.selectedAbi = ABI_ARM64;

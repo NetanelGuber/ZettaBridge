@@ -188,6 +188,7 @@ public class LibraryActivity extends Activity {
                 .setItems(new String[] {"Launch", "Last run report", "Pin shortcut",
                                         r.hideAds ? "Show ads" : "Hide ads",
                                         r.preciseFaults ? "Precise faults: on" : "Precise faults (slow)",
+                                        r.diagnostics ? "GL diagnostics: on" : "GL diagnostics (slow)",
                                         "Delete"},
                         (dialog, which) -> {
                             if (which == 0) launch(r);
@@ -195,7 +196,8 @@ public class LibraryActivity extends Activity {
                             if (which == 2) pinShortcut(r);
                             if (which == 3) toggleAds(r);
                             if (which == 4) togglePreciseFaults(r);
-                            if (which == 5) confirmDelete(r);
+                            if (which == 5) toggleDiagnostics(r);
+                            if (which == 6) confirmDelete(r);
                         })
                 .show();
     }
@@ -224,6 +226,22 @@ public class LibraryActivity extends Activity {
             r.save();
         } catch (IOException e) {
             Diagnostics.report(this, "cannot save the precise-faults setting of " + r.label, e, false);
+            return;
+        }
+        Toast.makeText(this, "Restart the game to apply.", Toast.LENGTH_LONG).show();
+    }
+
+    /**
+     * GL diagnostics instrument every draw: whole-framebuffer readbacks, per-draw pixel diffs and
+     * ASCII frame maps in the run report. Debugging only, and very slow. It takes effect the next
+     * time the plugin process starts.
+     */
+    private void toggleDiagnostics(PluginRecord r) {
+        r.diagnostics = !r.diagnostics;
+        try {
+            r.save();
+        } catch (IOException e) {
+            Diagnostics.report(this, "cannot save the diagnostics setting of " + r.label, e, false);
             return;
         }
         Toast.makeText(this, "Restart the game to apply.", Toast.LENGTH_LONG).show();
