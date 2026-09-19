@@ -225,6 +225,37 @@ struct State {
     GLint nontext_diff_viewport[4] = {0, 0, 0, 0};
     std::vector<std::uint8_t> nontext_diff_before;
 
+    // Whole-framebuffer before/after diffs selected by FragInfo colour, not draw order: the
+    // first 6 onscreen (fb0) glyph-shader draws whose colour is neither white nor degenerate
+    // (all-zero), and separately the first 3 such draws that target a non-default framebuffer
+    // (text drawn into an offscreen layer, composited later). Grey and amber text draws have
+    // never been measured before this; white text is already proven onscreen.
+    std::uint64_t coloured_text_fb0_done = 0;
+    bool coloured_text_fb0_pending = false;
+    GLint coloured_text_fb0_viewport[4] = {0, 0, 0, 0};
+    GLint coloured_text_fb0_scissor[4] = {0, 0, 0, 0};
+    GLint coloured_text_fb0_program = -1;
+    GLint coloured_text_fb0_fb = 0;
+    std::array<float, 4> coloured_text_fb0_rgba = {0, 0, 0, 0};
+    std::vector<std::uint8_t> coloured_text_fb0_before;
+
+    std::uint64_t coloured_text_off_done = 0;
+    bool coloured_text_off_pending = false;
+    bool coloured_text_off_seen = false;
+    GLint coloured_text_off_viewport[4] = {0, 0, 0, 0};
+    GLint coloured_text_off_scissor[4] = {0, 0, 0, 0};
+    GLint coloured_text_off_program = -1;
+    GLint coloured_text_off_fb = 0;
+    std::array<float, 4> coloured_text_off_rgba = {0, 0, 0, 0};
+    std::vector<std::uint8_t> coloured_text_off_before;
+
+    // gl-text-class: every glyph-shader draw (onscreen or offscreen), split by colour class.
+    std::uint64_t text_class_white_fb0 = 0;
+    std::uint64_t text_class_white_off = 0;
+    std::uint64_t text_class_coloured_fb0 = 0;
+    std::uint64_t text_class_coloured_off = 0;
+    std::uint64_t text_class_other = 0;
+
     std::uint64_t map_calls = 0;
     std::uint64_t map_collisions = 0;
     bool legacy_texture_error_checked = false;
@@ -619,6 +650,9 @@ void emit_readback_diff(GlBackend& gl, const char* key, std::vector<std::uint8_t
                         const GLint* viewport);
 void emit_text_box_diff(GlBackend& gl, State& s, std::uint64_t n, std::vector<std::uint8_t>& before,
                         const GLint* viewport);
+void emit_coloured_text_diff(GlBackend& gl, const char* key, std::vector<std::uint8_t>& before,
+                             const GLint* viewport, const GLint* scissor, GLint program, GLint fb,
+                             const std::array<float, 4>& rgba);
 
 void gl_diagnose(HostGl& host, HostGl::Call& call) {
     GlBackend& gl = host.backend();
@@ -738,6 +772,24 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
             s.nontext_diff_done = true;
             emit_readback_diff(gl, "nontext-diff-1", s.nontext_diff_before, s.nontext_diff_viewport);
         }
+        if (s.coloured_text_fb0_pending) {
+            s.coloured_text_fb0_pending = false;
+            ++s.coloured_text_fb0_done;
+            const std::string key = "coloured-text-" + std::to_string(s.coloured_text_fb0_done);
+            emit_coloured_text_diff(gl, key.c_str(), s.coloured_text_fb0_before,
+                                    s.coloured_text_fb0_viewport, s.coloured_text_fb0_scissor,
+                                    s.coloured_text_fb0_program, s.coloured_text_fb0_fb,
+                                    s.coloured_text_fb0_rgba);
+        }
+        if (s.coloured_text_off_pending) {
+            s.coloured_text_off_pending = false;
+            ++s.coloured_text_off_done;
+            const std::string key = "coloured-text-offscreen-" + std::to_string(s.coloured_text_off_done);
+            emit_coloured_text_diff(gl, key.c_str(), s.coloured_text_off_before,
+                                    s.coloured_text_off_viewport, s.coloured_text_off_scissor,
+                                    s.coloured_text_off_program, s.coloured_text_off_fb,
+                                    s.coloured_text_off_rgba);
+        }
         if (draw == 1 || draw % 256 == 0) {
             detail("atlas-draws",
                    format("total=%llu fb0=%llu onscreen-first-frame=%llu",
@@ -747,6 +799,9 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
         }
         if (draw == 20000 && s.atlas_draws_onscreen == 0) {
             detail("atlas-draws-onscreen", "none");
+        }
+        if (draw == 20000 && !s.coloured_text_off_seen) {
+            detail("coloured-text-offscreen", "none");
         }
         if (draw == 1 || draw % 256 == 0) {
             detail("draws", format("total=%llu empty=%llu offscreen=%llu clears=%llu",
@@ -1177,6 +1232,42 @@ void emit_text_box_diff(GlBackend& gl, State& s, std::uint64_t n, std::vector<st
            true);
 }
 
+// Emits "gl-coloured-text[-offscreen]-N: rgba=... program=... fb=... viewport=WxH
+// scissor=x,y,WxH pixels-changed=N box=x,y,WxH" for a glyph-shader draw selected by FragInfo
+// colour (not white, not degenerate) rather than draw order. Same before/after whole-region
+// readback and box_only_diff() as emit_text_box_diff(), but with the colour/program/framebuffer
+// header this task asked for and no "examples=" tail.
+void emit_coloured_text_diff(GlBackend& gl, const char* key, std::vector<std::uint8_t>& before,
+                             const GLint* viewport, const GLint* scissor, GLint program, GLint fb,
+                             const std::array<float, 4>& rgba) {
+    const GLint w = viewport[2];
+    const GLint h = viewport[3];
+    const std::string prefix =
+        format("rgba=%.4g,%.4g,%.4g,%.4g program=%d fb=%d viewport=%dx%d scissor=%d,%d %dx%d ",
+               static_cast<double>(rgba[0]), static_cast<double>(rgba[1]), static_cast<double>(rgba[2]),
+               static_cast<double>(rgba[3]), program, fb, w, h, scissor[0], scissor[1], scissor[2],
+               scissor[3]);
+    std::vector<std::uint8_t> after(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+    gl.glReadPixels(viewport[0], viewport[1], w, h, kRgba, kUnsignedByte, after.data());
+    const GLenum error = gl.glGetError();
+    if (error != 0) {
+        detail(key, prefix + format("readback-failed glGetError=0x%x", error));
+        gl.set_error(error);
+        std::vector<std::uint8_t>().swap(before);
+        return;
+    }
+    std::uint64_t changed = 0;
+    GLint min_x = 0, min_y = 0, max_x = -1, max_y = -1;
+    box_only_diff(before.data(), after.data(), w, h, changed, min_x, min_y, max_x, max_y);
+    std::vector<std::uint8_t>().swap(before);
+    if (changed == 0) {
+        detail(key, prefix + "pixels-changed=0 box=none");
+        return;
+    }
+    detail(key, prefix + format("pixels-changed=%llu box=%d,%d %dx%d", (unsigned long long)changed,
+                                min_x, min_y, max_x - min_x + 1, max_y - min_y + 1));
+}
+
 // Decodes up to `max_floats` little-endian floats at `offset` bytes into the shadow copy of
 // uniform-buffer-bound `buffer`, from the same glBufferData/glBufferSubData shadow used by
 // record_bound_ubo_data(). Returns "(no-shadow)"/"(partially-known)" when the bytes were never
@@ -1388,6 +1479,68 @@ void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
     gl.glGetIntegerv(kViewport, viewport);
     const bool onscreen = fb0 && viewport[2] > 64 && viewport[3] > 64;
     if (onscreen) ++s.atlas_draws_onscreen;
+
+    // Colour classification and selection, independent of "onscreen": needs to see every
+    // glyph-shader draw, fb0 or offscreen, to answer whether the grey/amber text (which the
+    // user never sees) ever reaches a framebuffer at all.
+    {
+        GLint program = -1;
+        gl.glGetIntegerv(kCurrentProgram, &program);
+        GLint frag_buffer = 0, frag_offset = 0;
+        gl.glGetIntegeri_v(kUniformBufferBinding, 0, &frag_buffer);
+        gl.glGetIntegeri_v(kUniformBufferStart, 0, &frag_offset);
+        const FragInfoFields f = decode_text_fraginfo(s, frag_buffer, frag_offset);
+        const bool white = f.known && f.r >= 0.99f && f.g >= 0.99f && f.b >= 0.99f && f.a >= 0.99f;
+        const bool degenerate = f.known && f.r == 0.0f && f.g == 0.0f && f.b == 0.0f && f.a == 0.0f;
+        const bool coloured = f.known && !white && !degenerate;
+
+        if (!f.known || degenerate) {
+            ++s.text_class_other;
+        } else if (white) {
+            if (fb0) ++s.text_class_white_fb0; else ++s.text_class_white_off;
+        } else {
+            if (fb0) ++s.text_class_coloured_fb0; else ++s.text_class_coloured_off;
+        }
+        detail("text-class",
+               format("white-fb0=%llu white-off=%llu coloured-fb0=%llu coloured-off=%llu other=%llu",
+                      (unsigned long long)s.text_class_white_fb0, (unsigned long long)s.text_class_white_off,
+                      (unsigned long long)s.text_class_coloured_fb0,
+                      (unsigned long long)s.text_class_coloured_off, (unsigned long long)s.text_class_other),
+               true);
+
+        GLint scissor[4] = {0, 0, 0, 0};
+        if (coloured) gl.glGetIntegerv(kScissorBox, scissor);
+
+        if (coloured && onscreen && s.coloured_text_fb0_done < 6 && !s.coloured_text_fb0_pending) {
+            std::memcpy(s.coloured_text_fb0_viewport, viewport, sizeof viewport);
+            std::memcpy(s.coloured_text_fb0_scissor, scissor, sizeof scissor);
+            s.coloured_text_fb0_program = program;
+            s.coloured_text_fb0_fb = framebuffer;
+            s.coloured_text_fb0_rgba = {f.r, f.g, f.b, f.a};
+            s.coloured_text_fb0_before.assign(
+                static_cast<std::size_t>(viewport[2]) * static_cast<std::size_t>(viewport[3]) * 4, 0);
+            gl.glReadPixels(viewport[0], viewport[1], viewport[2], viewport[3], kRgba, kUnsignedByte,
+                           s.coloured_text_fb0_before.data());
+            s.coloured_text_fb0_pending = true;
+        }
+
+        if (coloured && !fb0 && s.coloured_text_off_done < 3 && !s.coloured_text_off_pending &&
+            viewport[2] > 0 && viewport[3] > 0 &&
+            static_cast<std::uint64_t>(viewport[2]) * static_cast<std::uint64_t>(viewport[3]) <=
+                4096ull * 4096ull) {
+            std::memcpy(s.coloured_text_off_viewport, viewport, sizeof viewport);
+            std::memcpy(s.coloured_text_off_scissor, scissor, sizeof scissor);
+            s.coloured_text_off_program = program;
+            s.coloured_text_off_fb = framebuffer;
+            s.coloured_text_off_rgba = {f.r, f.g, f.b, f.a};
+            s.coloured_text_off_before.assign(
+                static_cast<std::size_t>(viewport[2]) * static_cast<std::size_t>(viewport[3]) * 4, 0);
+            gl.glReadPixels(viewport[0], viewport[1], viewport[2], viewport[3], kRgba, kUnsignedByte,
+                           s.coloured_text_off_before.data());
+            s.coloured_text_off_pending = true;
+            s.coloured_text_off_seen = true;
+        }
+    }
 
     if (!onscreen) return;
 
