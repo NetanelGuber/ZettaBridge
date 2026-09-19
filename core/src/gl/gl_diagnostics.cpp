@@ -73,6 +73,15 @@ constexpr GLenum kPixelPackBufferBinding = 0x88ED;
 constexpr GLenum kPixelUnpackBuffer = 0x88EC;
 constexpr GLenum kTransformFeedbackBuffer = 0x8C8E;
 constexpr GLenum kTransformFeedbackBufferBinding = 0x8C8F;
+constexpr GLenum kUniformBufferStart = 0x8A29;
+constexpr GLenum kUniformBufferSize = 0x8A2A;
+constexpr GLenum kVertexAttribArraySize = 0x8623;
+constexpr GLenum kVertexAttribArrayStride = 0x8624;
+constexpr GLenum kVertexAttribArrayType = 0x8625;
+constexpr GLenum kVertexAttribArrayNormalized = 0x886A;
+constexpr GLenum kVertexAttribArrayBufferBinding = 0x889F;
+constexpr GLenum kVertexAttribArrayPointer = 0x8645;
+constexpr int kMaxTrackedVertexAttribs = 8;
 
 // Bytes per pixel for GL_UNSIGNED_BYTE uploads of the formats seen in practice. Returns 0 for
 // anything else (compressed, float, or a format this diagnostic does not know), in which case the
@@ -175,6 +184,19 @@ struct State {
     bool text_fullfb_pending = false;
     GLint text_fullfb_viewport[4] = {0, 0, 0, 0};
     std::vector<std::uint8_t> text_fullfb_before;
+
+    // Cheap position-only whole-framebuffer diff (no example pixels) for the first 8 onscreen
+    // glyph-atlas draws, plus the running union of their boxes. Answers "do all glyphs land in
+    // one small region" without the cost of keeping example pixels around.
+    std::uint64_t text_box_done = 0;
+    bool text_box_pending = false;
+    GLint text_box_viewport[4] = {0, 0, 0, 0};
+    std::vector<std::uint8_t> text_box_before;
+    bool text_box_union_valid = false;
+    GLint text_box_union_min_x = 0;
+    GLint text_box_union_min_y = 0;
+    GLint text_box_union_max_x = -1;
+    GLint text_box_union_max_y = -1;
 
     // Same idea for one control draw: the first onscreen fb-0 draw that writes colour but does
     // NOT use the glyph atlas texture. Proves the readback/diff machinery itself works.
@@ -566,6 +588,8 @@ void gl_diagnose_map_collision(HostGl& host, GLenum target,
 std::string diff_report(const std::uint8_t* before, const std::uint8_t* after, GLint w, GLint h);
 void emit_readback_diff(GlBackend& gl, const char* key, std::vector<std::uint8_t>& before,
                         const GLint* viewport);
+void emit_text_box_diff(GlBackend& gl, State& s, std::uint64_t n, std::vector<std::uint8_t>& before,
+                        const GLint* viewport);
 
 void gl_diagnose(HostGl& host, HostGl::Call& call) {
     GlBackend& gl = host.backend();
@@ -673,6 +697,11 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
             ++s.text_fullfb_done;
             const std::string key = "text-diff-" + std::to_string(s.text_fullfb_done);
             emit_readback_diff(gl, key.c_str(), s.text_fullfb_before, s.text_fullfb_viewport);
+        }
+        if (s.text_box_pending) {
+            s.text_box_pending = false;
+            ++s.text_box_done;
+            emit_text_box_diff(gl, s, s.text_box_done, s.text_box_before, s.text_box_viewport);
         }
         if (s.nontext_diff_pending) {
             s.nontext_diff_pending = false;
@@ -1042,6 +1071,143 @@ void emit_readback_diff(GlBackend& gl, const char* key, std::vector<std::uint8_t
     std::vector<std::uint8_t>().swap(before);
 }
 
+// Single pass over a before/after RGBA8 pair: total pixels changed and their bounding box, no
+// example pixels. Cheaper than diff_report() and meant to run on every one of the first 8
+// onscreen glyph-atlas draws.
+void box_only_diff(const std::uint8_t* before, const std::uint8_t* after, GLint w, GLint h,
+                   std::uint64_t& changed, GLint& min_x, GLint& min_y, GLint& max_x, GLint& max_y) {
+    changed = 0;
+    min_x = w;
+    min_y = h;
+    max_x = -1;
+    max_y = -1;
+    for (GLint y = 0; y < h; ++y) {
+        for (GLint x = 0; x < w; ++x) {
+            const std::size_t idx = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                     static_cast<std::size_t>(x)) * 4;
+            if (std::memcmp(before + idx, after + idx, 4) == 0) continue;
+            ++changed;
+            if (x < min_x) min_x = x;
+            if (y < min_y) min_y = y;
+            if (x > max_x) max_x = x;
+            if (y > max_y) max_y = y;
+        }
+    }
+}
+
+// Emits "gl-text-box-N: pixels-changed=... box=x,y,WxH" for one of the first 8 onscreen
+// glyph-atlas draws, and folds the box into the running "gl-text-box-union" line.
+void emit_text_box_diff(GlBackend& gl, State& s, std::uint64_t n, std::vector<std::uint8_t>& before,
+                        const GLint* viewport) {
+    const GLint w = viewport[2];
+    const GLint h = viewport[3];
+    const std::string key = "text-box-" + std::to_string(n);
+    std::vector<std::uint8_t> after(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+    gl.glReadPixels(viewport[0], viewport[1], w, h, kRgba, kUnsignedByte, after.data());
+    const GLenum error = gl.glGetError();
+    if (error != 0) {
+        detail(key.c_str(), format("readback-failed glGetError=0x%x", error));
+        gl.set_error(error);
+        std::vector<std::uint8_t>().swap(before);
+        return;
+    }
+    std::uint64_t changed = 0;
+    GLint min_x = 0, min_y = 0, max_x = -1, max_y = -1;
+    box_only_diff(before.data(), after.data(), w, h, changed, min_x, min_y, max_x, max_y);
+    std::vector<std::uint8_t>().swap(before);
+    if (changed == 0) {
+        detail(key.c_str(), "pixels-changed=0 box=none");
+        return;
+    }
+    detail(key.c_str(), format("pixels-changed=%llu box=%d,%d %dx%d", (unsigned long long)changed,
+                               min_x, min_y, max_x - min_x + 1, max_y - min_y + 1));
+    if (!s.text_box_union_valid) {
+        s.text_box_union_valid = true;
+        s.text_box_union_min_x = min_x;
+        s.text_box_union_min_y = min_y;
+        s.text_box_union_max_x = max_x;
+        s.text_box_union_max_y = max_y;
+    } else {
+        s.text_box_union_min_x = std::min(s.text_box_union_min_x, min_x);
+        s.text_box_union_min_y = std::min(s.text_box_union_min_y, min_y);
+        s.text_box_union_max_x = std::max(s.text_box_union_max_x, max_x);
+        s.text_box_union_max_y = std::max(s.text_box_union_max_y, max_y);
+    }
+    detail("text-box-union",
+           format("%d,%d %dx%d", s.text_box_union_min_x, s.text_box_union_min_y,
+                  s.text_box_union_max_x - s.text_box_union_min_x + 1,
+                  s.text_box_union_max_y - s.text_box_union_min_y + 1),
+           true);
+}
+
+// Decodes up to `max_floats` little-endian floats at `offset` bytes into the shadow copy of
+// uniform-buffer-bound `buffer`, from the same glBufferData/glBufferSubData shadow used by
+// record_bound_ubo_data(). Returns "(no-shadow)"/"(partially-known)" when the bytes were never
+// captured (e.g. uploaded before diagnostics started tracking that buffer).
+std::string shadow_floats(const State& s, GLint buffer, GLint offset, std::uint32_t max_floats) {
+    if (buffer <= 0 || offset < 0) return "(no-buffer)";
+    const auto found = s.buffer_snapshots.find(static_cast<GLuint>(buffer));
+    if (found == s.buffer_snapshots.end()) return "(no-shadow)";
+    const State::BufferSnapshot& snapshot = found->second;
+    const std::uint64_t o = static_cast<std::uint64_t>(offset);
+    if (o >= snapshot.bytes.size()) return "(offset-beyond-shadow)";
+    const std::uint64_t avail_bytes = snapshot.bytes.size() - o;
+    const std::uint32_t words = static_cast<std::uint32_t>(std::min<std::uint64_t>(max_floats, avail_bytes / 4));
+    if (words == 0) return "(none)";
+    for (std::uint64_t i = 0; i < static_cast<std::uint64_t>(words) * 4; ++i) {
+        if (!snapshot.known[o + i]) return "(partially-known)";
+    }
+    std::string out = "[";
+    for (std::uint32_t i = 0; i < words; ++i) {
+        float value;
+        std::memcpy(&value, snapshot.bytes.data() + o + 4 * i, 4);
+        out += format(i == 0 ? "%g" : " %g", static_cast<double>(value));
+    }
+    out += "]";
+    return out;
+}
+
+// Records the uniform buffer ranges bound at UBO binding points 0 (FragInfo) and 1 (FrameInfo,
+// the vertex transform) at one of the first 3 onscreen glyph-atlas draws.
+void record_text_ubo(GlBackend& gl, const State& s, std::uint64_t n) {
+    auto describe = [&](GLuint index, std::uint32_t max_floats) {
+        GLint buffer = 0, offset = 0, size = 0;
+        gl.glGetIntegeri_v(kUniformBufferBinding, index, &buffer);
+        gl.glGetIntegeri_v(kUniformBufferStart, index, &offset);
+        gl.glGetIntegeri_v(kUniformBufferSize, index, &size);
+        return format("buffer=%d offset=%d size=%d m=", buffer, offset, size) +
+               shadow_floats(s, buffer, offset, max_floats);
+    };
+    detail(("text-mvp-" + std::to_string(n)).c_str(), "binding=1 " + describe(1, 16));
+    detail(("text-fraginfo-" + std::to_string(n)).c_str(), "binding=0 " + describe(0, 8));
+}
+
+// Records the enabled vertex attributes at one of the first 3 onscreen glyph-atlas draws: index,
+// size, type, normalized, stride, byte offset and the bound array buffer for each enabled
+// attribute. Does not read any buffer contents from the GPU.
+void record_text_attribs(GlBackend& gl, std::uint64_t n) {
+    std::string line;
+    for (GLuint index = 0; index < static_cast<GLuint>(kMaxTrackedVertexAttribs); ++index) {
+        GLint enabled = 0;
+        gl.glGetVertexAttribiv(index, kAttribEnabled, &enabled);
+        if (enabled == 0) continue;
+        GLint size = 0, type = 0, normalized = 0, stride = 0, array_buffer = 0;
+        gl.glGetVertexAttribiv(index, kVertexAttribArraySize, &size);
+        gl.glGetVertexAttribiv(index, kVertexAttribArrayType, &type);
+        gl.glGetVertexAttribiv(index, kVertexAttribArrayNormalized, &normalized);
+        gl.glGetVertexAttribiv(index, kVertexAttribArrayStride, &stride);
+        gl.glGetVertexAttribiv(index, kVertexAttribArrayBufferBinding, &array_buffer);
+        void* pointer = nullptr;
+        gl.glGetVertexAttribPointerv(index, kVertexAttribArrayPointer, &pointer);
+        const std::uint32_t offset = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer));
+        if (!line.empty()) line += "; ";
+        line += format("idx=%u size=%d type=0x%x normalized=%d stride=%d offset=%u buffer=%d",
+                       index, size, type, normalized, stride, offset, array_buffer);
+    }
+    if (line.empty()) line = "(none enabled)";
+    detail(("text-attrib-" + std::to_string(n)).c_str(), line);
+}
+
 void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
     const std::uint32_t index = call.index();
     if (index != ZB_GL_HC_glDrawArrays && index != ZB_GL_HC_glDrawElements) return;
@@ -1102,7 +1268,25 @@ void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
         s.text_fullfb_pending = true;
     }
 
+    // Same whole-framebuffer before readback, cheaper on emit (box only, no example pixels), for
+    // the first 8 onscreen glyph-atlas draws: answers "do all glyphs land in one small region".
+    if (s.text_box_done < 8) {
+        std::memcpy(s.text_box_viewport, viewport, sizeof viewport);
+        s.text_box_before.assign(
+            static_cast<std::size_t>(viewport[2]) * static_cast<std::size_t>(viewport[3]) * 4, 0);
+        gl.glReadPixels(viewport[0], viewport[1], viewport[2], viewport[3], kRgba, kUnsignedByte,
+                       s.text_box_before.data());
+        s.text_box_pending = true;
+    }
+
     if (s.text_draws_captured >= 3) return;
+
+    // The transform and vertex setup actually in effect at this draw: the uniform buffer ranges
+    // bound at binding 0/1, decoded from the same shadow used for the ubo-bind-N-data lines, and
+    // the enabled vertex attributes' size/type/stride/offset/buffer.
+    record_text_ubo(gl, s, s.text_draws_captured + 1);
+    record_text_attribs(gl, s.text_draws_captured + 1);
+
     GLint scissor[4] = {0, 0, 0, 0};
     gl.glGetIntegerv(kScissorBox, scissor);
     GLint x = scissor[0] + scissor[2] / 2 - 16;
