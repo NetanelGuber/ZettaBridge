@@ -8,7 +8,9 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -197,6 +199,15 @@ struct State {
     GLint text_box_union_min_y = 0;
     GLint text_box_union_max_x = -1;
     GLint text_box_union_max_y = -1;
+
+    // FragInfo color classification for the first 32 onscreen glyph-atlas draws: is this
+    // white-on-white, or does the text color vary? Independent of text_draws_captured (which
+    // caps at 3 for the heavier before/after readback capture above).
+    std::uint64_t text_color_draws = 0;
+    std::uint64_t text_color_white = 0;
+    std::uint64_t text_color_black = 0;
+    std::uint64_t text_color_other = 0;
+    std::vector<std::array<float, 4>> text_color_distinct;
 
     // Absolute-pixel box of the first and second recorded glyph draws (gl-text-box-1/2), for the
     // high-resolution single-glyph maps in gl_diagnose_swap(). Index 0 is draw 1, index 1 is
@@ -1193,6 +1204,101 @@ std::string shadow_floats(const State& s, GLint buffer, GLint offset, std::uint3
     return out;
 }
 
+// Decoded FragInfo fields, matching the [is_color_glyph, use_text_color, pad, pad, r, g, b, a]
+// layout already established by the text-fraginfo-N lines. `known` is false when any of the 8
+// floats were never captured in the buffer shadow (same condition shadow_floats() checks).
+struct FragInfoFields {
+    bool known = false;
+    float is_color_glyph = 0.0f;
+    float use_text_color = 0.0f;
+    float r = 0.0f, g = 0.0f, b = 0.0f, a = 0.0f;
+};
+
+FragInfoFields decode_text_fraginfo(const State& s, GLint buffer, GLint offset) {
+    FragInfoFields out;
+    if (buffer <= 0 || offset < 0) return out;
+    const auto found = s.buffer_snapshots.find(static_cast<GLuint>(buffer));
+    if (found == s.buffer_snapshots.end()) return out;
+    const State::BufferSnapshot& snapshot = found->second;
+    const std::uint64_t o = static_cast<std::uint64_t>(offset);
+    const std::uint64_t need = 8 * 4;
+    if (o + need > snapshot.bytes.size()) return out;
+    for (std::uint64_t i = 0; i < need; ++i) {
+        if (!snapshot.known[o + i]) return out;
+    }
+    float vals[8];
+    std::memcpy(vals, snapshot.bytes.data() + o, sizeof vals);
+    out.known = true;
+    out.is_color_glyph = vals[0];
+    out.use_text_color = vals[1];
+    out.r = vals[4];
+    out.g = vals[5];
+    out.b = vals[6];
+    out.a = vals[7];
+    return out;
+}
+
+// Records the FragInfo color for the first 32 onscreen glyph-atlas draws, then updates a running
+// summary: how many of those draws are white, black or something else. Answers "does EVERY text
+// draw use white, or only some" without any framebuffer readback.
+void record_text_color(GlBackend& gl, State& s, std::uint64_t n) {
+    GLint buffer = 0, offset = 0, size = 0;
+    gl.glGetIntegeri_v(kUniformBufferBinding, 0, &buffer);
+    gl.glGetIntegeri_v(kUniformBufferStart, 0, &offset);
+    gl.glGetIntegeri_v(kUniformBufferSize, 0, &size);
+    GLint program = -1;
+    gl.glGetIntegerv(kCurrentProgram, &program);
+
+    const FragInfoFields f = decode_text_fraginfo(s, buffer, offset);
+    const std::string rgba_str =
+        f.known ? format("%.4g,%.4g,%.4g,%.4g", static_cast<double>(f.r), static_cast<double>(f.g),
+                          static_cast<double>(f.b), static_cast<double>(f.a))
+                : std::string("(unknown)");
+    detail(("text-color-" + std::to_string(n)).c_str(),
+           format("is_color_glyph=%.4g use_text_color=%.4g rgba=", static_cast<double>(f.is_color_glyph),
+                  static_cast<double>(f.use_text_color)) +
+               rgba_str + format(" program=%d offset=%d size=%d", program, offset, size));
+
+    ++s.text_color_draws;
+    if (f.known) {
+        const bool white = f.r >= 0.99f && f.g >= 0.99f && f.b >= 0.99f && f.a >= 0.99f;
+        const bool black = f.r <= 0.01f && f.g <= 0.01f && f.b <= 0.01f;
+        if (white) {
+            ++s.text_color_white;
+        } else if (black) {
+            ++s.text_color_black;
+        } else {
+            ++s.text_color_other;
+        }
+        bool seen = false;
+        for (const auto& d : s.text_color_distinct) {
+            if (std::fabs(d[0] - f.r) < 1e-4f && std::fabs(d[1] - f.g) < 1e-4f &&
+                std::fabs(d[2] - f.b) < 1e-4f && std::fabs(d[3] - f.a) < 1e-4f) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen && s.text_color_distinct.size() < 6) {
+            s.text_color_distinct.push_back({f.r, f.g, f.b, f.a});
+        }
+    } else {
+        ++s.text_color_other;
+    }
+
+    std::string distinct_str;
+    for (const auto& d : s.text_color_distinct) {
+        if (!distinct_str.empty()) distinct_str += " ";
+        distinct_str += format("%.4g,%.4g,%.4g,%.4g", static_cast<double>(d[0]), static_cast<double>(d[1]),
+                                static_cast<double>(d[2]), static_cast<double>(d[3]));
+    }
+    detail("text-color-summary",
+           format("draws=%llu white=%llu black=%llu other=%llu distinct=",
+                  (unsigned long long)s.text_color_draws, (unsigned long long)s.text_color_white,
+                  (unsigned long long)s.text_color_black, (unsigned long long)s.text_color_other) +
+               distinct_str,
+           true);
+}
+
 // Records the uniform buffer ranges bound at UBO binding points 0 (FragInfo) and 1 (FrameInfo,
 // the vertex transform) at one of the first 3 onscreen glyph-atlas draws.
 void record_text_ubo(GlBackend& gl, const State& s, std::uint64_t n) {
@@ -1304,6 +1410,12 @@ void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
         gl.glReadPixels(viewport[0], viewport[1], viewport[2], viewport[3], kRgba, kUnsignedByte,
                        s.text_box_before.data());
         s.text_box_pending = true;
+    }
+
+    // FragInfo color classification: cheap (no readback), so cover many more draws than the
+    // readback-based captures above.
+    if (s.text_color_draws < 32) {
+        record_text_color(gl, s, s.text_color_draws + 1);
     }
 
     if (s.text_draws_captured >= 3) return;
