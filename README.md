@@ -19,6 +19,15 @@ No root, no custom ROM, no system image changes.
 
 > **Status: early development.** Not usable by end users yet. See [Roadmap](#roadmap).
 
+## Orange Roulette, a 2014 armeabi game, on a phone with no 32-bit CPU
+
+| Intro | Menu | Gameplay |
+|---|---|---|
+| ![Intro screen](images/screenshots/intro.jpg) | ![Main menu](images/screenshots/menu.jpg) | ![Gameplay](images/screenshots/gameplay.jpg) |
+
+Every pixel above was drawn by translated 32-bit ARM code: a OnePlus 13 (Snapdragon 8 Elite) has
+no AArch32 execution state, so the game cannot start on it at all without ZettaBridge.
+
 ## How it works
 
 ```
