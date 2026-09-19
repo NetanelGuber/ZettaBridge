@@ -167,6 +167,22 @@ struct State {
     GLint text_snapshot_y = 0;
     std::uint8_t text_snapshot_before[32 * 32 * 4] = {};
 
+    // Whole-framebuffer before/after readback around the first 2 onscreen glyph-atlas draws,
+    // to prove whether the text draw changes the framebuffer at all (not just at the screen
+    // centre). Buffers are allocated right before the readback and freed right after the
+    // comparison; nothing large is kept between draws.
+    std::uint64_t text_fullfb_done = 0;
+    bool text_fullfb_pending = false;
+    GLint text_fullfb_viewport[4] = {0, 0, 0, 0};
+    std::vector<std::uint8_t> text_fullfb_before;
+
+    // Same idea for one control draw: the first onscreen fb-0 draw that writes colour but does
+    // NOT use the glyph atlas texture. Proves the readback/diff machinery itself works.
+    bool nontext_diff_done = false;
+    bool nontext_diff_pending = false;
+    GLint nontext_diff_viewport[4] = {0, 0, 0, 0};
+    std::vector<std::uint8_t> nontext_diff_before;
+
     std::uint64_t map_calls = 0;
     std::uint64_t map_collisions = 0;
     bool legacy_texture_error_checked = false;
@@ -547,6 +563,10 @@ void gl_diagnose_map_collision(HostGl& host, GLenum target,
                   existing.buffer));
 }
 
+std::string diff_report(const std::uint8_t* before, const std::uint8_t* after, GLint w, GLint h);
+void emit_readback_diff(GlBackend& gl, const char* key, std::vector<std::uint8_t>& before,
+                        const GLint* viewport);
+
 void gl_diagnose(HostGl& host, HostGl::Call& call) {
     GlBackend& gl = host.backend();
     State& s = state();
@@ -647,6 +667,17 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
                           stencil_enabled, array_buffer) +
                        "before=" + pixels4(s.text_snapshot_before) + " after=" + pixels4(after) +
                        format(" changed=%s", changed ? "yes" : "no"));
+        }
+        if (s.text_fullfb_pending) {
+            s.text_fullfb_pending = false;
+            ++s.text_fullfb_done;
+            const std::string key = "text-diff-" + std::to_string(s.text_fullfb_done);
+            emit_readback_diff(gl, key.c_str(), s.text_fullfb_before, s.text_fullfb_viewport);
+        }
+        if (s.nontext_diff_pending) {
+            s.nontext_diff_pending = false;
+            s.nontext_diff_done = true;
+            emit_readback_diff(gl, "nontext-diff-1", s.nontext_diff_before, s.nontext_diff_viewport);
         }
         if (draw == 1 || draw % 256 == 0) {
             detail("atlas-draws",
@@ -952,16 +983,102 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
     }
 }
 
+// Compares two RGBA8 w*h buffers and formats "pixels-changed=N box=x,y,WxH examples=...".
+// Up to 3 example pixels are reported as "(x,y)=before->after".
+std::string diff_report(const std::uint8_t* before, const std::uint8_t* after, GLint w, GLint h) {
+    std::uint64_t changed = 0;
+    GLint min_x = w, min_y = h, max_x = -1, max_y = -1;
+    struct Example { GLint x, y; std::uint8_t before[4]; std::uint8_t after[4]; };
+    Example examples[3];
+    std::uint32_t example_count = 0;
+    for (GLint y = 0; y < h; ++y) {
+        for (GLint x = 0; x < w; ++x) {
+            const std::size_t idx = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                     static_cast<std::size_t>(x)) * 4;
+            if (std::memcmp(before + idx, after + idx, 4) == 0) continue;
+            ++changed;
+            if (x < min_x) min_x = x;
+            if (y < min_y) min_y = y;
+            if (x > max_x) max_x = x;
+            if (y > max_y) max_y = y;
+            if (example_count < 3) {
+                Example& e = examples[example_count++];
+                e.x = x;
+                e.y = y;
+                std::memcpy(e.before, before + idx, 4);
+                std::memcpy(e.after, after + idx, 4);
+            }
+        }
+    }
+    if (changed == 0) return "pixels-changed=0 box=none examples=none";
+    std::string result = format("pixels-changed=%llu box=%d,%d %dx%d examples=", (unsigned long long)changed,
+                                min_x, min_y, max_x - min_x + 1, max_y - min_y + 1);
+    for (std::uint32_t i = 0; i < example_count; ++i) {
+        const Example& e = examples[i];
+        if (i != 0) result += " ";
+        result += format("(%d,%d)=%02x%02x%02x%02x->%02x%02x%02x%02x", e.x, e.y, e.before[0], e.before[1],
+                         e.before[2], e.before[3], e.after[0], e.after[1], e.after[2], e.after[3]);
+    }
+    return result;
+}
+
+// Reads back the same viewport rect that was captured into `before`, diffs it and emits a
+// "gl-<key>: ..." detail line, then frees `before`. On a glReadPixels/driver error the line
+// records that instead of a (misleading) zero-changed result.
+void emit_readback_diff(GlBackend& gl, const char* key, std::vector<std::uint8_t>& before,
+                        const GLint* viewport) {
+    const GLint w = viewport[2];
+    const GLint h = viewport[3];
+    std::vector<std::uint8_t> after(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+    gl.glReadPixels(viewport[0], viewport[1], w, h, kRgba, kUnsignedByte, after.data());
+    const GLenum error = gl.glGetError();
+    if (error != 0) {
+        detail(key, format("readback-failed glGetError=0x%x", error));
+        // Diagnostics must not consume an error the guest glGetError would have observed.
+        gl.set_error(error);
+    } else {
+        detail(key, diff_report(before.data(), after.data(), w, h));
+    }
+    std::vector<std::uint8_t>().swap(before);
+}
+
 void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
     const std::uint32_t index = call.index();
     if (index != ZB_GL_HC_glDrawArrays && index != ZB_GL_HC_glDrawElements) return;
     State& s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
-    if (s.glyph_atlas_texture == 0) return;
     GlBackend& gl = host.backend();
+
     GLint active_texture = -1;
     gl.glGetIntegerv(kTextureBinding2d, &active_texture);
-    if (active_texture != static_cast<GLint>(s.glyph_atlas_texture)) return;
+    const bool uses_glyph_atlas =
+        s.glyph_atlas_texture != 0 && active_texture == static_cast<GLint>(s.glyph_atlas_texture);
+
+    // Control: the first onscreen fb-0 draw that writes colour but does NOT use the glyph
+    // atlas texture. If this one shows changed pixels while the text draws below show none,
+    // the readback/diff machinery works and the text draw is provably a no-op.
+    if (!s.nontext_diff_done && !uses_glyph_atlas) {
+        GLint framebuffer = -1;
+        gl.glGetIntegerv(kFramebufferBinding, &framebuffer);
+        if (framebuffer == 0) {
+            GLint viewport[4] = {0, 0, 0, 0};
+            gl.glGetIntegerv(kViewport, viewport);
+            if (viewport[2] > 64 && viewport[3] > 64) {
+                GLboolean mask[4] = {0, 0, 0, 0};
+                gl.glGetBooleanv(kColorWritemask, mask);
+                if (mask[0] || mask[1] || mask[2] || mask[3]) {
+                    std::memcpy(s.nontext_diff_viewport, viewport, sizeof viewport);
+                    s.nontext_diff_before.assign(
+                        static_cast<std::size_t>(viewport[2]) * static_cast<std::size_t>(viewport[3]) * 4, 0);
+                    gl.glReadPixels(viewport[0], viewport[1], viewport[2], viewport[3], kRgba, kUnsignedByte,
+                                   s.nontext_diff_before.data());
+                    s.nontext_diff_pending = true;
+                }
+            }
+        }
+    }
+
+    if (!uses_glyph_atlas) return;
 
     ++s.atlas_draws_total;
     GLint framebuffer = -1;
@@ -973,7 +1090,19 @@ void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
     const bool onscreen = fb0 && viewport[2] > 64 && viewport[3] > 64;
     if (onscreen) ++s.atlas_draws_onscreen;
 
-    if (s.text_draws_captured >= 3 || !onscreen) return;
+    if (!onscreen) return;
+
+    // Whole-framebuffer before readback, for the first 2 onscreen glyph-atlas draws.
+    if (s.text_fullfb_done < 2) {
+        std::memcpy(s.text_fullfb_viewport, viewport, sizeof viewport);
+        s.text_fullfb_before.assign(
+            static_cast<std::size_t>(viewport[2]) * static_cast<std::size_t>(viewport[3]) * 4, 0);
+        gl.glReadPixels(viewport[0], viewport[1], viewport[2], viewport[3], kRgba, kUnsignedByte,
+                       s.text_fullfb_before.data());
+        s.text_fullfb_pending = true;
+    }
+
+    if (s.text_draws_captured >= 3) return;
     GLint scissor[4] = {0, 0, 0, 0};
     gl.glGetIntegerv(kScissorBox, scissor);
     GLint x = scissor[0] + scissor[2] / 2 - 16;
