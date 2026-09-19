@@ -13,6 +13,14 @@ void gl_diagnose(HostGl& host, HostGl::Call& call);
 // first 3 draws that have the glyph atlas texture bound.
 void gl_diagnose_before(HostGl& host, HostGl::Call& call);
 
+// Called right before the driver's eglSwapBuffers, at every swap of the default framebuffer.
+// Cheap after the first two default-framebuffer swaps that matter (the 60th and the 200th): on
+// those it reads back the running glyph-draw union box and a fixed centre block and renders each
+// as a coarse ASCII luminance map into the report, to show whether glyphs survive into the
+// actually-presented frame and what colour they end up. Uses the GlBackend last seen by
+// gl_diagnose/gl_diagnose_before; a no-op before any GL call has been diagnosed.
+void gl_diagnose_swap();
+
 struct GlMapDiagnostic {
     std::uint64_t id = 0;
     std::uintptr_t context = 0;

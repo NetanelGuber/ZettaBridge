@@ -213,6 +213,15 @@ struct State {
     // vertex/uniform buffer as GL_ARRAY_BUFFER, then binds slices of it as GL_UNIFORM_BUFFER.
     std::unordered_map<GLuint, BufferSnapshot> buffer_snapshots;
     std::uint64_t buffer_uploads = 0;
+
+    // The GlBackend most recently seen by gl_diagnose/gl_diagnose_before, so gl_diagnose_swap()
+    // (called from the EGL side, which has no GlBackend of its own) can issue its own readbacks.
+    // Never owned here; it outlives the process the same way HostGl does.
+    GlBackend* backend_cache = nullptr;
+
+    // Whole-frame presented-content diagnostics: counts every eglSwapBuffers of the default
+    // framebuffer so the 60th and 200th can be captured right before the swap.
+    std::uint64_t swap_count = 0;
 };
 
 State& state() {
@@ -595,6 +604,7 @@ void gl_diagnose(HostGl& host, HostGl::Call& call) {
     GlBackend& gl = host.backend();
     State& s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
+    s.backend_cache = &gl;
     switch (call.index()) {
     case ZB_GL_HC_glCompileShader: {
         const GLuint shader = call.arg(0);
@@ -1214,6 +1224,7 @@ void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
     State& s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
     GlBackend& gl = host.backend();
+    s.backend_cache = &gl;
 
     GLint active_texture = -1;
     gl.glGetIntegerv(kTextureBinding2d, &active_texture);
@@ -1298,6 +1309,173 @@ void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
     std::memset(s.text_snapshot_before, 0, sizeof s.text_snapshot_before);
     gl.glReadPixels(x, y, 32, 32, kRgba, kUnsignedByte, s.text_snapshot_before);
     s.text_snapshot_pending = true;
+}
+
+namespace {
+
+constexpr int kFrameMapCols = 64;
+constexpr int kFrameMapRows = 16;
+constexpr char kLumaChars[] = " .:-=+*#%@";
+constexpr int kLumaCharCount = 10;  // sizeof(kLumaChars) - 1, spelled out for clang -Wunused.
+
+// Renders a w*h RGBA8 region (as returned by glReadPixels: row 0 is the BOTTOM of the region)
+// into a kFrameMapRows x kFrameMapCols ASCII luminance grid, output row 0 being the TOP of the
+// region so the map reads the right way up. Luminance uses ITU-R BT.601 luma (fast integer
+// approximation), averaged over each downsample block.
+void luminance_grid(const std::uint8_t* pixels, GLint w, GLint h,
+                    char grid[kFrameMapRows][kFrameMapCols + 1]) {
+    for (int out_row = 0; out_row < kFrameMapRows; ++out_row) {
+        // out_row 0 = top of the region = the highest source y (glReadPixels rows are
+        // bottom-to-top in window coordinates).
+        const GLint y_lo = h - static_cast<GLint>((static_cast<std::int64_t>(out_row + 1) * h) / kFrameMapRows);
+        GLint y_hi = h - static_cast<GLint>((static_cast<std::int64_t>(out_row) * h) / kFrameMapRows);
+        if (y_hi <= y_lo) y_hi = y_lo + 1;
+        for (int out_col = 0; out_col < kFrameMapCols; ++out_col) {
+            const GLint x_lo = static_cast<GLint>((static_cast<std::int64_t>(out_col) * w) / kFrameMapCols);
+            GLint x_hi = static_cast<GLint>((static_cast<std::int64_t>(out_col + 1) * w) / kFrameMapCols);
+            if (x_hi <= x_lo) x_hi = x_lo + 1;
+            std::uint64_t luma_sum = 0;
+            std::uint64_t count = 0;
+            for (GLint y = y_lo; y < y_hi && y < h; ++y) {
+                for (GLint x = x_lo; x < x_hi && x < w; ++x) {
+                    const std::size_t idx = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                             static_cast<std::size_t>(x)) * 4;
+                    const std::uint8_t r = pixels[idx];
+                    const std::uint8_t g = pixels[idx + 1];
+                    const std::uint8_t b = pixels[idx + 2];
+                    luma_sum += (77u * r + 150u * g + 29u * b) >> 8;
+                    ++count;
+                }
+            }
+            const std::uint64_t luma = count == 0 ? 0 : luma_sum / count;
+            int bucket = static_cast<int>((luma * kLumaCharCount) / 256);
+            if (bucket >= kLumaCharCount) bucket = kLumaCharCount - 1;
+            grid[out_row][out_col] = kLumaChars[bucket];
+        }
+        grid[out_row][kFrameMapCols] = '\0';
+    }
+}
+
+// Reads back x,y,w,h from the currently-bound framebuffer, emits "gl-frame-map-<suffix>: ..."
+// as a 64x16 ASCII luminance map (plus 16 "-rowN" lines), and, when `stats_key` is non-null,
+// also emits "gl-frame-stats-<stats_key>: min=... max=... mean=..." (RGBA) for the same pixels.
+// A zero-size region or a glReadPixels failure is reported as such, never as an empty map.
+void emit_frame_region(GlBackend& gl, const std::string& map_suffix, const char* stats_key,
+                       GLint x, GLint y, GLint w, GLint h) {
+    const std::string map_key = "frame-map-" + map_suffix;
+    const std::string stats_line_key = stats_key ? std::string("frame-stats-") + stats_key : std::string();
+    if (w <= 0 || h <= 0) {
+        detail(map_key.c_str(), "region=none (empty)");
+        if (stats_key) detail(stats_line_key.c_str(), "region=none (empty)");
+        return;
+    }
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+    gl.glReadPixels(x, y, w, h, kRgba, kUnsignedByte, pixels.data());
+    const GLenum error = gl.glGetError();
+    if (error != 0) {
+        detail(map_key.c_str(),
+               format("region=%d,%d %dx%d readback-failed glGetError=0x%x", x, y, w, h, error));
+        if (stats_key) detail(stats_line_key.c_str(), format("readback-failed glGetError=0x%x", error));
+        gl.set_error(error);
+        return;
+    }
+    detail(map_key.c_str(), format("region=%d,%d %dx%d", x, y, w, h));
+    char grid[kFrameMapRows][kFrameMapCols + 1];
+    luminance_grid(pixels.data(), w, h, grid);
+    for (int row = 0; row < kFrameMapRows; ++row) {
+        detail((map_key + "-row" + std::to_string(row)).c_str(), grid[row]);
+    }
+    if (stats_key) {
+        std::uint8_t min_c[4] = {255, 255, 255, 255};
+        std::uint8_t max_c[4] = {0, 0, 0, 0};
+        std::uint64_t sum_c[4] = {0, 0, 0, 0};
+        const std::uint64_t count = static_cast<std::uint64_t>(w) * static_cast<std::uint64_t>(h);
+        for (std::uint64_t i = 0; i < count; ++i) {
+            const std::uint8_t* p = pixels.data() + i * 4;
+            for (int c = 0; c < 4; ++c) {
+                if (p[c] < min_c[c]) min_c[c] = p[c];
+                if (p[c] > max_c[c]) max_c[c] = p[c];
+                sum_c[c] += p[c];
+            }
+        }
+        detail(stats_line_key.c_str(),
+               format("min=%u,%u,%u,%u max=%u,%u,%u,%u mean=%.1f,%.1f,%.1f,%.1f", min_c[0], min_c[1],
+                      min_c[2], min_c[3], max_c[0], max_c[1], max_c[2], max_c[3],
+                      count == 0 ? 0.0 : static_cast<double>(sum_c[0]) / static_cast<double>(count),
+                      count == 0 ? 0.0 : static_cast<double>(sum_c[1]) / static_cast<double>(count),
+                      count == 0 ? 0.0 : static_cast<double>(sum_c[2]) / static_cast<double>(count),
+                      count == 0 ? 0.0 : static_cast<double>(sum_c[3]) / static_cast<double>(count)));
+    }
+}
+
+}  // namespace
+
+void gl_diagnose_swap() {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    const std::uint64_t swap = ++s.swap_count;
+    int moment = 0;
+    if (swap == 60) moment = 1;
+    else if (swap == 200) moment = 2;
+    if (moment == 0) return;
+
+    const std::string a_suffix = std::to_string(moment) + "a";
+    const std::string b_suffix = std::to_string(moment) + "b";
+    const std::string stats_key = std::to_string(moment);
+
+    if (s.backend_cache == nullptr) {
+        detail(("frame-map-" + a_suffix).c_str(), "no-gl-backend-seen-yet");
+        detail(("frame-map-" + b_suffix).c_str(), "no-gl-backend-seen-yet");
+        detail(("frame-stats-" + stats_key).c_str(), "no-gl-backend-seen-yet");
+        return;
+    }
+    GlBackend& gl = *s.backend_cache;
+
+    GLint framebuffer = -1;
+    gl.glGetIntegerv(kFramebufferBinding, &framebuffer);
+    if (framebuffer != 0) {
+        detail(("frame-map-" + a_suffix).c_str(), format("non-default-framebuffer=%d", framebuffer));
+        detail(("frame-map-" + b_suffix).c_str(), format("non-default-framebuffer=%d", framebuffer));
+        detail(("frame-stats-" + stats_key).c_str(), format("non-default-framebuffer=%d", framebuffer));
+        return;
+    }
+    GLint viewport[4] = {0, 0, 0, 0};
+    gl.glGetIntegerv(kViewport, viewport);
+
+    // Region A: the running glyph-draw union box (gl-text-box-union), clamped to the
+    // framebuffer.
+    GLint aw = 0, ah = 0, ax = 0, ay = 0;
+    if (s.text_box_union_valid && viewport[2] > 0 && viewport[3] > 0) {
+        const GLint min_x = std::max(s.text_box_union_min_x, 0);
+        const GLint min_y = std::max(s.text_box_union_min_y, 0);
+        const GLint max_x = std::min(s.text_box_union_max_x, viewport[2] - 1);
+        const GLint max_y = std::min(s.text_box_union_max_y, viewport[3] - 1);
+        if (max_x >= min_x && max_y >= min_y) {
+            ax = viewport[0] + min_x;
+            ay = viewport[1] + min_y;
+            aw = max_x - min_x + 1;
+            ah = max_y - min_y + 1;
+        }
+    }
+    if (aw > 0 && ah > 0) {
+        emit_frame_region(gl, a_suffix, stats_key.c_str(), ax, ay, aw, ah);
+    } else {
+        detail(("frame-map-" + a_suffix).c_str(), "region=none (no glyph-draw union yet)");
+        detail(("frame-stats-" + stats_key).c_str(), "region=none (no glyph-draw union yet)");
+    }
+
+    // Region B: a fixed 512x128 block at the centre of the screen, clamped to the framebuffer.
+    if (viewport[2] > 0 && viewport[3] > 0) {
+        const GLint bw = std::min<GLint>(512, viewport[2]);
+        const GLint bh = std::min<GLint>(128, viewport[3]);
+        GLint bx = viewport[0] + std::max<GLint>(0, viewport[2] / 2 - 256);
+        GLint by = viewport[1] + std::max<GLint>(0, viewport[3] / 2 - 64);
+        if (bx + bw > viewport[0] + viewport[2]) bx = viewport[0] + viewport[2] - bw;
+        if (by + bh > viewport[1] + viewport[3]) by = viewport[1] + viewport[3] - bh;
+        emit_frame_region(gl, b_suffix, nullptr, bx, by, bw, bh);
+    } else {
+        detail(("frame-map-" + b_suffix).c_str(), "region=none (empty viewport)");
+    }
 }
 
 }  // namespace zb

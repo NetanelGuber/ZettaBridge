@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "gl/gl_diagnostics.h"
 #include "zb/egl_hostcalls.h"
 #include "zb/host_egl.h"
 #include "zb/log.h"
@@ -439,6 +440,7 @@ bool zbegl_manual_eglSwapBuffers(HostEgl& host, HostEgl::Call& call) {
     EGLSurface surface = as_pointer(call.handle_of(1, EglObject::Surface));
     if (!call.valid()) return true;
     runtime_report().note_egl_swap();
+    if (gl_diagnostics_enabled()) gl_diagnose_swap();
     call.set_result(host.backend().eglSwapBuffers(dpy, surface));
     return true;
 }
