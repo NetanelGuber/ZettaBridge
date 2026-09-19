@@ -198,6 +198,15 @@ struct State {
     GLint text_box_union_max_x = -1;
     GLint text_box_union_max_y = -1;
 
+    // Absolute-pixel box of the first and second recorded glyph draws (gl-text-box-1/2), for the
+    // high-resolution single-glyph maps in gl_diagnose_swap(). Index 0 is draw 1, index 1 is
+    // draw 2. Set once each, never overwritten after that.
+    bool text_box_first_valid[2] = {false, false};
+    GLint text_box_first_x[2] = {0, 0};
+    GLint text_box_first_y[2] = {0, 0};
+    GLint text_box_first_w[2] = {0, 0};
+    GLint text_box_first_h[2] = {0, 0};
+
     // Same idea for one control draw: the first onscreen fb-0 draw that writes colour but does
     // NOT use the glyph atlas texture. Proves the readback/diff machinery itself works.
     bool nontext_diff_done = false;
@@ -1131,6 +1140,13 @@ void emit_text_box_diff(GlBackend& gl, State& s, std::uint64_t n, std::vector<st
     }
     detail(key.c_str(), format("pixels-changed=%llu box=%d,%d %dx%d", (unsigned long long)changed,
                                min_x, min_y, max_x - min_x + 1, max_y - min_y + 1));
+    if ((n == 1 || n == 2) && !s.text_box_first_valid[n - 1]) {
+        s.text_box_first_valid[n - 1] = true;
+        s.text_box_first_x[n - 1] = viewport[0] + min_x;
+        s.text_box_first_y[n - 1] = viewport[1] + min_y;
+        s.text_box_first_w[n - 1] = max_x - min_x + 1;
+        s.text_box_first_h[n - 1] = max_y - min_y + 1;
+    }
     if (!s.text_box_union_valid) {
         s.text_box_union_valid = true;
         s.text_box_union_min_x = min_x;
@@ -1313,60 +1329,91 @@ void gl_diagnose_before(HostGl& host, HostGl::Call& call) {
 
 namespace {
 
-constexpr int kFrameMapCols = 64;
-constexpr int kFrameMapRows = 16;
 constexpr char kLumaChars[] = " .:-=+*#%@";
 constexpr int kLumaCharCount = 10;  // sizeof(kLumaChars) - 1, spelled out for clang -Wunused.
 
-// Renders a w*h RGBA8 region (as returned by glReadPixels: row 0 is the BOTTOM of the region)
-// into a kFrameMapRows x kFrameMapCols ASCII luminance grid, output row 0 being the TOP of the
-// region so the map reads the right way up. Luminance uses ITU-R BT.601 luma (fast integer
-// approximation), averaged over each downsample block.
-void luminance_grid(const std::uint8_t* pixels, GLint w, GLint h,
-                    char grid[kFrameMapRows][kFrameMapCols + 1]) {
-    for (int out_row = 0; out_row < kFrameMapRows; ++out_row) {
-        // out_row 0 = top of the region = the highest source y (glReadPixels rows are
-        // bottom-to-top in window coordinates).
-        const GLint y_lo = h - static_cast<GLint>((static_cast<std::int64_t>(out_row + 1) * h) / kFrameMapRows);
-        GLint y_hi = h - static_cast<GLint>((static_cast<std::int64_t>(out_row) * h) / kFrameMapRows);
-        if (y_hi <= y_lo) y_hi = y_lo + 1;
-        for (int out_col = 0; out_col < kFrameMapCols; ++out_col) {
-            const GLint x_lo = static_cast<GLint>((static_cast<std::int64_t>(out_col) * w) / kFrameMapCols);
-            GLint x_hi = static_cast<GLint>((static_cast<std::int64_t>(out_col + 1) * w) / kFrameMapCols);
-            if (x_hi <= x_lo) x_hi = x_lo + 1;
+constexpr int kGlyphMapMaxCols = 96;
+constexpr int kGlyphMapMaxRows = 48;
+
+// Renders a w*h RGBA8 region (as returned by glReadPixels: row 0 is the BOTTOM of the region) at
+// near-native resolution: one output column per source pixel column (capped at
+// kGlyphMapMaxCols, centre-cropping wider regions) and one output row per 2 source pixel rows
+// (capped at kGlyphMapMaxRows, centre-cropping taller regions). Meant to make a single ~30x50
+// glyph legible, unlike the coarse 64x16 whole-frame map. Same luma ramp as luminance_grid().
+void high_res_grid(const std::uint8_t* pixels, GLint w, GLint h, std::vector<std::string>& out_rows) {
+    const int col_count = static_cast<int>(std::min<GLint>(w, kGlyphMapMaxCols));
+    const GLint col_start = w > kGlyphMapMaxCols ? (w - kGlyphMapMaxCols) / 2 : 0;
+    const int row_count = static_cast<int>(std::min<GLint>((h + 1) / 2, kGlyphMapMaxRows));
+    const GLint covered_rows = static_cast<GLint>(row_count) * 2;
+    const GLint row_start_from_top = covered_rows < h ? (h - covered_rows) / 2 : 0;
+
+    out_rows.assign(static_cast<std::size_t>(row_count), std::string());
+    for (int out_row = 0; out_row < row_count; ++out_row) {
+        // out_row 0 = top of the region. glReadPixels rows are bottom-to-top, so the row at
+        // `top_offset` rows down from the top sits at buffer row (h - 1 - top_offset).
+        const GLint top_offset0 = row_start_from_top + static_cast<GLint>(out_row) * 2;
+        const GLint top_offset1 = top_offset0 + 1;
+        const GLint y0 = h - 1 - top_offset0;
+        const GLint y1 = h - 1 - top_offset1;
+        std::string line;
+        line.resize(static_cast<std::size_t>(col_count));
+        for (int out_col = 0; out_col < col_count; ++out_col) {
+            const GLint x = col_start + out_col;
             std::uint64_t luma_sum = 0;
             std::uint64_t count = 0;
-            for (GLint y = y_lo; y < y_hi && y < h; ++y) {
-                for (GLint x = x_lo; x < x_hi && x < w; ++x) {
-                    const std::size_t idx = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
-                                             static_cast<std::size_t>(x)) * 4;
-                    const std::uint8_t r = pixels[idx];
-                    const std::uint8_t g = pixels[idx + 1];
-                    const std::uint8_t b = pixels[idx + 2];
-                    luma_sum += (77u * r + 150u * g + 29u * b) >> 8;
-                    ++count;
-                }
+            for (const GLint y : {y0, y1}) {
+                if (y < 0 || y >= h || x < 0 || x >= w) continue;
+                const std::size_t idx = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                         static_cast<std::size_t>(x)) * 4;
+                const std::uint8_t r = pixels[idx];
+                const std::uint8_t g = pixels[idx + 1];
+                const std::uint8_t b = pixels[idx + 2];
+                luma_sum += (77u * r + 150u * g + 29u * b) >> 8;
+                ++count;
             }
-            const std::uint64_t luma = count == 0 ? 0 : luma_sum / count;
+            if (count == 0) {
+                line[static_cast<std::size_t>(out_col)] = ' ';
+                continue;
+            }
+            const std::uint64_t luma = luma_sum / count;
             int bucket = static_cast<int>((luma * kLumaCharCount) / 256);
             if (bucket >= kLumaCharCount) bucket = kLumaCharCount - 1;
-            grid[out_row][out_col] = kLumaChars[bucket];
+            line[static_cast<std::size_t>(out_col)] = kLumaChars[bucket];
         }
-        grid[out_row][kFrameMapCols] = '\0';
+        out_rows[static_cast<std::size_t>(out_row)] = line;
     }
 }
 
-// Reads back x,y,w,h from the currently-bound framebuffer, emits "gl-frame-map-<suffix>: ..."
-// as a 64x16 ASCII luminance map (plus 16 "-rowN" lines), and, when `stats_key` is non-null,
-// also emits "gl-frame-stats-<stats_key>: min=... max=... mean=..." (RGBA) for the same pixels.
-// A zero-size region or a glReadPixels failure is reported as such, never as an empty map.
-void emit_frame_region(GlBackend& gl, const std::string& map_suffix, const char* stats_key,
-                       GLint x, GLint y, GLint w, GLint h) {
+// Emits a high-resolution "gl-frame-map-<suffix>: ..." map plus per-row and per-region stats
+// lines for one recorded glyph box, padded by `pad` pixels and clamped to the framebuffer. When
+// `box_valid` is false (no such glyph draw recorded yet at this swap), emits a says-so line for
+// both the map and the stats instead of reading back anything.
+void emit_glyph_box_region(GlBackend& gl, const std::string& map_suffix, const char* stats_key,
+                           bool box_valid, GLint box_x, GLint box_y, GLint box_w, GLint box_h,
+                           GLint pad, const GLint* viewport) {
     const std::string map_key = "frame-map-" + map_suffix;
-    const std::string stats_line_key = stats_key ? std::string("frame-stats-") + stats_key : std::string();
+    const std::string stats_line_key = std::string("frame-stats-") + stats_key;
+    if (!box_valid) {
+        detail(map_key.c_str(), "region=none (no glyph box recorded yet)");
+        detail(stats_line_key.c_str(), "region=none (no glyph box recorded yet)");
+        return;
+    }
+    GLint x = box_x - pad;
+    GLint y = box_y - pad;
+    GLint w = box_w + 2 * pad;
+    GLint h = box_h + 2 * pad;
+    // Clamp to the current framebuffer's viewport.
+    const GLint fb_x0 = viewport[0], fb_y0 = viewport[1];
+    const GLint fb_x1 = viewport[0] + viewport[2], fb_y1 = viewport[1] + viewport[3];
+    if (x < fb_x0) x = fb_x0;
+    if (y < fb_y0) y = fb_y0;
+    GLint x1 = std::min(x + w, fb_x1);
+    GLint y1 = std::min(y + h, fb_y1);
+    w = x1 - x;
+    h = y1 - y;
     if (w <= 0 || h <= 0) {
-        detail(map_key.c_str(), "region=none (empty)");
-        if (stats_key) detail(stats_line_key.c_str(), "region=none (empty)");
+        detail(map_key.c_str(), format("region=%d,%d %dx%d (empty after clamp)", x, y, w, h));
+        detail(stats_line_key.c_str(), "region=none (empty after clamp)");
         return;
     }
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
@@ -1375,37 +1422,36 @@ void emit_frame_region(GlBackend& gl, const std::string& map_suffix, const char*
     if (error != 0) {
         detail(map_key.c_str(),
                format("region=%d,%d %dx%d readback-failed glGetError=0x%x", x, y, w, h, error));
-        if (stats_key) detail(stats_line_key.c_str(), format("readback-failed glGetError=0x%x", error));
+        detail(stats_line_key.c_str(), format("readback-failed glGetError=0x%x", error));
         gl.set_error(error);
         return;
     }
-    detail(map_key.c_str(), format("region=%d,%d %dx%d", x, y, w, h));
-    char grid[kFrameMapRows][kFrameMapCols + 1];
-    luminance_grid(pixels.data(), w, h, grid);
-    for (int row = 0; row < kFrameMapRows; ++row) {
-        detail((map_key + "-row" + std::to_string(row)).c_str(), grid[row]);
+    detail(map_key.c_str(), format("region=%d,%d %dx%d (glyph box=%d,%d %dx%d pad=%d)", x, y, w, h,
+                                   box_x, box_y, box_w, box_h, pad));
+    std::vector<std::string> rows;
+    high_res_grid(pixels.data(), w, h, rows);
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+        detail((map_key + "-row" + std::to_string(row)).c_str(), rows[row]);
     }
-    if (stats_key) {
-        std::uint8_t min_c[4] = {255, 255, 255, 255};
-        std::uint8_t max_c[4] = {0, 0, 0, 0};
-        std::uint64_t sum_c[4] = {0, 0, 0, 0};
-        const std::uint64_t count = static_cast<std::uint64_t>(w) * static_cast<std::uint64_t>(h);
-        for (std::uint64_t i = 0; i < count; ++i) {
-            const std::uint8_t* p = pixels.data() + i * 4;
-            for (int c = 0; c < 4; ++c) {
-                if (p[c] < min_c[c]) min_c[c] = p[c];
-                if (p[c] > max_c[c]) max_c[c] = p[c];
-                sum_c[c] += p[c];
-            }
+    std::uint8_t min_c[4] = {255, 255, 255, 255};
+    std::uint8_t max_c[4] = {0, 0, 0, 0};
+    std::uint64_t sum_c[4] = {0, 0, 0, 0};
+    const std::uint64_t count = static_cast<std::uint64_t>(w) * static_cast<std::uint64_t>(h);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        const std::uint8_t* p = pixels.data() + i * 4;
+        for (int c = 0; c < 4; ++c) {
+            if (p[c] < min_c[c]) min_c[c] = p[c];
+            if (p[c] > max_c[c]) max_c[c] = p[c];
+            sum_c[c] += p[c];
         }
-        detail(stats_line_key.c_str(),
-               format("min=%u,%u,%u,%u max=%u,%u,%u,%u mean=%.1f,%.1f,%.1f,%.1f", min_c[0], min_c[1],
-                      min_c[2], min_c[3], max_c[0], max_c[1], max_c[2], max_c[3],
-                      count == 0 ? 0.0 : static_cast<double>(sum_c[0]) / static_cast<double>(count),
-                      count == 0 ? 0.0 : static_cast<double>(sum_c[1]) / static_cast<double>(count),
-                      count == 0 ? 0.0 : static_cast<double>(sum_c[2]) / static_cast<double>(count),
-                      count == 0 ? 0.0 : static_cast<double>(sum_c[3]) / static_cast<double>(count)));
     }
+    detail(stats_line_key.c_str(),
+           format("min=%u,%u,%u,%u max=%u,%u,%u,%u mean=%.1f,%.1f,%.1f,%.1f", min_c[0], min_c[1],
+                  min_c[2], min_c[3], max_c[0], max_c[1], max_c[2], max_c[3],
+                  count == 0 ? 0.0 : static_cast<double>(sum_c[0]) / static_cast<double>(count),
+                  count == 0 ? 0.0 : static_cast<double>(sum_c[1]) / static_cast<double>(count),
+                  count == 0 ? 0.0 : static_cast<double>(sum_c[2]) / static_cast<double>(count),
+                  count == 0 ? 0.0 : static_cast<double>(sum_c[3]) / static_cast<double>(count)));
 }
 
 }  // namespace
@@ -1442,40 +1488,16 @@ void gl_diagnose_swap() {
     GLint viewport[4] = {0, 0, 0, 0};
     gl.glGetIntegerv(kViewport, viewport);
 
-    // Region A: the running glyph-draw union box (gl-text-box-union), clamped to the
-    // framebuffer.
-    GLint aw = 0, ah = 0, ax = 0, ay = 0;
-    if (s.text_box_union_valid && viewport[2] > 0 && viewport[3] > 0) {
-        const GLint min_x = std::max(s.text_box_union_min_x, 0);
-        const GLint min_y = std::max(s.text_box_union_min_y, 0);
-        const GLint max_x = std::min(s.text_box_union_max_x, viewport[2] - 1);
-        const GLint max_y = std::min(s.text_box_union_max_y, viewport[3] - 1);
-        if (max_x >= min_x && max_y >= min_y) {
-            ax = viewport[0] + min_x;
-            ay = viewport[1] + min_y;
-            aw = max_x - min_x + 1;
-            ah = max_y - min_y + 1;
-        }
-    }
-    if (aw > 0 && ah > 0) {
-        emit_frame_region(gl, a_suffix, stats_key.c_str(), ax, ay, aw, ah);
-    } else {
-        detail(("frame-map-" + a_suffix).c_str(), "region=none (no glyph-draw union yet)");
-        detail(("frame-stats-" + stats_key).c_str(), "region=none (no glyph-draw union yet)");
-    }
+    // Region A: the exact box of the first recorded glyph draw (gl-text-box-1), padded 8px on
+    // each side, printed at near-native resolution so a single glyph is legible.
+    emit_glyph_box_region(gl, a_suffix, a_suffix.c_str(), s.text_box_first_valid[0],
+                          s.text_box_first_x[0], s.text_box_first_y[0], s.text_box_first_w[0],
+                          s.text_box_first_h[0], 8, viewport);
 
-    // Region B: a fixed 512x128 block at the centre of the screen, clamped to the framebuffer.
-    if (viewport[2] > 0 && viewport[3] > 0) {
-        const GLint bw = std::min<GLint>(512, viewport[2]);
-        const GLint bh = std::min<GLint>(128, viewport[3]);
-        GLint bx = viewport[0] + std::max<GLint>(0, viewport[2] / 2 - 256);
-        GLint by = viewport[1] + std::max<GLint>(0, viewport[3] / 2 - 64);
-        if (bx + bw > viewport[0] + viewport[2]) bx = viewport[0] + viewport[2] - bw;
-        if (by + bh > viewport[1] + viewport[3]) by = viewport[1] + viewport[3] - bh;
-        emit_frame_region(gl, b_suffix, nullptr, bx, by, bw, bh);
-    } else {
-        detail(("frame-map-" + b_suffix).c_str(), "region=none (empty viewport)");
-    }
+    // Region B: the exact box of the second recorded glyph draw (gl-text-box-2), same treatment.
+    emit_glyph_box_region(gl, b_suffix, b_suffix.c_str(), s.text_box_first_valid[1],
+                          s.text_box_first_x[1], s.text_box_first_y[1], s.text_box_first_w[1],
+                          s.text_box_first_h[1], 8, viewport);
 }
 
 }  // namespace zb
