@@ -187,7 +187,9 @@ private:
     bool gl_error_known_ = false;
     std::string gl_error_function_;
     std::uint32_t gl_error_value_ = 0;
-    static constexpr std::size_t kMaxGlDetails = 96;
+    // Diagnostic builds print whole ASCII frame maps (16 rows each), so this is deliberately large:
+    // a dropped key looks exactly like an event that never happened, which has cost us a run before.
+    static constexpr std::size_t kMaxGlDetails = 400;
     std::vector<std::pair<std::string, std::string>> gl_details_;
 
     static constexpr std::size_t kMaxCrashDetails = 32;
