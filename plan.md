@@ -103,7 +103,7 @@ The repository states cumulative PolyForm Noncommercial and PolyForm Perimeter t
 
 ### Step 00 - Freeze scope and architecture decision
 
-**Status:** BLOCKED
+**Status:** DONE
 
 **Goal:** Record a short ADR before product implementation.
 
@@ -119,15 +119,15 @@ The repository states cumulative PolyForm Noncommercial and PolyForm Perimeter t
 
 **Depends on:** none.
 
-**Evidence and remaining gate (2026-09-23):** The architecture decision and synthetic
-proof are recorded in [ADR 0001](docs/adr/0001-per-app-runtime.md). Source review used
-baseline `4acdf51c11118b1d9d04c2c117feab249ea51072`; the proxy/JNI engine and current
-launcher-specific assumptions are documented there. Historical OnePlus 13 GLES 2.0
-acceptance is linked, but `adb devices -l` found no attached phone. Current Android
-API/build, SELinux mode, root-provider state, GL vendor/version/extensions, and free
-storage therefore remain unverified. Do not mark Step 00 DONE or start Step 01 until
-those actual-phone observations are recorded and the ADR device gate is closed. No
-product source or tests were changed/run for this documentation-only step.
+**Evidence (2026-09-23):** The architecture decision, source audit, smallest synthetic
+proof, and go/no-go checks are in [ADR 0001](docs/adr/0001-per-app-runtime.md).
+Source review used baseline `4acdf51c11118b1d9d04c2c117feab249ea51072`. Live ADB
+inventory was captured from Pixel 11 Pro XL serial `67161FDDV0011Q`: Android 17/API
+37, ARM64-only advertised ABI, SELinux enforcing, KernelSU 3.3.0 installed, GLES
+3.2 and Vulkan 1.4 advertised, and 414 GB available on the data filesystem. The ADR
+distinguishes these capability readings from unrun app-context proxy/JNI/sysroot/JIT
+and NativeActivity acceptance tests. This was documentation-only; no product source,
+build, or tests were changed/run. Step 01 remains NOT STARTED.
 
 ### Step 01 - Personal-fork handoff and reproducible baseline
 

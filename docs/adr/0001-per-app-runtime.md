@@ -1,6 +1,6 @@
 # ADR 0001: Per-app converted APK with an embedded ARM64 runtime
 
-**Status:** Accepted for the synthetic architecture spike; live device baseline pending
+**Status:** Accepted; live device baseline captured for the synthetic architecture spike
 
 **Date:** 2026-09-23
 **Decision owners:** User and implementation agent
@@ -68,7 +68,7 @@ data; never silently uninstall it, replace it, or imply that root bypasses signi
 | Installed app | Run Java, ARM64 proxies, translated ARM32 code, and bootstrap only as the UID assigned by Package Manager. Root denial or loss must not turn into root execution. |
 | Runtime files | Keep the guest sysroot read-only. Put extracted guest libraries, JIT cache, reports, and app data in app-private locations. No root-only path is permitted at runtime. |
 | Signing and updates | Use one stable personal signing key. Verify the output signer and record its fingerprint and input/output hashes. A source certificate mismatch is a hard update conflict; preserve the installed source package and data. |
-| Storage | The live free-space figure is unknown in this checkout. Conversion must budget source/split bytes, private staging, output, installed package, runtime bundle, and rollback metadata; publish only after verification and clean failed staging safely. Measure on the target before conversion acceptance. |
+| Storage | ADB reports 414 GB available on the data filesystem. This is filesystem free space, not an app-specific quota. Conversion must still budget source/split bytes, private staging, output, installed package, runtime bundle, and rollback metadata; publish only after verification and clean failed staging safely. |
 
 Root must not modify `ro.dalvik.vm.*`, ART, the system image, SELinux policy, or
 system partitions. The spike must pass while SELinux is enforcing. If execution
@@ -79,21 +79,26 @@ no-go.
 
 | Property | Current evidence | State |
 | --- | --- | --- |
-| Device / SoC | OnePlus 13 / Snapdragon 8 Elite, recorded in `docs/phase5-acceptance.md` (2026-09-17). | Historical target; not re-read live. |
-| Host ISA | Device has no AArch32 execution state, per the same device acceptance record. | Historical target; ARM64 proxy ABI is `arm64-v8a`. |
-| Android release / API / build fingerprint | The legacy project handoff calls the ROM OxygenOS 16. No live `getprop` result is available. | API level and fingerprint unverified. |
+| Device / SoC | Google Pixel 11 Pro XL (`kodiak`), Google Tensor G6. Live ADB serial: `67161FDDV0011Q`. | Captured 2026-09-23; first per-app spike target. OnePlus 13 remains a separate historical launcher acceptance device. |
+| Host ABI | `ro.product.cpu.abi=arm64-v8a`; `ro.product.cpu.abilist=arm64-v8a`. | Captured 2026-09-23; Android advertises only the ARM64 app ABI. This is not a direct CPU execution-state probe. |
+| Android release / API / build fingerprint | Android 17, API 37, build `google/kodiak/kodiak:17/CD1A.260905.001.B1/16238327:user/release-keys`; security patch `2026-09-01`. | Captured 2026-09-23. |
 | Guest ABIs | Initial target is `armeabi` and `armeabi-v7a`, as defined by this plan. | Scope decision; validate per input ELF. |
-| Root provider | Legacy handoff records KernelSU and LSPosed. | Current provider/grant state unverified. LSPosed is not a runtime dependency. |
-| SELinux | No current `getenforce` result. | Unverified; enforcing is a go/no-go requirement. |
-| Graphics | Orange Roulette using GLES 2.0, including `GL_BGRA_EXT` texture uploads, rendered and accepted on the OnePlus 13 (2026-09-17). | Historical application-path proof; device GL vendor/version/extension inventory is still needed. Vulkan is outside the initial spike. |
-| Storage | No live `df` or app-private free-space result. The device's free space and conversion budget are unknown. | Measure before device acceptance. |
-| ADB availability | `adb devices -l` on 2026-09-23 listed no devices. | Explains the missing live measurements; it does not establish phone state. |
+| Root provider | Package `me.weishu.kernelsu` is installed; `su -v` reports `3.3.0:KernelSU`. | Captured 2026-09-23. No root command or grant prompt was invoked; authorization behavior belongs to Step 03. |
+| SELinux / build posture | `getenforce=Enforcing`, `ro.secure=1`, `ro.debuggable=0`, `ro.boot.verifiedbootstate=green`. | Captured 2026-09-23. The synthetic runtime/JIT proof must still pass under this state. |
+| Graphics | `ro.opengles.version=196610` (Android encoding for GLES 3.2); `android.hardware.opengles.aep` is advertised. `ro.hardware.egl=powervr`, `ro.hardware.vulkan=powervr`; Package Manager advertises Vulkan level 1 and version `4210688` (1.4.0). SurfaceFlinger reports a Vulkan device initialized. | Captured 2026-09-23. These are device/framework capability observations, not a probe of an app GL context. `GL_VENDOR`, `GL_RENDERER`, and extension strings were not exposed by the collected dumpsys output. Earlier GLES 2.0 Orange Roulette rendering is historical OnePlus 13 evidence only. |
+| Storage | `df -h /data/user/0`: `/dev/block/dm-115`, 462G size, 49G used, 414G available (11%), mounted at `/mnt/pass_through/0/emulated`. | Captured 2026-09-23. App-specific quota and conversion staging headroom were not measured. |
+| ADB availability | `adb devices -l` lists serial `67161FDDV0011Q` as `device`, model `Pixel_11_Pro_XL`, product/device `kodiak`. | Captured 2026-09-23. |
 
 Do not treat historical launcher acceptance as evidence that a converted standalone
 APK can load its proxy, access its app-private guest sysroot, or run NativeActivity.
-Capture Android release/API/build, `ro.product.cpu.abilist`, `getenforce`, root
-provider/grant state, GLES `GL_VERSION`/`GL_VENDOR`/`GL_RENDERER`/extensions, and
-free space on the actual phone before closing this ADR's device-baseline gate.
+The inventory above closes the Step 00 device-baseline gate. Root grant behavior is
+reserved for Step 03; app-context GL strings and app-private storage checks require
+the synthetic package and remain implementation acceptance tests. No converted APK,
+guest sysroot, JIT, JNI proxy, or NativeActivity was run during Step 00.
+
+The inventory used read-only ADB commands: `adb devices -l`, `getprop`, `getenforce`,
+`pm list packages`, `su -v`, `pm list features`, `df -h /data/user/0`, and
+`dumpsys SurfaceFlinger`. No `su -c` command or root grant prompt was requested.
 
 ## Existing-code reuse and launcher assumptions
 
