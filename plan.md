@@ -197,7 +197,7 @@ personal `main`; no upstream push is authorized.
 
 ### Step 02 - APK/split analyzer and preflight report
 
-**Status:** NOT STARTED  
+**Status:** DONE
 **Tasks**
 - Read-only inspection of package/version, min/target SDK, manifest/components/permissions, signer digest, ABIs, ELF class/machine/attributes, DT_NEEDED, symbol imports/exports, JNI hints, native entry points, compression/alignment and split relationships.
 - Support one APK and a validated complete split set (including common .apks containers if feasible). Reject incomplete/mixed-version/mixed-signer sets. AAB input is outside the first release unless explicitly added.
@@ -208,6 +208,29 @@ personal `main`; no upstream push is authorized.
 **Done when:** Synthetic valid, malformed, ambiguous, oversized, split and multi-ABI fixtures classify safely; report separates install/signing blockers from runtime gaps; source is unchanged.
 
 **Depends on:** Step 01.
+
+**Evidence (2026-09-23):** `tools/apk_preflight.py` is a read-only Python 3.11+
+analyzer for a single APK, an explicit split set, or a `.apks` container. It
+checks bounded ZIP structure/content, parses binary AndroidManifest.xml, verifies
+APK signatures with SDK `apksigner`, and inventories ARM32/ARM64/x86 ELF metadata
+with `readelf`. Its JSON findings distinguish conversion, install/signing, and
+runtime gaps with convertible/warning/unsupported levels. `docs/apk-preflight.md`
+records invocation, limits, and the split-completeness boundary. The analyzer
+rejects absent base, duplicate names, missing declared split dependencies, and
+mixed package/version/signer. AAB and ambiguous multi-base containers remain
+outside this step.
+
+`python -m unittest discover -s tests/preflight -v` passed 6 tests on Windows
+Python 3.12. The synthetic fixtures covered valid/unchanged source, malformed
+ZIP paths/duplicate/symlink/manifest/ELF, extreme compression, missing/mixed/
+ambiguous splits, `.apks`, ARM32 plus x86, x86-only, and separate install/signing
+versus runtime findings. In WSL2, `tests/preflight/run_android_fixture.sh`
+passed against SDK build-tools 35.0.0, Android platform 35, NDK r29 and GNU
+`readelf`: a synthetic signed APK with real binary AXML and compiled ARM32 ELF
+reported package/version/SDK, verified certificate and schemes, `EM_ARM`,
+`DT_NEEDED`, imports, and JNI exports; the input SHA-256 was unchanged. The
+unsigned fixture was rejected. This is static host/toolchain evidence only; no
+APK was installed or run on a device. Step 03 remains NOT STARTED.
 
 ### Step 03 - Narrow root manager
 
