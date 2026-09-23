@@ -230,11 +230,11 @@ passed against SDK build-tools 35.0.0, Android platform 35, NDK r29 and GNU
 reported package/version/SDK, verified certificate and schemes, `EM_ARM`,
 `DT_NEEDED`, imports, and JNI exports; the input SHA-256 was unchanged. The
 unsigned fixture was rejected. This is static host/toolchain evidence only; no
-APK was installed or run on a device. Step 03 remains NOT STARTED.
+APK was installed or run on a device. Step 03 was not started at that point.
 
 ### Step 03 - Narrow root manager
 
-**Status:** NOT STARTED  
+**Status:** DONE
 **Tasks**
 - Implement a KernelSU/su backend with explicit grant state, cancellation, timeout, fixed operations and useful failures; keep a seam for later providers.
 - Limit root to verifying provider, safely staging a user-selected input, invoking explicitly authorized PackageManager actions, and collecting explicitly requested backups/diagnostics.
@@ -246,6 +246,45 @@ APK was installed or run on a device. Step 03 remains NOT STARTED.
 **Done when:** Root denial/cancel/timeout/path replacement/command failure all fail closed; the backend cannot launch guest code as UID 0; installed apps retain normal UID sandbox.
 
 **Depends on:** Steps 00-01.
+
+**Evidence (2026-09-23):** The separate `:manager` Android application uses
+package `com.zettabridge.manager`; it has no guest loader, plugin process,
+shared UID, or root-call entry point available to converted apps. Its KernelSU
+adapter exposes only root UID check, PackageManager install without replacement,
+explicit replacement, and uninstall with/without retained data for primary
+user 0. The manager stages a document-picker URI as its ordinary UID, caps it
+at 2 GiB, hashes it, opens it without following symlinks, and sends bytes over
+stdin. No selected path or package text is interpolated into shell source;
+uninstall passes a validated package name on stdin. Root actions are separate
+UI confirmations with consequences, cancellation, a 120-second deadline, and
+an unknown-outcome warning if PackageManager may already have started.
+
+`RootManagerContractsTest` passed on Java 21/Android API 35 stubs, covering
+grant denial, unconfirmed and cancelled operations, timeout, command failure,
+package validation, stdin isolation, symlink replacement, and abandoned-file
+cleanup. Both `:manager:assembleDebug` and the unchanged `:app:assembleDebug`
+passed with SDK 35; the final manager debug APK SHA-256 is
+`2e5ef97a32301389439b123f2c17032498c0c16b3a9eb52392fcbcce7dbebc7e`.
+
+On Pixel 11 Pro XL `67161FDDV0011Q` (Android 17/API 37, KernelSU 3.3.0),
+the manager's on-device grant check displayed `GRANTED: 0` while its process
+remained `u0_a383` and PackageManager assigned the manager UID 10383. A
+73,129-byte synthetic launcher debug APK was selected through DocumentsUI,
+staged with SHA-256 `a74447d387adbaac30aeb0bdf16ee73962e156f988a1ec352918977ed1b10ae0`,
+installed through the manager's confirmed root action, and registered as
+`com.zettabridge.launcher` with distinct UID 10384. Confirmed same-signer
+replacement succeeded with UID 10384 unchanged; confirmed uninstall succeeded
+and the launcher package disappeared. The test APK and UI dumps were removed
+from shared storage; the separate manager remains installed. The final build
+also staged the fixture and cleaned abandoned staging files on restart.
+
+This proves the narrow manager path and normal Android UID assignment for the
+synthetic package. Denial, cancellation, timeout, and path replacement were
+host-tested, not exercised against the live KernelSU prompt. No conversion,
+translated guest, split install, backup, or user-app compatibility was tested.
+The fixed stdin install syntax was corrected after Android 17 rejected the
+trailing `-` advertised by `pm help`.
+Next: Step 04 remains NOT STARTED; no runtime bootstrap work was begun.
 
 ### Step 04 - Runtime bootstrap for ordinary installed apps
 

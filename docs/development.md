@@ -171,6 +171,7 @@ python3 tools/check_zbproxy.py build/android-arm64/core/libzbproxy.so
 tools/make_launcher_bundle.sh
 cd android/launcher
 ANDROID_HOME="$ANDROID_SDK_ROOT" ./gradlew :app:assembleDebug --no-daemon
+ANDROID_HOME="$ANDROID_SDK_ROOT" ./gradlew :manager:assembleDebug --no-daemon
 ```
 
 An Android link or APK build proves compilation only; device/runtime acceptance is
