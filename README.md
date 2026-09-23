@@ -25,8 +25,8 @@ No root, no custom ROM, no system image changes.
 |---|---|---|
 | ![Intro screen](images/screenshots/intro.jpg) | ![Main menu](images/screenshots/menu.jpg) | ![Gameplay](images/screenshots/gameplay.jpg) |
 
-Every pixel above was drawn by translated 32-bit ARM code: a OnePlus 13 (Snapdragon 8 Elite) has
-no AArch32 execution state, so the game cannot start on it at all without ZettaBridge.
+Every pixel above was drawn by translated 32-bit ARM code on the original project owner's OnePlus 13
+(Snapdragon 8 Elite). This is inherited upstream evidence, not a device result from this fork.
 
 ## How it works
 

@@ -79,13 +79,13 @@ no-go.
 
 | Property | Current evidence | State |
 | --- | --- | --- |
-| Device / SoC | Google Pixel 11 Pro XL (`kodiak`), Google Tensor G6. Live ADB serial: `67161FDDV0011Q`. | Captured 2026-09-23; first per-app spike target. OnePlus 13 remains a separate historical launcher acceptance device. |
+| Device / SoC | Google Pixel 11 Pro XL (`kodiak`), Google Tensor G6. Live ADB serial: `67161FDDV0011Q`. | Captured 2026-09-23; first per-app spike target. The OnePlus 13 acceptance records are from the original project owner, not this fork owner. |
 | Host ABI | `ro.product.cpu.abi=arm64-v8a`; `ro.product.cpu.abilist=arm64-v8a`. | Captured 2026-09-23; Android advertises only the ARM64 app ABI. This is not a direct CPU execution-state probe. |
 | Android release / API / build fingerprint | Android 17, API 37, build `google/kodiak/kodiak:17/CD1A.260905.001.B1/16238327:user/release-keys`; security patch `2026-09-01`. | Captured 2026-09-23. |
 | Guest ABIs | Initial target is `armeabi` and `armeabi-v7a`, as defined by this plan. | Scope decision; validate per input ELF. |
 | Root provider | Package `me.weishu.kernelsu` is installed; `su -v` reports `3.3.0:KernelSU`. | Captured 2026-09-23. No root command or grant prompt was invoked; authorization behavior belongs to Step 03. |
 | SELinux / build posture | `getenforce=Enforcing`, `ro.secure=1`, `ro.debuggable=0`, `ro.boot.verifiedbootstate=green`. | Captured 2026-09-23. The synthetic runtime/JIT proof must still pass under this state. |
-| Graphics | `ro.opengles.version=196610` (Android encoding for GLES 3.2); `android.hardware.opengles.aep` is advertised. `ro.hardware.egl=powervr`, `ro.hardware.vulkan=powervr`; Package Manager advertises Vulkan level 1 and version `4210688` (1.4.0). SurfaceFlinger reports a Vulkan device initialized. | Captured 2026-09-23. These are device/framework capability observations, not a probe of an app GL context. `GL_VENDOR`, `GL_RENDERER`, and extension strings were not exposed by the collected dumpsys output. Earlier GLES 2.0 Orange Roulette rendering is historical OnePlus 13 evidence only. |
+| Graphics | `ro.opengles.version=196610` (Android encoding for GLES 3.2); `android.hardware.opengles.aep` is advertised. `ro.hardware.egl=powervr`, `ro.hardware.vulkan=powervr`; Package Manager advertises Vulkan level 1 and version `4210688` (1.4.0). SurfaceFlinger reports a Vulkan device initialized. | Captured 2026-09-23. These are device/framework capability observations, not a probe of an app GL context. `GL_VENDOR`, `GL_RENDERER`, and extension strings were not exposed by the collected dumpsys output. Earlier GLES 2.0 Orange Roulette rendering is historical evidence recorded by the original project owner on their OnePlus 13. |
 | Storage | `df -h /data/user/0`: `/dev/block/dm-115`, 462G size, 49G used, 414G available (11%), mounted at `/mnt/pass_through/0/emulated`. | Captured 2026-09-23. App-specific quota and conversion staging headroom were not measured. |
 | ADB availability | `adb devices -l` lists serial `67161FDDV0011Q` as `device`, model `Pixel_11_Pro_XL`, product/device `kodiak`. | Captured 2026-09-23. |
 

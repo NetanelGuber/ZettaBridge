@@ -3,6 +3,8 @@
 Measured on 2026-09-14 on this machine (Snapdragon 8 Elite, Oryon cores). zbrun is a
 RelWithDebInfo build; guests are built with NDK r29 `-O2` for armeabi-v7a (softfp, VFP).
 
+> **Provenance:** These measurements were made by the original project owner before this independent fork. They are inherited historical data, not benchmarks collected by this fork.
+
 ## bench_dynamic (guest/tests/bench_dynamic.c)
 
 | workload | native aarch64 | arm32 under zbrun | ratio |

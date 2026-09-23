@@ -1,5 +1,7 @@
 # Phase 4 acceptance: Orange Roulette on the OnePlus 13 (2026-09-16)
 
+> **Provenance:** This OnePlus 13 run was performed by the original project owner before this independent fork. It is retained as inherited historical evidence; this fork has not reproduced it.
+
 The production launcher imported the untouched Orange Roulette APK and launched it in the
 `:guest` process. The runtime report below is the Task 8 evidence; it was read from the launcher
 UI ("Last run report"), because OxygenOS hides third-party logcat output.

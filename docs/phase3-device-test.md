@@ -1,5 +1,7 @@
 # Phase 3 / T6: running the translator inside an app process on the device
 
+> **Provenance:** The OnePlus 13/Termux/ART runs documented here were performed by the original project owner before this independent fork. They are inherited historical evidence, not device validation performed by this fork.
+
 Goal (T6 in the spec): the T3-T5 guest tests that pass under `zbrun` on this machine also pass
 inside an Android app process on the OnePlus 13, next to ART.
 

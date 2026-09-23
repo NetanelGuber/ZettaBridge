@@ -3,6 +3,8 @@
 **Plan version:** 1  
 **Repository baseline reviewed:** main, 4acdf51c11118b1d9d04c2c117feab249ea51072 (v0.1.0)  
 **Purpose:** Session-by-session implementation roadmap for a personal, root-managed fork.  
+**Fork relationship:** This independent fork is maintained by a different person from the original project owner. It has no affiliation with, endorsement from, or operational relationship to the original project or its owner.
+
 **Style:** English and ASCII in repository files.
 
 ## How to use this plan
@@ -61,7 +63,7 @@ The existing launcher/plugin runtime is valuable implementation to adapt, but a 
 
 An early architecture spike must validate proxy loading for Java System.loadLibrary and NativeActivity in an ordinary installed package. If that model proves structurally impossible on the target Android version, record an ADR before changing direction. AOSP NativeBridgeCallbacks is a comparison/fallback, not the default deliverable: it is system integration using ART callbacks and a separate guest linker, rather than a generated per-app APK. Do not start boot/system/ART modification without an ADR.
 
-## 3. Creator guidance retained; old product scope replaced
+## 3. Upstream project guidance retained; its old product scope replaced
 
 ### Keep these engineering constraints from CLAUDE.md and AGENTS.md
 
@@ -75,28 +77,28 @@ An early architecture spike must validate proxy loading for Java System.loadLibr
 - The local Dynarmic patches are a required baseline until deliberately reviewed: third_party/patches/dynarmic-0001-thumb32-armv8.patch and dynarmic-0002-asimd-narrowing.patch. Do not accidentally stage a Dynarmic submodule pointer change or lose the documented patch workflow.
 - QEMU can be a developer reference, not a linked/shipped dependency. Check dependency licenses and keep notices.
 - Provide actionable device reports because OxygenOS may omit third-party logs from logcat. Record build hashes and device/build conditions for actual device evidence.
-- Preserve the creator's AArch64 Linux + clang/CMake/Ninja + Boost headers + Android NDK r29 build path. A clean setup initializes submodules, obtains/extracts the Android 17 arm64 GSI guest sysroot, applies the local Dynarmic patches, then builds host/guest/Android targets. Harden scripts for idempotence, integrity, storage use and downloads.
+- Preserve the upstream project's AArch64 Linux + clang/CMake/Ninja + Boost headers + Android NDK r29 build path. A clean setup initializes submodules, obtains/extracts the Android 17 arm64 GSI guest sysroot, applies the local Dynarmic patches, then builds host/guest/Android targets. Harden scripts for idempotence, integrity, storage use and downloads.
 - Established checks include host CMake/Ninja, CTest, tools/build_guest.sh, tools/run_guest_tests.sh, generated-file checks, Android zbridge/zbproxy links, runtime bundle validation, and Gradle APK assembly. Check current target names and counts; historical counts are not promises.
-- AndroidIDE may inject LogWireInitializer into debug manifests; use the creator's manifest cleanup guidance if that build path is still used. Never overwrite Gradle wrapper files.
+- AndroidIDE may inject LogWireInitializer into debug manifests; use the inherited manifest cleanup guidance if that build path is still used. Never overwrite Gradle wrapper files.
 - Commit bounded tasks locally. Push only with explicit user authorization.
 
-### Product decisions that supersede creator guidance
+### Product decisions for this fork that supersede upstream guidance
 
-The original creator intentionally chose a non-root plugin launcher: no APK repackaging, no installed guest package identity, and no system-wide bridge. This user's personal-fork request replaces that product boundary. The plan authorizes planning those areas, but not upstream edits or pushes. Retain the compatible translator architecture.
+The original project intentionally chose a non-root plugin launcher: no APK repackaging, no installed guest package identity, and no system-wide bridge. This independent fork has a separate owner and product direction; the fork owner chose the per-app conversion goal recorded here. This plan authorizes work in this checkout only, not edits to or pushes to the original project. Retain compatible translator architecture and required notices.
 
-AGENTS.md contains dated handoffs and old branch statuses. Reconcile them with the actual checkout before implementation. At this plan's baseline it is clean on main at 4acdf51; create a personal codex/* branch before product edits and keep upstream origin/main untouched absent a push request.
+AGENTS.md and CLAUDE.md are inherited upstream handoffs, not current affiliation, ownership, or fork-status statements. Reconcile their dated details with this checkout before implementation. The fork began from original upstream main at 4acdf51; create a personal codex/* branch before product edits and keep the original remote untouched absent explicit push authorization.
 
 ### License and source hygiene
 
-The repository states cumulative PolyForm Noncommercial and PolyForm Perimeter terms and is source-available, not unrestricted open source. This is a private personal fork. Retain notices; check all added and bundled dependency licenses; do not turn it into a service or redistribute builds without separately reviewing permissions. Do not put APKs the user may not redistribute in Git/release artifacts. Do not submit this fork upstream without addressing the repository's contributor copyright-assignment terms.
+The inherited repository states cumulative PolyForm Noncommercial and PolyForm Perimeter terms and is source-available, not unrestricted open source. This independent fork retains upstream notices but is not affiliated with or endorsed by the original project owner. Check all added and bundled dependency licenses; do not turn it into a service or redistribute builds without separately reviewing permissions. Do not put APKs the user may not redistribute in Git/release artifacts. Do not submit this fork upstream without addressing the repository's contributor copyright-assignment terms.
 
 ## 4. Reviewed starting point and known gaps
 
 - The baseline already has a substantial A32/T32 translator, ARM32 sysroot/linker path, syscall layer, library-mode runtime, JNI bridge, launcher/plugin import path, generated GLES/EGL APIs, and Android build packaging.
-- README documents Orange Roulette and Flappy Bird as playable on a OnePlus 13-class device. A Flutter guest launches, runs Dart, presents frames and accepts touch, but rendering is incomplete.
+- Inherited upstream README and acceptance docs report Orange Roulette and Flappy Bird playable on the original project owner's OnePlus 13. These are upstream owner's historical results, not device validation by this fork. The records also report a Flutter guest launching, running Dart, presenting frames and accepting touch, with incomplete rendering.
 - The newest AGENTS.md handoff says Flutter text and some raster images are missing. Prior upload/UBO and legacy-alpha hypotheses were ruled out; a GL_R8/GL_RED A/B was reverted because text did not improve. Its next lead was instrumenting an actual onscreen text draw. Verify current source before acting; do not mistake this one guest for broad compatibility proof.
-- NativeActivity is recorded as unimplemented; README lists NativeActivity/Unity/pure-NDK, Vulkan, and apps requiring a real package installation as unsupported in the original product.
-- The checkout is main, not the historical codex/phase4d-launcher branch named in old handoffs. Historical current-status prose is stale unless confirmed from files/commits.
+- Inherited upstream records say NativeActivity is unimplemented and list NativeActivity/Unity/pure-NDK, Vulkan, and apps requiring a real package installation as unsupported in the original product. Recheck these claims in this fork before using them as current status.
+- The fork started from upstream main at `4acdf51`; old branch names such as `codex/phase4d-launcher` are upstream history, not fork branches or affiliation.
 - No code, build, tests, conversion, or rooted-device run was performed in this planning task. This document is a roadmap, not an implementation validation report.
 
 ## 5. Numbered implementation steps
@@ -133,11 +135,11 @@ build, or tests were changed/run. Step 01 remains NOT STARTED.
 
 **Status:** NOT STARTED  
 **Tasks**
-- Create a personal codex/* branch; confirm origin is upstream and do not push.
+- Create a personal codex/* branch; confirm `origin` still points to the original project and do not push to it without explicit authorization.
 - Record commit, submodule SHA/patch state and compiler/SDK/NDK/CMake/Java versions.
-- Make plan.md the canonical handoff. The durable architecture, ABI, security, licensing, build, diagnostic and workflow requirements from the creator files have been summarized above; check both files once more for any still-actionable requirement not represented here.
+- Make plan.md the canonical handoff. The durable architecture, ABI, security, licensing, build, diagnostic and workflow requirements from the inherited upstream files have been summarized above; check both files once more for any still-actionable requirement not represented here.
 - Search build scripts, CI, nested instructions and docs for dependencies on root CLAUDE.md or AGENTS.md. Move any essential live build commands or workflow detail into this plan (or a focused non-agent-guide developer document), and remove obsolete/conflicting references.
-- After the migration checks pass, delete CLAUDE.md and AGENTS.md from this personal fork. Do not alter or push those removals to the creator's upstream repository.
+- After the migration checks pass, delete CLAUDE.md and AGENTS.md from this personal fork. Do not alter or push those removals to the original upstream repository.
 - Make submodule initialization and local patch application repeatable and detect already-applied patches/wrong revisions.
 - Make GSI/sysroot extraction resumable, integrity-checked, size-aware, and clear about source/license. Keep generated sysroot out of Git unless required.
 - Reproduce existing host/guest/Android checks before architectural changes. Review ignore rules and generated/bundle checks.
@@ -295,7 +297,7 @@ build, or tests were changed/run. Step 01 remains NOT STARTED.
 **Status:** NOT STARTED  
 **Tasks**
 - Audit generated GLES/EGL entry points, pointer/length marshaling, extension formats, error behavior, context/surface/share-group/object lifetime and thread affinity.
-- Diagnose the known Flutter onscreen text/raster problem from actual onscreen draws. Creator handoff ruled out several UBO/upload/alpha theories and reverted the GL_R8/GL_RED experiment; do not repeat without new evidence or use offscreen warmups as proof.
+- Diagnose the inherited upstream Flutter onscreen text/raster problem from actual onscreen draws. The upstream handoff ruled out several UBO/upload/alpha theories and reverted the GL_R8/GL_RED experiment; do not repeat without new evidence or use offscreen warmups as proof.
 - Audit mapped buffers, client arrays, compressed textures, BGRA/extensions, FBO/readback, shader logs, GLES3 calls, sync and multisampling.
 - Expose only host-supported features or correct emulation; queue errors with guest semantics. Preserve generator checks and add overflow/pointer-boundary probes.
 - Keep GL work on the host thread with current EGL context and report mismatches/rejections.

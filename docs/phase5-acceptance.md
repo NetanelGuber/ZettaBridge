@@ -3,6 +3,8 @@
 Date: 2026-09-17. Device: OnePlus 13 (Snapdragon 8 Elite, no AArch32), launcher debug APK built
 from `codex/phase4d-launcher` at `e705006`.
 
+> **Provenance:** This device run was performed by the original project owner before this independent fork. It is inherited historical evidence; this fork has not reproduced it on the OnePlus 13.
+
 ## Result
 
 Orange Roulette 1.0.0 (armeabi, Haxe/OpenFL legacy, GLES 2.0) runs as a plugin:

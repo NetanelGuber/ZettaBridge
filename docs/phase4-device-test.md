@@ -1,5 +1,7 @@
 # Phase 4 / T7: real ART JNI bridge test
 
+> **Provenance:** The device run and acceptance record below are from the original project owner's OnePlus 13, before this independent fork. They are inherited historical evidence, not validation performed by this fork.
+
 T7 exercises the complete arm64 proxy -> ZettaBridge -> translated arm32 JNI path against the
 device's real ART. It does not depend on the Phase 0 launcher. The project is
 `android/t7/project/`; generated inputs are under ignored `build/t7/`.
