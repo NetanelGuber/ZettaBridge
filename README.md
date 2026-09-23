@@ -1,7 +1,7 @@
 # ZettaBridge
 
 **Run 32-bit Android apps on 64-bit-only ARM phones.**
-An open-source ARM32 -> ARM64 native code translator and app launcher.
+A source-available ARM32 -> ARM64 native code translator and app launcher.
 
 > **Independent fork:** This repository is maintained by a different person from the
 > original project owner. It has no affiliation with, endorsement from, or operational
@@ -15,11 +15,16 @@ A growing number of recent phone SoCs (for example the Snapdragon 8 Elite) have 
 execution state at all. Old apps that ship only `armeabi` / `armeabi-v7a` native libraries
 cannot start on them, and there is no hardware fallback.
 
-ZettaBridge runs such an app **inside its own process**:
+The inherited launcher runs such an app as a plugin inside a process owned by ZettaBridge:
 - the app's Java/Kotlin code runs natively on the phone's normal 64-bit ART;
 - only the app's 32-bit native code is translated to AArch64.
 
-No root, no custom ROM, no system image changes.
+The inherited plugin launcher needs no root, custom ROM, or system image changes.
+
+The current source is the inherited non-root plugin launcher described below. This
+fork's selected product is an offline per-app converter and narrow root manager; that
+installed-package path is not implemented yet. Root is planned only for explicitly
+authorized manager operations, never to run the guest. See [plan.md](plan.md).
 
 > **Status: early development.** Not usable by end users yet. See [Roadmap](#roadmap).
 
@@ -32,7 +37,10 @@ No root, no custom ROM, no system image changes.
 Every pixel above was drawn by translated 32-bit ARM code on the original project owner's OnePlus 13
 (Snapdragon 8 Elite). This is inherited upstream evidence, not a device result from this fork.
 
-## How it works
+## How the inherited launcher works
+
+This diagram describes the current plugin runtime. It does not describe the per-app
+conversion architecture selected by this fork's plan.
 
 ```
 ZettaBridge launcher (arm64 app)
@@ -80,53 +88,43 @@ ZettaBridge launcher (arm64 app)
   - A modern Flutter app starts, runs its Dart code, presents frames and takes touch input,
     though rendering is not yet complete.
 
-Not supported yet: `NativeActivity` (so Unity and pure-NDK guests do not start), Vulkan, and
-anything that needs a real package installation.
+`NativeActivity` (including Unity and pure-NDK entry points) and Vulkan are not supported
+yet. The current source also does not produce normally installed packages with their own
+PackageManager identity; that is the goal of this fork, not a working feature.
 
 ## Roadmap
 
-| Milestone | What it brings |
-|---|---|
-| **v0.1** | 32-bit apps whose native libraries do not draw on their own: utilities and apps using old native libs for crypto, image processing, parsers, databases. |
-| **v0.2** | OpenGL ES passthrough and Android assets: simple 2D games, starting with Orange Roulette. |
-| **v0.3+** | 3D games and performance work: GL call batching, faster floating point, JNI fast paths |
-| exploring | x86 / x86_64 guests through [Box64](https://github.com/ptitSeb/box64) |
+The inherited milestone table described the original plugin launcher and is retired.
+This fork's active scope, step dependencies, acceptance criteria, and evidence live in
+[plan.md](plan.md). The next work is to establish a reproducible baseline before adding
+the APK analyzer or root manager.
 
 ## Honest limits
 
-- **Speed.** Translated code runs slower than native: roughly 2x for integer code and
-  3.5x for memory copies on a Snapdragon 8 Elite, more for floating-point-heavy loops.
+- **Speed.** Translated code runs slower than native. The inherited estimates of roughly
+  2x for integer code and 3.5x for memory copies were measured on the original project
+  owner's Snapdragon 8 Elite, not on this fork's Pixel 11 target.
 - **3D games are harder, not off-limits.** Every call from the app into the system, and
   OpenGL ES calls in particular, crosses a translation boundary, so 3D-heavy games will be
   slow at first. Making them playable is a goal. Planned work:
   - batching GL calls;
   - faster floating point;
   - host-side JNI fast paths.
-- **Apps that need a real installation are out of scope:** their own UID and
-  permissions, visibility to other apps, accounts, push notifications.
-- **Some apps refuse to run inside another app on purpose** (Play Integrity / clone
-  detection). These are not worked around.
+- **Repacking changes the signer.** Apps that require the original signing identity,
+  signature permissions, certificate-bound APIs, or server trust may fail. Root does
+  not bypass these checks.
+- **Integrity and anti-emulation checks may reject translated code.** The project does
+  not bypass Play Integrity, DRM, or app security controls.
 
 ## Building (development)
 
-Requirements:
-- aarch64 Linux, clang, CMake, Ninja;
-- Boost headers;
-- Android NDK r29.
+See [docs/development.md](docs/development.md) for the pinned toolchain, clean
+checkout, repeatable Dynarmic patch setup, sysroot extraction, and build commands.
 
-```
-git submodule update --init; git -C third_party/dynarmic apply ../patches/dynarmic-0001-thumb32-armv8.patch ../patches/dynarmic-0002-asimd-narrowing.patch
-```
-```
-cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++; ninja -C build/host
-```
-```
-tools/extract_sysroot.sh; tools/build_guest.sh; ctest --test-dir build/host; tools/run_guest_tests.sh
-```
-
-`tools/extract_sysroot.sh` downloads an AOSP GSI (about 1.2 GB) and extracts the arm32
-system libraries into `sysroot/`. The Android build of `libzbridge.so` and the launcher are
-described in `CLAUDE.md` and `docs/`.
+`tools/extract_sysroot.sh` downloads the pinned Android 17 QPR 2 AOSP GSI and extracts
+the arm32 system libraries into the ignored `sysroot/`. See [plan.md](plan.md) for the
+fork's current scope and [docs/development.md](docs/development.md) for the reproducible
+build and verification workflow.
 
 ## Supporting the project
 

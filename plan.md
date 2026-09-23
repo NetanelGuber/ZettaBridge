@@ -86,7 +86,7 @@ An early architecture spike must validate proxy loading for Java System.loadLibr
 
 The original project intentionally chose a non-root plugin launcher: no APK repackaging, no installed guest package identity, and no system-wide bridge. This independent fork has a separate owner and product direction; the fork owner chose the per-app conversion goal recorded here. This plan authorizes work in this checkout only, not edits to or pushes to the original project. Retain compatible translator architecture and required notices.
 
-AGENTS.md and CLAUDE.md are inherited upstream handoffs, not current affiliation, ownership, or fork-status statements. Reconcile their dated details with this checkout before implementation. The fork began from original upstream main at 4acdf51; create a personal codex/* branch before product edits and keep the original remote untouched absent explicit push authorization.
+AGENTS.md and CLAUDE.md were inherited upstream handoffs, not current affiliation, ownership, or fork-status statements. Their remaining live requirements were migrated into this plan and `docs/development.md` before removal. Keep local work on `main`, tracking the user's fork as `origin`; retain the original project as `upstream` and never push there. The fork began from upstream main at `4acdf51`.
 
 ### License and source hygiene
 
@@ -129,13 +129,13 @@ inventory was captured from Pixel 11 Pro XL serial `67161FDDV0011Q`: Android 17/
 3.2 and Vulkan 1.4 advertised, and 414 GB available on the data filesystem. The ADR
 distinguishes these capability readings from unrun app-context proxy/JNI/sysroot/JIT
 and NativeActivity acceptance tests. This was documentation-only; no product source,
-build, or tests were changed/run. Step 01 remains NOT STARTED.
+build, or tests were changed/run. At that time, Step 01 remained NOT STARTED.
 
 ### Step 01 - Personal-fork handoff and reproducible baseline
 
-**Status:** NOT STARTED  
+**Status:** BLOCKED
 **Tasks**
-- Create a personal codex/* branch; confirm `origin` still points to the original project and do not push to it without explicit authorization.
+- Keep the work on `main` tracking the personal GitHub fork's `origin/main`; name the original project remote `upstream` and never push there.
 - Record commit, submodule SHA/patch state and compiler/SDK/NDK/CMake/Java versions.
 - Make plan.md the canonical handoff. The durable architecture, ABI, security, licensing, build, diagnostic and workflow requirements from the inherited upstream files have been summarized above; check both files once more for any still-actionable requirement not represented here.
 - Search build scripts, CI, nested instructions and docs for dependencies on root CLAUDE.md or AGENTS.md. Move any essential live build commands or workflow detail into this plan (or a focused non-agent-guide developer document), and remove obsolete/conflicting references.
@@ -144,9 +144,42 @@ build, or tests were changed/run. Step 01 remains NOT STARTED.
 - Make GSI/sysroot extraction resumable, integrity-checked, size-aware, and clear about source/license. Keep generated sysroot out of Git unless required.
 - Reproduce existing host/guest/Android checks before architectural changes. Review ignore rules and generated/bundle checks.
 
-**Done when:** A clean checkout can follow documented steps to build host, guest tests and Android runtime targets without changing the Dynarmic pointer; baseline commands/results are recorded on a personal branch; no build/CI/tooling process requires CLAUDE.md or AGENTS.md; the fork copies of both files are removed after their remaining actionable content is migrated.
+**Done when:** A clean checkout can follow documented steps to build host, guest tests and Android runtime targets without changing the Dynarmic pointer; baseline commands/results are recorded on the personal fork's `main`; no build/CI/tooling process requires CLAUDE.md or AGENTS.md; the fork copies of both files are removed after their remaining actionable content is migrated.
 
 **Depends on:** Step 00.
+
+**Evidence and blocker (2026-09-23):** Local `main` tracks
+`https://github.com/NetanelGuber/ZettaBridge.git` as `origin`; the original project is
+retained as `upstream`, whose `main` remains at `4acdf51c11118b1d9d04c2c117feab249ea51072`.
+Step 01 started from `774fb07b9dee590bb6a272bb8f2e74ca51e96190`. The personal fork was
+created and the four pre-Step-01 handoff commits were pushed to its `main`. The local
+Dynarmic gitlink and checkout are both
+`86458a0bd369d63ba4c2ef812cacbb6c9080c065`. `tools/prepare_dynarmic.sh` applied both
+required patches, then a second run recognized both as already applied; the gitlink did
+not change. `README.md` now points at this plan and `docs/development.md`; the live
+build/CI/tooling search found no dependency on the retired root handoffs. Their live
+build instructions and manifest caveat were moved to `docs/development.md`, and the
+fork copies of `CLAUDE.md` and `AGENTS.md` were removed.
+
+The Windows checkout has Git 2.55.0.windows.5, Python 3.12.10, CMake 3.22.1, Ninja
+1.10.2, Java 21.0.9 and 25.0.1, SDK platforms 34/36, build-tools 34.0.0/35.0.0/36.1.0,
+and NDK 25.2.9519653 and 27.2.12479018. It has no WSL/Linux AArch64 environment, no
+host `clang`/`clang++`, no Boost headers, and no NDK r29 `linux-arm64` toolchain. The
+host CMake configure failed because `clang`/`clang++` were unavailable. An Android
+configure with the installed NDK r27.2 (Clang 18.0.3) stopped at missing Boost headers;
+no CMake build or link was produced. `tools/build_guest.sh`, sysroot extraction, CTest,
+the guest suite, Android runtime linking, and launcher APK assembly therefore remain
+unverified on this checkout. The sysroot script passed shell syntax validation only;
+the 1.17 GB archive was not downloaded.
+
+With NDK r27.2 selected for its inputs, `gen_jni.py --check`, `gen_egl.py --check`,
+and `gen_gles.py --check` passed; `check_zbridge_natives.py` passed; and `git check-ignore`
+confirmed `build/`, `.cache/`, and `sysroot/` stay untracked. A trial call to the
+write-only `gen_syscalls.py` with r27.2 changed two generated syscall files; both were
+restored, and the difference confirms the baseline must use the pinned NDK.
+`git diff --check` passed after the documentation edits. Step 01 stays BLOCKED until
+the Linux ARM64 + pinned NDK r29 + Boost environment is available and the host, guest,
+and Android link commands above complete successfully.
 
 ### Step 02 - APK/split analyzer and preflight report
 
