@@ -133,7 +133,7 @@ build, or tests were changed/run. At that time, Step 01 remained NOT STARTED.
 
 ### Step 01 - Personal-fork handoff and reproducible baseline
 
-**Status:** BLOCKED
+**Status:** DONE
 **Tasks**
 - Keep the work on `main` tracking the personal GitHub fork's `origin/main`; name the original project remote `upstream` and never push there.
 - Record commit, submodule SHA/patch state and compiler/SDK/NDK/CMake/Java versions.
@@ -148,38 +148,52 @@ build, or tests were changed/run. At that time, Step 01 remained NOT STARTED.
 
 **Depends on:** Step 00.
 
-**Evidence and blocker (2026-09-23):** Local `main` tracks
-`https://github.com/NetanelGuber/ZettaBridge.git` as `origin`; the original project is
-retained as `upstream`, whose `main` remains at `4acdf51c11118b1d9d04c2c117feab249ea51072`.
-Step 01 started from `774fb07b9dee590bb6a272bb8f2e74ca51e96190`. The personal fork was
-created and the four pre-Step-01 handoff commits were pushed to its `main`. The local
-Dynarmic gitlink and checkout are both
+**Evidence (2026-09-23):** The clean WSL checkout was on `main` at source revision
+`4f42472c89557c96e3507b3fd0b95cb9f8dd7e9c`, tracking the personal fork at
+`https://github.com/NetanelGuber/ZettaBridge.git` as `origin`. The original project is
+`upstream`; its current `main` is
+`4acdf51c11118b1d9d04c2c117feab249ea51072`. Step 01 started from
+`774fb07b9dee590bb6a272bb8f2e74ca51e96190`; the four pre-Step-01 handoff commits are
+on the personal fork. The Dynarmic gitlink and checkout are both
 `86458a0bd369d63ba4c2ef812cacbb6c9080c065`. `tools/prepare_dynarmic.sh` applied both
-required patches, then a second run recognized both as already applied; the gitlink did
-not change. `README.md` now points at this plan and `docs/development.md`; the live
-build/CI/tooling search found no dependency on the retired root handoffs. Their live
-build instructions and manifest caveat were moved to `docs/development.md`, and the
-fork copies of `CLAUDE.md` and `AGENTS.md` were removed.
+patches on the clean checkout; a second run recognized both as already applied and
+left the gitlink unchanged.
 
-The Windows checkout has Git 2.55.0.windows.5, Python 3.12.10, CMake 3.22.1, Ninja
-1.10.2, Java 21.0.9 and 25.0.1, SDK platforms 34/36, build-tools 34.0.0/35.0.0/36.1.0,
-and NDK 25.2.9519653 and 27.2.12479018. It has no WSL/Linux AArch64 environment, no
-host `clang`/`clang++`, no Boost headers, and no NDK r29 `linux-arm64` toolchain. The
-host CMake configure failed because `clang`/`clang++` were unavailable. An Android
-configure with the installed NDK r27.2 (Clang 18.0.3) stopped at missing Boost headers;
-no CMake build or link was produced. `tools/build_guest.sh`, sysroot extraction, CTest,
-the guest suite, Android runtime linking, and launcher APK assembly therefore remain
-unverified on this checkout. The sysroot script passed shell syntax validation only;
-the 1.17 GB archive was not downloaded.
+The verified baseline is Ubuntu 24.04.5 x86-64 under WSL2 (4,096-byte host pages),
+cross-compiling the AArch64 host with GCC 13.3.0 and running its test binaries through
+QEMU user-mode 8.2.2. The project host thunk assembly is AArch64-specific. The Pi 5
+was unsuitable as a runtime test host: Debian 13 reports 16,384-byte pages, and its
+4 KB guest mappings fail when loading the ARM32 GSI linker/Bionic TLS. The NDK r29
+Linux prebuilt selected for WSL is `linux-x86_64`.
 
-With NDK r27.2 selected for its inputs, `gen_jni.py --check`, `gen_egl.py --check`,
-and `gen_gles.py --check` passed; `check_zbridge_natives.py` passed; and `git check-ignore`
-confirmed `build/`, `.cache/`, and `sysroot/` stay untracked. A trial call to the
-write-only `gen_syscalls.py` with r27.2 changed two generated syscall files; both were
-restored, and the difference confirms the baseline must use the pinned NDK.
-`git diff --check` passed after the documentation edits. Step 01 stays BLOCKED until
-the Linux ARM64 + pinned NDK r29 + Boost environment is available and the host, guest,
-and Android link commands above complete successfully.
+Recorded toolchain: Git 2.43.0; Python 3.12.3; Ninja 1.11.1; SDK command-line tools
+22.0 (archive 15859902); SDK CMake 3.22.1; NDK 29.0.14206865 / Clang 21.0.0; Android
+platform 35 revision 2; build-tools 34.0.0 and 35.0.0; platform-tools 37.0.1; Java
+21.0.12.1; Gradle wrapper 8.11.1; Android Gradle Plugin 8.7.3; and Boost 1.83.
+
+The SDK licenses were accepted before package installation under the user's explicit
+authorization. The user confirmed reviewing and accepting the pinned Android 17 QPR 2
+GSI terms before extraction. `tools/extract_sysroot.sh` verified the 1,173,930,919-byte
+archive against SHA-256
+`e6cb3bc521fb4a8b4c8e62f8557c6ae0ff10662a6838cfb346a32ec9c9134e22`, verified the ZIP,
+extracted and checksummed a 2,085,052,416-byte system image, and produced all ten
+requested ARM32 sysroot files. The archive/cache and generated `sysroot/` remain local.
+
+Baseline results on that clean source revision:
+
+- `tools/prepare_dynarmic.sh` twice: both patches applied/idempotently detected; gitlink unchanged.
+- `tools/build_guest.sh`: passed with NDK host `linux-x86_64`.
+- AArch64 host configure and `ninja -C build/host-aarch64`: passed with the documented cross-GCC toolchain.
+- `ctest --test-dir build/host-aarch64 --output-on-failure`: all 46 tests passed under QEMU, including the three generated-file checks and Android proxy structure check.
+- `tools/run_guest_tests.sh`: all ten required guest cases passed under QEMU; optional `or_dlopen_dynamic` skipped because the licensed APK was absent.
+- Android configure and `ninja -C build/android-arm64 zbridge zbproxy zbjni_reflection_compile_test`: passed (181 build actions). `check_zbridge_natives.py` and `check_zbproxy.py` passed.
+- `tools/make_launcher_bundle.sh`: passed (7.2 MB bundle). `ANDROID_HOME=... ./gradlew :app:assembleDebug --no-daemon`: BUILD SUCCESSFUL, 34 tasks; produced a 6.4 MB debug APK. Gradle reported a non-blocking manifest remove-tag warning.
+- All three generator `--check` commands passed. `git check-ignore` confirmed `build/`, `.cache/gsi/`, and `sysroot/` are ignored. The live build/CI/tooling search found no dependency on the retired root handoffs; their fork copies are removed, and `README.md` points to this plan and `docs/development.md`.
+
+This is host/QEMU and Android compilation evidence only; it does not establish native
+device behavior. The optional licensed APK case remains unrun. `git diff --check` is
+required after this documentation update and the completion commit is local to the
+personal `main`; no upstream push is authorized.
 
 ### Step 02 - APK/split analyzer and preflight report
 
