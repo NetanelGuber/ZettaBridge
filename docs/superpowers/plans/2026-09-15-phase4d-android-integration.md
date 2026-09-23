@@ -1,5 +1,9 @@
 # Phase 4d: Android Proxy Loading, ART Binding, and Device Acceptance
 
+> **Provenance:** This is an inherited upstream implementation plan. Its checked OnePlus
+> 13 device results were produced by the original project owner and are not validation
+> by this fork.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Load arm32 plugin libraries through ART-visible arm64 proxies, bind their JNI entry points to translated guest code, pass T7 on the phone, and reach Orange Roulette's first unimplemented GLES or asset host call without a JNI error.

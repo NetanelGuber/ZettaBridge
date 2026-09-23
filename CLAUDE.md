@@ -4,6 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # ZettaBridge
 
+> **Fork provenance:** This file is inherited from the original project. This repository
+> is an independent fork maintained by a different person and has no affiliation with or
+> endorsement from the original project. OnePlus 13 results below belong to the original
+> project owner; use `plan.md` for this fork's current goals and status.
+
 **Current state: Phases 1-3 done (T1-T5 on this machine, T6 on the phone).**
 - `zbrun` runs static and dynamic arm32 Android executables through Dynarmic and the
   real Android 17 arm32 linker and bionic.

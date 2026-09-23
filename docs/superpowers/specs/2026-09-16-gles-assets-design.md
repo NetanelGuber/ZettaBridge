@@ -1,5 +1,8 @@
 # Part 4: GLES passthrough and Android assets (Phase 5)
 
+> **Provenance:** This is an inherited upstream design. The OnePlus 13 acceptance
+> target/results refer to the original project owner's device and are not fork validation.
+
 Status: design approved 2026-09-16. Builds on
 `2026-09-13-guest-system-boundary-design.md` (part 3: host calls, carrier threads, guest
 memory) and `2026-09-14-jni-bridge-design.md` (part 1: the host-handler pattern, 32-bit

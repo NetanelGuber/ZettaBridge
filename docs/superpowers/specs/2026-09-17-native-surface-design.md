@@ -1,5 +1,8 @@
 # Phase 7 part 1: native surface (EGL and ANativeWindow)
 
+> **Provenance:** This is an inherited upstream design. Its OnePlus 13 device acceptance
+> reference belongs to the original project and is not validation by this fork.
+
 Status: design approved 2026-09-17; Flutter ALooper extension approved 2026-09-17. Builds on
 `2026-09-13-guest-system-boundary-design.md` (host calls, handles) and
 `2026-09-16-gles-assets-design.md` (the GLES passthrough this extends).

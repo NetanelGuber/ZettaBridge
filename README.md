@@ -3,7 +3,11 @@
 **Run 32-bit Android apps on 64-bit-only ARM phones.**
 An open-source ARM32 -> ARM64 native code translator and app launcher.
 
-[Читать на русском](README.ru.md)
+> **Independent fork:** This repository is maintained by a different person from the
+> original project owner. It has no affiliation with, endorsement from, or operational
+> relationship to the original project or its owner. The inherited OnePlus 13 screenshots
+> and results below are the original owner's historical evidence; this fork has not
+> reproduced them.
 
 ---
 

@@ -1,5 +1,10 @@
 # AGENTS.md: handoff for Codex (2026-09-14)
 
+> **Fork provenance:** This file is inherited from the original project. This repository
+> is an independent fork maintained by a different person and has no affiliation with or
+> endorsement from the original project. OnePlus 13 results below belong to the original
+> project owner; use `plan.md` for this fork's current goals and status.
+
 Read `CLAUDE.md` first. It holds the architecture, gotchas, build commands and working
 conventions, and all of it applies to you. The user chats in Russian; repo files are
 English and ASCII only.
