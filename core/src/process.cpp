@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <algorithm>
 
 #include <cerrno>
 #include <climits>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <future>
 #include <iterator>
 #include <string_view>
@@ -201,8 +203,8 @@ void Process::forget_mappings(std::uint32_t start, std::uint64_t length) {
     std::erase_if(file_mappings_, [&](const FileMapping& m) {
         return m.start < end && static_cast<std::uint64_t>(m.start) + m.length > start;
     });
-    std::erase_if(textrel_ranges_, [&](const std::pair<std::uint32_t, std::uint32_t>& r) {
-        return r.first < end && static_cast<std::uint64_t>(r.first) + r.second > start;
+    std::erase_if(textrel_ranges_, [&](const TextrelRange& r) {
+        return r.start < end && static_cast<std::uint64_t>(r.start) + r.length > start;
     });
 }
 
@@ -218,16 +220,18 @@ std::string Process::describe_address(std::uint32_t addr) const {
     return "?";
 }
 
-void Process::add_textrel_range(std::uint32_t start, std::uint32_t length) {
-    textrel_ranges_.emplace_back(start, length);
+void Process::add_textrel_range(std::uint32_t start, std::uint32_t length, int original_prot) {
+    textrel_ranges_.push_back({start, length, original_prot});
 }
 
-bool Process::overlaps_textrel_range(std::uint32_t start, std::uint64_t length) const {
-    const std::uint64_t end = static_cast<std::uint64_t>(start) + length;
-    for (const auto& [range_start, range_length] : textrel_ranges_) {
-        if (range_start < end && static_cast<std::uint64_t>(range_start) + range_length > start) return true;
+bool Process::seal_textrel_ranges() {
+    std::lock_guard<std::mutex> lock(mm_mutex_);
+    for (const auto& range : textrel_ranges_) {
+        if (!mem_.protect(range.start, range.length, range.original_prot)) return false;
+        invalidate(range.start, range.length);
     }
-    return false;
+    textrel_ranges_.clear();
+    return true;
 }
 
 std::string Process::translate_path(const char* guest_path) const {
@@ -236,25 +240,101 @@ std::string Process::translate_path(const char* guest_path) const {
     if (!sysroot_.empty()) {
         for (const auto& m : kPathMappings) {
             if (path.substr(0, m.guest_prefix.size()) == m.guest_prefix) {
+                // Never let a lexical traversal or a sysroot symlink reach a host ABI path.
+                // These paths are fed to host syscalls by the guest linker.
+                const std::string denied = sysroot_ + "/.zb-denied";
+                std::size_t component = m.guest_prefix.size();
+                while (component < path.size()) {
+                    const std::size_t end = path.find('/', component);
+                    const auto part = path.substr(component, end == std::string_view::npos ?
+                                                               path.size() - component : end - component);
+                    if ((part.empty() && end != std::string_view::npos) || part == "." || part == "..") {
+                        return denied;
+                    }
+                    if (end == std::string_view::npos) break;
+                    component = end + 1;
+                }
                 std::string out = sysroot_;
                 out += m.sysroot_prefix;
                 out += path.substr(m.guest_prefix.size());
-                // The sysroot holds the 32-bit libraries and nothing else, but guests also read
-                // plain data from the system: fonts (/system/fonts, /system/etc/fonts.xml),
-                // timezone tables, configuration. Those are architecture-independent, so a path
-                // the sysroot does not have falls through to the device's own file. Flutter drew
-                // its icons (a font inside the APK) and no text at all until this fallback
-                // existed, because every /system/fonts lookup landed in the sysroot and failed.
+                namespace fs = std::filesystem;
+                std::error_code ec;
+                const fs::path root = fs::weakly_canonical(sysroot_, ec);
+                if (ec) return denied;
+                const auto inside = [&](const fs::path& candidate) {
+                    const std::string value = candidate.string();
+                    const std::string base = root.string();
+                    return value == base || value.rfind(base + "/", 0) == 0;
+                };
+                fs::path prefix;
+                for (const auto& part : fs::path(out)) {
+                    prefix /= part;
+                    ec.clear();
+                    if (fs::is_symlink(fs::symlink_status(prefix, ec))) {
+                        const fs::path target = fs::canonical(prefix, ec);
+                        if (ec || !inside(target)) return denied;
+                    }
+                }
+                const fs::path resolved = fs::weakly_canonical(out, ec);
+                if (ec || !inside(resolved)) {
+                    return denied;
+                }
                 if (::access(out.c_str(), F_OK) == 0) return out;
-                static std::atomic<unsigned> fallbacks{0};
-                const unsigned seen = fallbacks.fetch_add(1) + 1;
-                if (seen <= 8) log("sysroot has no %.*s; using the device file",
-                                   static_cast<int>(path.size()), path.data());
-                return std::string(path);
+                // Fonts are data, and Android does not promise to include them in the extracted
+                // ARM32 sysroot. All executable/linker paths stay inside the guest sysroot.
+                if ((path.starts_with("/system/fonts/") &&
+                     (path.ends_with(".ttf") || path.ends_with(".ttc") || path.ends_with(".otf"))) ||
+                    path == "/system/etc/fonts.xml") {
+                    return std::string(path);
+                }
+                return out;
             }
         }
     }
     return std::string(path);
+}
+
+bool Process::guest_executable_allowed(int fd) const {
+    if (sysroot_.empty()) return true;
+    Elf32_Ehdr header{};
+    if (::pread(fd, &header, sizeof header, 0) != sizeof header ||
+        std::memcmp(header.e_ident, ELFMAG, SELFMAG) != 0 ||
+        header.e_ident[EI_CLASS] != ELFCLASS32 || header.e_ident[EI_DATA] != ELFDATA2LSB ||
+        header.e_machine != EM_ARM || (header.e_type != ET_DYN && header.e_type != ET_EXEC)) return false;
+    char link[64];
+    char target[PATH_MAX];
+    std::snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+    const ssize_t n = ::readlink(link, target, sizeof target - 1);
+    if (n <= 0 || n >= static_cast<ssize_t>(sizeof target - 1)) return false;
+    target[n] = 0;
+    char resolved[PATH_MAX];
+    if (::realpath(target, resolved) == nullptr) return false;
+    const std::string_view path(resolved);
+    const auto within = [&](const std::string& root_path) {
+        char root[PATH_MAX];
+        if (::realpath(root_path.c_str(), root) == nullptr) return false;
+        const std::string_view base(root);
+        return path.starts_with(base) && path.size() > base.size() && path[base.size()] == '/';
+    };
+    if (within(sysroot_)) return true;
+    for (const auto& root : guest_library_roots_) {
+        if (within(root)) return true;
+    }
+    return false;
+}
+
+void Process::set_exec_eligibility(std::uint32_t start, std::uint64_t length, bool allowed) {
+    const std::uint64_t end = static_cast<std::uint64_t>(start) + page_round_up(length);
+    if (end > kGuestSpaceSize) return;
+    std::fill(exec_eligible_.begin() + (start / kPageSize),
+              exec_eligible_.begin() + (end / kPageSize), allowed ? 1 : 0);
+}
+
+bool Process::may_execute_range(std::uint32_t start, std::uint64_t length) const {
+    const std::uint64_t end = static_cast<std::uint64_t>(start) + page_round_up(length);
+    if (end > kGuestSpaceSize) return false;
+    return std::all_of(exec_eligible_.begin() + (start / kPageSize),
+                       exec_eligible_.begin() + (end / kPageSize), [](std::uint8_t allowed) { return allowed != 0; });
 }
 
 std::size_t Process::thread_count() const {
@@ -363,6 +443,20 @@ int Process::run(const std::string& path, const std::vector<std::string>& argv, 
 
     char resolved[PATH_MAX];
     exe_path_ = realpath(path.c_str(), resolved) != nullptr ? resolved : path;
+    guest_library_roots_.clear();
+    for (const std::string& variable : envp) {
+        constexpr std::string_view prefix = "LD_LIBRARY_PATH=";
+        if (!std::string_view(variable).starts_with(prefix)) continue;
+        const std::string_view value(variable.data() + prefix.size(), variable.size() - prefix.size());
+        for (std::size_t begin = 0; begin <= value.size();) {
+            const std::size_t end = value.find(':', begin);
+            const std::string_view part = value.substr(begin, end == std::string_view::npos ?
+                                                                 value.size() - begin : end - begin);
+            if (!part.empty() && part.front() == '/') guest_library_roots_.emplace_back(part);
+            if (end == std::string_view::npos) break;
+            begin = end + 1;
+        }
+    }
 
     LoadedElf exe;
     std::string error;

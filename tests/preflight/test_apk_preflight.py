@@ -143,6 +143,44 @@ class PreflightTest(unittest.TestCase):
         self.assertEqual(categories["native_activity"], "runtime")
         self.assertEqual(categories["declared_features"], "runtime")
 
+    def test_guest_linkage_reports_missing_symbols_and_abi_mismatch(self):
+        sysroot = self.root / "sysroot"
+        (sysroot / "system/lib").mkdir(parents=True)
+        (sysroot / "system/lib64").mkdir(parents=True)
+        (sysroot / "system/lib/libplatform.so").write_bytes(b"platform")
+        (sysroot / "system/lib64/libwrong.so").write_bytes(b"host")
+        source = self.apk("libs.apk", more=[("lib/armeabi-v7a/libapp.so", b"app")])
+
+        def elf(data, _):
+            if data == b"app":
+                return {"class": 32, "machine": 40, "needed": ["libplatform.so", "libwrong.so", "libabsent.so"],
+                        "imports": ["present", "absent"], "weak_imports": ["optional"],
+                        "exports": [], "versioned_imports": []}
+            return {"class": 32, "machine": 40, "needed": [], "imports": [],
+                    "exports": ["present"], "versioned_imports": []}
+
+        with patch.object(p, "elf_report", side_effect=elf):
+            report = p.analyze([source], "unused", "unused", sysroot)
+            linkage = report["guest_linkage"]["per_abi"]["armeabi-v7a"][0]
+            self.assertEqual(linkage["missing_libraries"], ["libabsent.so"])
+            self.assertEqual(linkage["abi_mismatches"], ["libwrong.so"])
+            self.assertEqual(linkage["unresolved_symbols"], [])  # incomplete closure
+            kinds = {item["kind"] for item in report["findings"]}
+            self.assertIn("missing_guest_library", kinds)
+            self.assertIn("guest_abi_mismatch", kinds)
+            (sysroot / "system/lib64/libwrong.so").unlink()
+            (sysroot / "system/lib/libwrong.so").write_bytes(b"platform")
+            (sysroot / "system/lib/libabsent.so").write_bytes(b"platform")
+            report = p.analyze([source], "unused", "unused", sysroot)
+            linkage = report["guest_linkage"]["per_abi"]["armeabi-v7a"][0]
+            self.assertEqual(linkage["unresolved_symbols"], ["absent"])
+            support = self.root / "support"
+            support.mkdir()
+            (support / "libplatform.so").write_bytes(b"platform")
+            (sysroot / "system/lib/libplatform.so").unlink()
+            report = p.analyze([source], "unused", "unused", sysroot, support)
+            self.assertEqual(report["guest_linkage"]["per_abi"]["armeabi-v7a"][0]["missing_libraries"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

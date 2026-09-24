@@ -1,0 +1,13 @@
+missing-library=PASS
+noload-before=PASS
+dependencies-and-constructors=PASS
+weak-symbol=PASS
+dladdr=PASS
+versioned-symbol=PASS
+missing-symbol=PASS
+noload-after=PASS
+dlclose=PASS
+lazy-binding=PASS
+global-binding=PASS
+nodelete=PASS
+relocation-error=PASS

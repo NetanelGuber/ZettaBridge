@@ -44,6 +44,14 @@ cp "$TOOLCHAIN/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" "$OUT/lib
 # Base AAPCS probe library for library_runtime_test.
 "$CC" -shared -fPIC -O2 -Wall -Wl,-soname,libzbcallprobe.so -o "$OUT/lib/libzbcallprobe.so" \
     "$ROOT/guest/testlib/zbcallprobe.c"
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wl,--hash-style=gnu -Wl,-z,relro,-z,now \
+    -Wl,--version-script,"$ROOT/guest/testlib/zbloaderleaf.map" -Wl,-soname,libzbloaderleaf.so \
+    -o "$OUT/lib/libzbloaderleaf.so" "$ROOT/guest/testlib/zbloaderleaf.c"
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wl,--hash-style=gnu -Wl,-z,relro,-z,now \
+    -Wl,-soname,libzbloaderparent.so -o "$OUT/lib/libzbloaderparent.so" \
+    "$ROOT/guest/testlib/zbloaderparent.c" -L"$OUT/lib" -lzbloaderleaf
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wl,--allow-shlib-undefined \
+    -Wl,-soname,libzbloaderbad.so -o "$OUT/lib/libzbloaderbad.so" "$ROOT/guest/testlib/zbloaderbad.c"
 # Guest JNIEnv and JavaVM, preloaded by zbhost; its probe for jni_bridge_test.
 "$CC" -shared -fPIC -O2 -Wall -Wextra -Wno-unused-parameter -I"$ROOT/core/include" -Wl,-soname,libzbjni.so \
     -o "$OUT/lib/libzbjni.so" "$ROOT/guest/zbjni/zbjni.c" "$ROOT/guest/zbjni/gen/hostcalls.S"

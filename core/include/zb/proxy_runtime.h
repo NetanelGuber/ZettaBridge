@@ -59,7 +59,8 @@ struct GuestRuntimeLayout {
 bool resolve_guest_runtime_layout(const std::string& files_dir, GuestRuntimeLayout& out, std::string& error);
 
 // zbhost <target_sdk> libzbjni.so with a guest-only environment: LD_LIBRARY_PATH is the runtime
-// guest libraries, then the plugin's library directory. Nothing is taken from the host environment.
+// guest libraries, then the app's library directory, then present ARM32 sysroot library
+// directories. Nothing is taken from the host environment.
 LibraryRuntimeOptions guest_runtime_options(const GuestRuntimeLayout& layout, const std::string& plugin_root,
                                             std::uint32_t target_sdk);
 

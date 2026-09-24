@@ -149,6 +149,7 @@ private:
         bool ok = false;
         std::int32_t jni_version = 0;
         std::string error;
+        std::string failure_kind;
     };
 
     // Copies the observer under the lock; the caller runs it after unlocking.

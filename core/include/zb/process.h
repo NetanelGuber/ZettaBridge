@@ -126,6 +126,10 @@ public:
     // Maps absolute guest paths of the Android system (/system, /apex, /vendor, ...) into the
     // sysroot, and /proc/self/exe to the guest executable. Other paths are returned unchanged.
     std::string translate_path(const char* guest_path) const;
+    // File-backed executable guest pages must come from ARM32 ELF files in declared roots.
+    bool guest_executable_allowed(int fd) const;
+    void set_exec_eligibility(std::uint32_t start, std::uint64_t length, bool allowed);
+    bool may_execute_range(std::uint32_t start, std::uint64_t length) const;
     // Host path of the guest executable, as reported by /proc/self/exe.
     const std::string& exe_path() const { return exe_path_; }
     // Opens a synthesized /proc file (/proc/self/maps, /proc/self/stat, /proc/cpuinfo) that
@@ -149,10 +153,10 @@ public:
     // "libc.so offset 0x1234" style description, or "?" if the address is not file-backed.
     std::string describe_address(std::uint32_t addr) const;
 
-    // Executable segments of libraries marked DT_ZB_TEXTREL (see elf_fixups.h). They stay
-    // writable inside the emulator so text relocations can be applied. forget_mappings drops them.
-    void add_textrel_range(std::uint32_t start, std::uint32_t length);
-    bool overlaps_textrel_range(std::uint32_t start, std::uint64_t length) const;
+    // Legacy text relocations need temporary write access while the guest linker runs.
+    // Seal before returning control to the caller; forget_mappings drops unmapped ranges.
+    void add_textrel_range(std::uint32_t start, std::uint32_t length, int original_prot);
+    bool seal_textrel_ranges();
 
     std::uint32_t brk_start = 0;
     std::uint32_t brk_current = 0;
@@ -208,8 +212,12 @@ private:
     std::mutex seen_mutex_;
     std::set<std::uint64_t> seen_;
     std::vector<FileMapping> file_mappings_;
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> textrel_ranges_;
+    struct TextrelRange { std::uint32_t start; std::uint32_t length; int original_prot; };
+    std::vector<TextrelRange> textrel_ranges_;
     std::string sysroot_;
+    std::vector<std::string> guest_library_roots_;
+    std::vector<std::uint8_t> exec_eligible_ =
+        std::vector<std::uint8_t>(static_cast<std::size_t>(kGuestSpaceSize / kPageSize), 1);
     std::string exe_path_;
     bool precise_faults_ = false;
     std::uint32_t initial_sp_ = 0;

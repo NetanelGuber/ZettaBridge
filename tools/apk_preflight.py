@@ -306,7 +306,7 @@ def elf_report(data, readelf):
         try:
             with tempfile.TemporaryFile() as err:
                 command = [readelf, "--wide", "--file-header", "--program-headers",
-                           "--section-headers", "--dynamic", "--dyn-syms", "-A", f.name]
+                           "--section-headers", "--dynamic", "--dyn-syms", "--relocs", "-A", f.name]
                 process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=err)
                 timer = threading.Timer(30, process.kill)
                 timer.start()
@@ -333,16 +333,32 @@ def elf_report(data, readelf):
     if code or "Error:" in stderr:
         raise Invalid(f"malformed native ELF: {stderr.strip()[:300]}")
     needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", output)
-    imports, exports = [], []
+    imports, weak_imports, exports, versioned_imports = [], [], [], []
     for line in output.splitlines():
-        m = re.match(r"\s*\d+:\s+[0-9a-fA-F]+\s+\d+\s+\w+\s+\w+\s+\w+\s+(UND|\w+)\s+(.+)", line)
+        m = re.match(r"\s*\d+:\s+[0-9a-fA-F]+\s+\d+\s+\w+\s+(\w+)\s+\w+\s+(UND|\w+)\s+(.+)", line)
         if m:
-            name = m.group(2).split("@", 1)[0].strip()
+            full_name = m.group(3).split(" (", 1)[0].strip()
+            name = full_name.split("@", 1)[0]
             if name:
-                (imports if m.group(1) == "UND" else exports).append(name)
+                if m.group(2) == "UND":
+                    (weak_imports if m.group(1) == "WEAK" else imports).append(name)
+                    if "@" in full_name:
+                        versioned_imports.append(full_name)
+                else:
+                    exports.append(name)
     attrs = [x.strip() for x in output.splitlines() if "Tag_CPU_arch:" in x or "Tag_ABI_VFP_args:" in x]
     return {"class": 32 if data[4] == 1 else 64, "machine": machine, "attributes": attrs,
-            "needed": needed, "imports": sorted(set(imports)), "exports": sorted(set(exports)),
+            "needed": needed, "imports": sorted(set(imports)),
+            "weak_imports": sorted(set(weak_imports)),
+            "versioned_imports": sorted(set(versioned_imports)),
+            "exports": sorted(set(exports)),
+            "textrel": "(TEXTREL)" in output or any(
+                "(FLAGS)" in line and "TEXTREL" in line for line in output.splitlines()),
+            "gnu_hash": "(GNU_HASH)" in output,
+            "relro": "GNU_RELRO" in output,
+            "tls": bool(re.search(r"\bTLS\b", output)),
+            "exidx": "ARM_EXIDX" in output,
+            "relocations": sorted(set(re.findall(r"\bR_ARM_[A-Z0-9_]+\b", output))),
             "jni_hints": sorted(x for x in set(exports) if x == "JNI_OnLoad" or x.startswith("Java_")),
             "native_entry_points": sorted(x for x in set(exports) if x == "ANativeActivity_onCreate")}
 
@@ -389,7 +405,140 @@ def apk(path, apksigner, readelf):
         z.close()
 
 
-def analyze(paths, apksigner, readelf):
+def guest_linkage(files, sysroot, readelf, guest_lib_dir=None):
+    """Conservative static closure. Runtime dlopen, interposition and symbol versions need execution."""
+    root = sysroot.resolve(strict=True) if sysroot is not None else None
+    support_root = guest_lib_dir.resolve(strict=True) if guest_lib_dir is not None else None
+    if root is not None and not (root / "system/lib").is_dir():
+        raise Invalid("guest sysroot has no system/lib")
+    if support_root is not None and not support_root.is_dir():
+        raise Invalid("guest runtime library directory is missing")
+    search = ["bundled guest runtime libraries", "app-private extracted APK guest libraries",
+              "Android 17 sysroot: system/lib, system_ext/lib, product/lib, vendor/lib, odm/lib"]
+    locations = ("system/lib", "system_ext/lib", "product/lib", "vendor/lib", "odm/lib")
+    by_abi = {}
+    findings = []
+    for abi in ("armeabi-v7a", "armeabi"):
+        packaged = {}
+        for item in files:
+            for lib in item["libraries"]:
+                if lib["abi"] == abi:
+                    packaged.setdefault(Path(lib["path"]).name, []).append(lib)
+        if not packaged:
+            continue
+        cache = {}
+        reports = []
+
+        def resolve(name):
+            name = name.replace("\\", "/").rsplit("/", 1)[-1]
+            if not name or name in (".", ".."):
+                return "missing", None
+            if name in cache:
+                return cache[name]
+            if support_root is not None:
+                candidate = support_root / name
+                if candidate.is_file():
+                    if not candidate.resolve().is_relative_to(support_root):
+                        cache[name] = ("namespace_escape", None)
+                        return cache[name]
+                    if candidate.stat().st_size > MAX_LIB:
+                        cache[name] = ("oversized", None)
+                        return cache[name]
+                    try:
+                        support = elf_report(candidate.read_bytes(), readelf)
+                    except Invalid:
+                        cache[name] = ("invalid_elf", None)
+                        return cache[name]
+                    cache[name] = ("support" if (support["class"], support["machine"]) == (32, 40)
+                                   else "abi_mismatch", support)
+                    return cache[name]
+            if name in packaged:
+                if len(packaged[name]) != 1:
+                    return "ambiguous", None
+                return "packaged", packaged[name][0]
+            if root is None:
+                return "unverified", None
+            for directory in locations:
+                candidate = root / directory / name
+                if not candidate.is_file():
+                    continue
+                if not candidate.resolve().is_relative_to(root):
+                    cache[name] = ("namespace_escape", None)
+                    return cache[name]
+                if candidate.stat().st_size > MAX_LIB:
+                    cache[name] = ("oversized", None)
+                    return cache[name]
+                try:
+                    lib = elf_report(candidate.read_bytes(), readelf)
+                except Invalid:
+                    cache[name] = ("invalid_elf", None)
+                    return cache[name]
+                cache[name] = ("sysroot" if (lib["class"], lib["machine"]) == (32, 40)
+                               else "abi_mismatch", lib)
+                return cache[name]
+            for directory in locations:
+                candidate = root / directory.replace("/lib", "/lib64") / name
+                if candidate.is_file():
+                    cache[name] = ("abi_mismatch", None)
+                    return cache[name]
+            cache[name] = ("missing", None)
+            return cache[name]
+
+        for name, lib in sorted(packaged.items()):
+            if len(lib) != 1:
+                reports.append({"library": name, "resolution": "ambiguous_packaged_name"})
+                findings.append({"level": "warning", "category": "loader", "kind": "invalid_guest_library",
+                                 "reason": f"{abi}/{name}: duplicate packaged ARM32 library name"})
+                continue
+            seen = set()
+            pending = [name]
+            if support_root is not None:
+                pending.extend(preload for preload in ("libzbcompat.so", "libzbjni.so")
+                               if (support_root / preload).is_file())
+            exports = set()
+            missing = set()
+            mismatched = set()
+            invalid = set()
+            unverified = set()
+            while pending and len(seen) < 256:
+                needed = pending.pop()
+                if needed in seen:
+                    continue
+                seen.add(needed)
+                state, dependency = resolve(needed)
+                if state in ("support", "packaged", "sysroot"):
+                    exports.update(dependency.get("exports", []))
+                    pending.extend(dependency.get("needed", []))
+                elif state == "unverified":
+                    unverified.add(needed)
+                elif state == "abi_mismatch":
+                    mismatched.add(needed)
+                elif state == "missing":
+                    missing.add(needed)
+                else:
+                    invalid.add(f"{needed}: {state}")
+            if pending:
+                unverified.add("dependency graph exceeds 256 libraries")
+            unresolved = sorted(set(lib[0].get("imports", [])) - exports) if not (
+                missing or mismatched or invalid or unverified) else []
+            reports.append({"library": name, "dependency_closure": sorted(seen),
+                            "missing_libraries": sorted(missing), "abi_mismatches": sorted(mismatched),
+                            "invalid_dependencies": sorted(invalid),
+                            "unverified_libraries": sorted(unverified), "unresolved_symbols": unresolved,
+                            "versioned_imports": lib[0].get("versioned_imports", [])})
+            for kind, values in (("missing_guest_library", missing), ("guest_abi_mismatch", mismatched),
+                                 ("invalid_guest_library", invalid),
+                                 ("unverified_guest_library", unverified), ("unresolved_guest_symbol", unresolved)):
+                if values:
+                    findings.append({"level": "warning", "category": "loader", "kind": kind,
+                                     "reason": f"{abi}/{name}: {', '.join(sorted(values)[:16])}"})
+        by_abi[abi] = reports
+    return {"search_order": search, "sysroot": str(root) if root is not None else None,
+            "guest_lib_dir": str(support_root) if support_root is not None else None,
+            "per_abi": by_abi}, findings
+
+
+def analyze(paths, apksigner, readelf, sysroot=None, guest_lib_dir=None):
     if len(paths) == 1 and paths[0].suffix.lower() == ".aab":
         raise Invalid("AAB input is outside Step 02 scope")
     with tempfile.TemporaryDirectory(prefix="zb-preflight-") as temp:
@@ -465,10 +614,12 @@ def analyze(paths, apksigner, readelf):
             finding("warning", "runtime", "declared_features", "Review graphics/device declarations against target capabilities.")
         if any(lib["compressed"] or not lib["aligned_4096"] for r in result for lib in r["libraries"]):
             finding("warning", "conversion", "native_layout", "Some native libraries are compressed or not 4096-byte aligned; conversion must repack them.")
+        linkage, loader_findings = guest_linkage(result, sysroot, readelf, guest_lib_dir)
+        findings.extend(loader_findings)
         finding("warning", "install_signing", "signing_identity", "Conversion re-signs with a personal key; original-signer updates and certificate-bound APIs may fail.")
         return {"status": "unsupported" if any(f["level"] == "unsupported" for f in findings) else "analyzed",
                 "package": identity[0], "version_code": identity[1], "split_names": sorted(names),
-                "files": result, "findings": findings}
+                "files": result, "guest_linkage": linkage, "findings": findings}
 
 
 def main():
@@ -476,9 +627,11 @@ def main():
     parser.add_argument("inputs", nargs="+", type=Path)
     parser.add_argument("--apksigner", default=os.environ.get("APKSIGNER", "apksigner"))
     parser.add_argument("--readelf", default=os.environ.get("READELF", "readelf"))
+    parser.add_argument("--sysroot", type=Path, help="extracted ARM32 Android 17 guest sysroot for dependency checks")
+    parser.add_argument("--guest-lib-dir", type=Path, help="ARM32 runtime support libraries used by the converted app")
     args = parser.parse_args()
     try:
-        report = analyze(args.inputs, args.apksigner, args.readelf)
+        report = analyze(args.inputs, args.apksigner, args.readelf, args.sysroot, args.guest_lib_dir)
     except (Invalid, OSError, KeyError) as e:
         report = {"status": "invalid", "error": str(e)}
     print(json.dumps(report, indent=2, sort_keys=True))

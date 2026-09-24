@@ -44,6 +44,10 @@ run_case syscalls_dynamic 0 "$GUEST/zb_syscalls_tmp"
 run_case log_dynamic 0
 CASE_ARGS="--env LD_LIBRARY_PATH=$GUEST/lib"
 run_case cxx_dynamic 0
+run_case loader_dynamic 0
+cp "$GUEST/lib/libzbloaderleaf.so" "$GUEST/libzbloaderescape.so"
+run_case loader_namespace_dynamic 0 "$GUEST/libzbloaderescape.so"
+rm -f "$GUEST/libzbloaderescape.so"
 CASE_ARGS=""
 
 if [ -f "$APK" ]; then

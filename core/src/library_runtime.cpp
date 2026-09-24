@@ -138,6 +138,10 @@ struct LibraryRuntime::Impl {
             error = "guest dlopen call failed";
             return 0;
         }
+        if (!process.seal_textrel_ranges()) {
+            error = "cannot seal legacy text relocation pages after dlopen";
+            return 0;
+        }
         if (result->r0 == 0) error = last_dlerror(invoke);
         return result->r0;
     }
@@ -227,6 +231,13 @@ struct LibraryRuntime::Impl {
             std::unique_lock<std::mutex> lock(mutex);
             if (!ready) {
                 std::string error;
+                if (!process.seal_textrel_ranges()) {
+                    startup_error = "cannot seal legacy text relocation pages after preload";
+                    lock.unlock();
+                    cv.notify_all();
+                    thread.regs()[0] = 1;
+                    return true;
+                }
                 if (!validate_api(thread.regs()[0], error)) {
                     startup_error = std::move(error);
                     lock.unlock();

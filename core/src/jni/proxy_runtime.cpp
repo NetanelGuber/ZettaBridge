@@ -141,7 +141,14 @@ LibraryRuntimeOptions guest_runtime_options(const GuestRuntimeLayout& layout, co
     options.sysroot = layout.sysroot;
     options.target_sdk = target_sdk;
     options.preload = "libzbjni.so";
-    options.guest_environment = {"LD_LIBRARY_PATH=" + layout.guest_lib_dir + ":" + plugin_root + "/lib"};
+    std::string search = layout.guest_lib_dir + ":" + plugin_root + "/lib";
+    // Only guest files are named here. Explicit directories make additional ARM32 platform
+    // and vendor libraries usable without ever asking the 64-bit host linker for them.
+    for (const char* directory : {"/system/lib", "/system_ext/lib", "/product/lib", "/vendor/lib", "/odm/lib"}) {
+        const std::string candidate = layout.sysroot + directory;
+        if (is_directory(candidate)) search += ":" + candidate;
+    }
+    options.guest_environment = {"LD_LIBRARY_PATH=" + search};
     return options;
 }
 

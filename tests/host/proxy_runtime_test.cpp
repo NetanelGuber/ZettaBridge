@@ -423,7 +423,19 @@ void test_runtime_report(const Tree& tree) {
     CHECK(contains(text, "proxy-loads: 1"));
     CHECK(contains(text, "proxy-loaded: libgood.so jni=0x00010006"));
     CHECK(contains(text, "proxy-failures: 1"));
-    CHECK(contains(text, "proxy-failed: libbad.so guest dlopen failed: cannot locate symbol"));
+    CHECK(contains(text, "proxy-failed: libbad.so kind=missing_symbol guest dlopen failed: cannot locate symbol"));
+}
+
+void test_platform_search_order(const fs::path& base) {
+    const fs::path sysroot = base / "sysroot";
+    fs::create_directories(sysroot / "system/lib");
+    fs::create_directories(sysroot / "vendor/lib");
+    const zb::GuestRuntimeLayout layout{sysroot.string(), (base / "zbhost").string(),
+                                         (base / "guest/lib").string()};
+    const auto options = zb::guest_runtime_options(layout, (base / "app").string(), 35);
+    CHECK(options.guest_environment == std::vector<std::string>{
+        "LD_LIBRARY_PATH=" + (base / "guest/lib").string() + ":" + (base / "app/lib").string() + ":" +
+        (sysroot / "system/lib").string() + ":" + (sysroot / "vendor/lib").string()});
 }
 
 void test_installed_app(const fs::path& base) {
@@ -476,6 +488,7 @@ int main() {
 
     const Tree tree = make_tree(base / "good", true);
     test_paths(tree);
+    test_platform_search_order(base / "platform-search");
     test_bad_runtime_layout(base / "bad");
     test_activation_and_loads(tree);
     test_concurrent_first_start(make_tree(base / "concurrent", true));

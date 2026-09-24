@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
-#include <iterator>
 #include <limits>
 #include <vector>
 
@@ -18,7 +17,18 @@ bool load_elf(GuestMemory& mem, const std::string& path, std::uint32_t dyn_limit
         error = "cannot open " + path;
         return false;
     }
-    const std::vector<char> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    file.seekg(0, std::ios::end);
+    const std::streamoff file_size = file.tellg();
+    if (file_size < 0 || file_size > 512LL * 1024 * 1024) {
+        error = "ELF file size is outside the supported range: " + path;
+        return false;
+    }
+    file.seekg(0, std::ios::beg);
+    std::vector<char> data(static_cast<std::size_t>(file_size));
+    if (!data.empty() && !file.read(data.data(), file_size)) {
+        error = "cannot read ELF file: " + path;
+        return false;
+    }
 
     Elf32_Ehdr eh;
     if (data.size() < sizeof eh) {
@@ -27,7 +37,8 @@ bool load_elf(GuestMemory& mem, const std::string& path, std::uint32_t dyn_limit
     }
     std::memcpy(&eh, data.data(), sizeof eh);
     if (std::memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 || eh.e_ident[EI_CLASS] != ELFCLASS32 ||
-        eh.e_ident[EI_DATA] != ELFDATA2LSB || eh.e_machine != EM_ARM) {
+        eh.e_ident[EI_DATA] != ELFDATA2LSB || eh.e_ident[EI_VERSION] != EV_CURRENT ||
+        eh.e_version != EV_CURRENT || eh.e_machine != EM_ARM || eh.e_ehsize != sizeof(Elf32_Ehdr)) {
         error = "not a little-endian ARM ELF32: " + path;
         return false;
     }
@@ -35,7 +46,7 @@ bool load_elf(GuestMemory& mem, const std::string& path, std::uint32_t dyn_limit
         error = "unsupported ELF type in " + path;
         return false;
     }
-    if (eh.e_phentsize != sizeof(Elf32_Phdr) ||
+    if (eh.e_phnum == 0 || eh.e_phnum > 1024 || eh.e_phentsize != sizeof(Elf32_Phdr) ||
         static_cast<std::uint64_t>(eh.e_phoff) + static_cast<std::uint64_t>(eh.e_phnum) * sizeof(Elf32_Phdr) > data.size()) {
         error = "bad program header table in " + path;
         return false;
@@ -45,16 +56,32 @@ bool load_elf(GuestMemory& mem, const std::string& path, std::uint32_t dyn_limit
 
     std::uint64_t lo = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t hi = 0;
+    unsigned load_count = 0;
+    unsigned interp_count = 0;
     for (const auto& p : phdrs) {
+        if (p.p_type == PT_INTERP) {
+            if (++interp_count > 1 || p.p_filesz < 2 ||
+                static_cast<std::uint64_t>(p.p_offset) + p.p_filesz > data.size() ||
+                data[p.p_offset + p.p_filesz - 1] != 0 ||
+                std::memchr(data.data() + p.p_offset, 0, p.p_filesz - 1) != nullptr) {
+                error = "bad PT_INTERP in " + path;
+                return false;
+            }
+        }
         if (p.p_type != PT_LOAD) continue;
-        if (p.p_filesz > p.p_memsz || static_cast<std::uint64_t>(p.p_offset) + p.p_filesz > data.size()) {
+        ++load_count;
+        if (p.p_filesz > p.p_memsz || static_cast<std::uint64_t>(p.p_offset) + p.p_filesz > data.size() ||
+            static_cast<std::uint64_t>(p.p_vaddr) + p.p_memsz >= kGuestSpaceSize ||
+            (p.p_align != 0 && (p.p_align & (p.p_align - 1)) != 0) ||
+            (p.p_align > 1 && (p.p_offset % p.p_align) != (p.p_vaddr % p.p_align))) {
             error = "bad PT_LOAD in " + path;
             return false;
         }
+        if (p.p_memsz == 0) continue;
         lo = std::min<std::uint64_t>(lo, page_round_down(p.p_vaddr));
         hi = std::max<std::uint64_t>(hi, page_round_up(static_cast<std::uint64_t>(p.p_vaddr) + p.p_memsz));
     }
-    if (hi == 0 || hi > kGuestSpaceSize) {
+    if (load_count == 0 || hi == 0 || hi >= kGuestSpaceSize) {
         error = "no loadable segments in " + path;
         return false;
     }
@@ -67,6 +94,10 @@ bool load_elf(GuestMemory& mem, const std::string& path, std::uint32_t dyn_limit
             error = "no guest address space for " + path;
             return false;
         }
+        if (at < lo || static_cast<std::uint64_t>(at) + span >= kGuestSpaceSize) {
+            error = "invalid guest load bias for " + path;
+            return false;
+        }
         bias = at - static_cast<std::uint32_t>(lo);
     } else if (!mem.range_free(static_cast<std::uint32_t>(lo), span)) {
         error = "address range of " + path + " is already in use";
@@ -74,6 +105,17 @@ bool load_elf(GuestMemory& mem, const std::string& path, std::uint32_t dyn_limit
     }
 
     const std::uint32_t start = static_cast<std::uint32_t>(lo) + bias;
+    const std::uint64_t end = hi + bias;
+    const std::uint64_t entry = static_cast<std::uint64_t>(eh.e_entry & ~1u) + bias;
+    if (end >= kGuestSpaceSize || entry >= kGuestSpaceSize ||
+        std::none_of(phdrs.begin(), phdrs.end(), [&](const Elf32_Phdr& p) {
+            return p.p_type == PT_LOAD && (p.p_flags & PF_X) &&
+                   (eh.e_entry & ~1u) >= p.p_vaddr &&
+                   static_cast<std::uint64_t>(eh.e_entry & ~1u) < static_cast<std::uint64_t>(p.p_vaddr) + p.p_memsz;
+        })) {
+        error = "entry is not in an executable PT_LOAD in " + path;
+        return false;
+    }
     if (!mem.map_anon(start, span, PROT_READ | PROT_WRITE)) {
         error = "cannot map " + path;
         return false;
@@ -81,43 +123,69 @@ bool load_elf(GuestMemory& mem, const std::string& path, std::uint32_t dyn_limit
 
     out = LoadedElf{};
     for (const auto& p : phdrs) {
-        if (p.p_type == PT_LOAD) {
+        if (p.p_type == PT_LOAD && p.p_filesz != 0) {
             std::memcpy(mem.base() + p.p_vaddr + bias, data.data() + p.p_offset, p.p_filesz);
         } else if (p.p_type == PT_INTERP) {
-            if (static_cast<std::uint64_t>(p.p_offset) + p.p_filesz > data.size()) {
-                error = "bad PT_INTERP in " + path;
-                return false;
-            }
             const char* s = data.data() + p.p_offset;
-            out.interp.assign(s, strnlen(s, p.p_filesz));
+            out.interp.assign(s, p.p_filesz - 1);
         }
     }
+    // A page shared by adjacent segments gets the union of their permissions. Gaps must not
+    // remain mapped from the temporary writable reservation.
+    std::vector<int> page_prot(static_cast<std::size_t>(span / kPageSize), -1);
     for (const auto& p : phdrs) {
-        if (p.p_type != PT_LOAD) continue;
+        if (p.p_type != PT_LOAD || p.p_memsz == 0) continue;
         const int prot = ((p.p_flags & PF_R) ? PROT_READ : 0) | ((p.p_flags & PF_W) ? PROT_WRITE : 0) |
                          ((p.p_flags & PF_X) ? PROT_EXEC : 0);
-        const std::uint32_t seg_start = page_round_down(p.p_vaddr + bias);
-        const std::uint64_t seg_end = page_round_up(static_cast<std::uint64_t>(p.p_vaddr) + bias + p.p_memsz);
-        mem.protect(seg_start, seg_end - seg_start, prot);
+        const std::uint64_t first = (page_round_down(p.p_vaddr + bias) - start) / kPageSize;
+        const std::uint64_t last = (page_round_up(static_cast<std::uint64_t>(p.p_vaddr) + bias + p.p_memsz) - start) /
+                                   kPageSize;
+        for (std::uint64_t i = first; i < last; ++i) {
+            page_prot[i] = page_prot[i] < 0 ? prot : page_prot[i] | prot;
+        }
+    }
+    for (std::size_t i = 0; i < page_prot.size();) {
+        std::size_t next = i + 1;
+        while (next < page_prot.size() && page_prot[next] == page_prot[i]) ++next;
+        const std::uint32_t at = start + static_cast<std::uint32_t>(i * kPageSize);
+        const std::uint64_t length = (next - i) * kPageSize;
+        const bool ok = page_prot[i] < 0 ? mem.unmap(at, length) : mem.protect(at, length, page_prot[i]);
+        if (!ok) {
+            mem.unmap(start, span);
+            error = "cannot protect PT_LOAD in " + path;
+            return false;
+        }
+        i = next;
     }
 
     for (const auto& p : phdrs) {
-        if (p.p_type == PT_PHDR) out.phdr = p.p_vaddr + bias;
+        if (p.p_type == PT_PHDR && static_cast<std::uint64_t>(p.p_vaddr) + bias < kGuestSpaceSize) {
+            out.phdr = p.p_vaddr + bias;
+        }
     }
     if (out.phdr == 0) {
         for (const auto& p : phdrs) {
-            if (p.p_type == PT_LOAD && eh.e_phoff >= p.p_offset && eh.e_phoff < p.p_offset + p.p_filesz) {
+            if (p.p_type == PT_LOAD && eh.e_phoff >= p.p_offset &&
+                eh.e_phoff < static_cast<std::uint64_t>(p.p_offset) + p.p_filesz) {
                 out.phdr = p.p_vaddr + (eh.e_phoff - p.p_offset) + bias;
                 break;
             }
         }
     }
+    const std::uint64_t phdr_end = static_cast<std::uint64_t>(out.phdr) +
+                                   static_cast<std::uint64_t>(eh.e_phnum) * sizeof(Elf32_Phdr);
+    if (out.phdr == 0 || out.phdr < start || phdr_end > end ||
+        !mem.accessible(out.phdr, phdr_end - out.phdr, kPageRead)) {
+        mem.unmap(start, span);
+        error = "program headers are not mapped readably in " + path;
+        return false;
+    }
 
     out.bias = bias;
-    out.entry = eh.e_entry + bias;
+    out.entry = static_cast<std::uint32_t>(entry) | (eh.e_entry & 1u);
     out.phnum = eh.e_phnum;
     out.load_start = start;
-    out.load_end = static_cast<std::uint32_t>(hi + bias);
+    out.load_end = static_cast<std::uint32_t>(end);
     out.is_dyn = eh.e_type == ET_DYN;
     return true;
 }

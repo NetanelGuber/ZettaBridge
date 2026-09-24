@@ -198,6 +198,15 @@ void check_no_spare_is_atomic_error() {
     CHECK(read_file(file.path) == before);
 }
 
+void check_invalid_needed_basename_is_atomic_error() {
+    auto bytes = make_elf({dyn(DT_STRTAB, kStringAddress), dyn(DT_NEEDED, 0), dyn(DT_NULL, 0)});
+    put_string(bytes, kStringOffset, "/legacy/path/");
+    TempFile file(bytes);
+    const auto report = zb::fix_guest_library(file.path);
+    CHECK(report.status == zb::ElfFixupStatus::Error);
+    CHECK(read_file(file.path) == bytes);
+}
+
 void check_unchanged_and_skipped() {
     auto unchanged = make_elf({dyn(DT_NULL, 0)});
     TempFile unchanged_file(unchanged);
@@ -241,6 +250,7 @@ int main() {
     check_path_and_textrel_fixups();
     check_flags_only_insertion();
     check_no_spare_is_atomic_error();
+    check_invalid_needed_basename_is_atomic_error();
     check_unchanged_and_skipped();
     check_malformed_files();
     std::puts("elf_fixups_test PASS");

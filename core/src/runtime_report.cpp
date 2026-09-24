@@ -1,6 +1,7 @@
 #include "zb/runtime_report.h"
 
 #include <algorithm>
+#include <cctype>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -36,6 +37,20 @@ std::string hex_version(std::int32_t version) {
     char text[11];
     std::snprintf(text, sizeof text, "0x%08x", static_cast<std::uint32_t>(version));
     return text;
+}
+
+std::string loader_failure_kind(const std::string& detail) {
+    std::string lower = detail;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+    const auto has = [&](const char* word) { return lower.find(word) != std::string::npos; };
+    if (has("wrong elf class") || has("unexpected e_machine") || has("abi mismatch") ||
+        has("64-bit instead of 32-bit") || has("not a little-endian arm elf32")) return "abi_mismatch";
+    if (has("relocation") || has("reloc type")) return "relocation_error";
+    if (has("cannot locate symbol") || has("undefined symbol") || has("symbol not found")) {
+        return "missing_symbol";
+    }
+    if (has("not found") || has("is missing") || has("cannot open")) return "missing_library";
+    return "other";
 }
 
 void append_count(std::string& out, const char* key, std::uint64_t value) {
@@ -101,7 +116,7 @@ void RuntimeReport::note_proxy_loaded(const std::string& library, std::int32_t j
         std::lock_guard<std::mutex> lock(mutex_);
         ++proxy_load_total_;
         if (proxy_loads_.size() < kMaxLibraries) {
-            proxy_loads_.push_back(Load{one_line(library, kMaxDetail), true, jni_version, {}});
+            proxy_loads_.push_back(Load{one_line(library, kMaxDetail), true, jni_version, {}, {}});
         }
         observer = take_observer();
     }
@@ -114,7 +129,8 @@ void RuntimeReport::note_proxy_failed(const std::string& library, const std::str
         std::lock_guard<std::mutex> lock(mutex_);
         ++proxy_failure_total_;
         if (proxy_loads_.size() < kMaxLibraries) {
-            proxy_loads_.push_back(Load{one_line(library, kMaxDetail), false, 0, one_line(error, kMaxDetail)});
+            proxy_loads_.push_back(Load{one_line(library, kMaxDetail), false, 0,
+                                        one_line(error, kMaxDetail), loader_failure_kind(error)});
         }
         observer = take_observer();
     }
@@ -127,7 +143,7 @@ void RuntimeReport::note_jni_onload(const std::string& library, bool ok, std::in
         std::lock_guard<std::mutex> lock(mutex_);
         ++onload_total_;
         if (onloads_.size() < kMaxLibraries) {
-            onloads_.push_back(Load{one_line(library, kMaxDetail), ok, jni_version, {}});
+            onloads_.push_back(Load{one_line(library, kMaxDetail), ok, jni_version, {}, {}});
         }
         observer = take_observer();
     }
@@ -466,6 +482,7 @@ std::string RuntimeReport::text() const {
         if (load.ok) {
             out += " jni=" + hex_version(load.jni_version);
         } else {
+            out += " kind=" + load.failure_kind;
             out += ' ';
             out += load.error;
         }
@@ -511,6 +528,9 @@ std::string RuntimeReport::text() const {
     out += "guest-exit: ";
     out += exit_reason_.empty() ? "(none)" : exit_reason_;
     out += '\n';
+    if (exit_reason_.starts_with("guest SIGSEGV:") || exit_reason_.starts_with("guest SIGILL:")) {
+        out += "guest-exit-kind: execution_fault\n";
+    }
 
     {
         std::vector<std::pair<const std::string*, std::uint64_t>> counts;

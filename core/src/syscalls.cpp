@@ -266,7 +266,9 @@ std::int32_t sys_mmap2(Ctx& c) {
         if (at == 0) return -ENOMEM;
     }
 
-    // Code of libraries marked DT_ZB_TEXTREL stays writable so the linker can relocate it.
+    const bool executable_file = (flags & MAP_ANONYMOUS) || c.proc.guest_executable_allowed(fd);
+    if ((prot & PROT_EXEC) && !executable_file) return -ENOEXEC;
+    // Only the guest linker's relocation window may write legacy executable pages.
     const bool textrel = !(flags & MAP_ANONYMOUS) && (prot & PROT_EXEC) && elf_has_textrel_marker(fd);
     const int effective_prot = textrel ? (prot | PROT_WRITE) : prot;
 
@@ -274,6 +276,7 @@ std::int32_t sys_mmap2(Ctx& c) {
     const bool ok = (flags & MAP_ANONYMOUS) ? c.mem.map_anon(at, size, effective_prot)
                                             : c.mem.map_file(at, size, effective_prot, flags, fd, offset);
     if (!ok) return errno ? -errno : -ENOMEM;
+    c.proc.set_exec_eligibility(at, size, executable_file);
     if (flags & MAP_ANONYMOUS) {
         c.proc.forget_mappings(at, size);
     } else {
@@ -283,7 +286,7 @@ std::int32_t sys_mmap2(Ctx& c) {
         const ssize_t n = ::readlink(link, target, sizeof target - 1);
         c.proc.record_file_mapping(at, static_cast<std::uint32_t>(size), offset,
                                    n > 0 ? std::string(target, static_cast<std::size_t>(n)) : std::string("fd"));
-        if (textrel) c.proc.add_textrel_range(at, static_cast<std::uint32_t>(size));
+        if (textrel) c.proc.add_textrel_range(at, static_cast<std::uint32_t>(size), prot);
     }
     c.proc.invalidate(at, static_cast<std::uint32_t>(size));
     return static_cast<std::int32_t>(at);
@@ -295,6 +298,7 @@ std::int32_t sys_munmap(Ctx& c) {
     const std::uint64_t size = page_round_up(c.a[1]);
     if (static_cast<std::uint64_t>(addr) + size > kGuestSpaceSize) return -EINVAL;
     if (!c.mem.unmap(addr, size)) return -EINVAL;
+    c.proc.set_exec_eligibility(addr, size, true);
     c.proc.forget_mappings(addr, size);
     c.proc.invalidate(addr, static_cast<std::uint32_t>(size));
     return 0;
@@ -307,7 +311,7 @@ std::int32_t sys_mprotect(Ctx& c) {
     const std::uint64_t size = page_round_up(c.a[1]);
     if (!c.mem.accessible(addr, size, 0)) return -ENOMEM;
     int prot = static_cast<int>(c.a[2]);
-    if ((prot & PROT_EXEC) && c.proc.overlaps_textrel_range(addr, size)) prot |= PROT_WRITE;
+    if ((prot & PROT_EXEC) && !c.proc.may_execute_range(addr, size)) return -ENOEXEC;
     if (!c.mem.protect(addr, size, prot)) return -EACCES;
     c.proc.invalidate(addr, static_cast<std::uint32_t>(size));
     return 0;

@@ -107,7 +107,7 @@ bool vaddr_to_offset(const std::vector<Elf32_Phdr>& loads, std::uint32_t address
 }  // namespace
 
 ElfFixupReport fix_guest_library(const std::string& path) {
-    const int raw_fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+    const int raw_fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC | O_NOFOLLOW);
     if (raw_fd < 0) return error("open failed: " + std::string(std::strerror(errno)));
     ScopedFd fd(raw_fd);
 
@@ -115,7 +115,7 @@ ElfFixupReport fix_guest_library(const std::string& path) {
     if (::fstat(fd.get(), &st) != 0) {
         return error("stat failed: " + std::string(std::strerror(errno)));
     }
-    if (st.st_size < 0 || static_cast<std::uint64_t>(st.st_size) > kMaxFileSize) {
+    if (!S_ISREG(st.st_mode) || st.st_size < 0 || static_cast<std::uint64_t>(st.st_size) > kMaxFileSize) {
         return error("file size is outside the supported range");
     }
     const auto file_size = static_cast<std::size_t>(st.st_size);
@@ -230,6 +230,9 @@ ElfFixupReport fix_guest_library(const std::string& path) {
             const std::string name(first, nul);
             const std::size_t cut = name.find_last_of("/\\");
             if (cut != std::string::npos) {
+                if (cut + 1 == name.size() || name.substr(cut + 1) == "." || name.substr(cut + 1) == "..") {
+                    return error("DT_NEEDED has no valid basename");
+                }
                 const std::uint64_t new_value = static_cast<std::uint64_t>(string_index) + cut + 1;
                 if (new_value > std::numeric_limits<std::uint32_t>::max()) {
                     return error("DT_NEEDED basename offset overflows ELF32");
@@ -287,22 +290,27 @@ ElfFixupReport fix_guest_library(const std::string& path) {
 }
 
 bool elf_has_textrel_marker(int fd) {
+    struct stat st {};
+    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0) return false;
     Elf32_Ehdr eh;
     if (!read_exact(fd, &eh, sizeof eh, 0)) return false;
     if (std::memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 || eh.e_ident[EI_CLASS] != ELFCLASS32 ||
-        eh.e_phentsize != sizeof(Elf32_Phdr) || eh.e_phnum == 0 || eh.e_phnum > 64) {
+        eh.e_ident[EI_DATA] != ELFDATA2LSB || eh.e_machine != EM_ARM ||
+        eh.e_phentsize != sizeof(Elf32_Phdr) || eh.e_phnum == 0 || eh.e_phnum > 64 ||
+        !range_fits(eh.e_phoff, static_cast<std::uint64_t>(eh.e_phnum) * sizeof(Elf32_Phdr), st.st_size)) {
         return false;
     }
     std::vector<Elf32_Phdr> phdrs(eh.e_phnum);
     if (!read_exact(fd, phdrs.data(), phdrs.size() * sizeof(Elf32_Phdr), eh.e_phoff)) return false;
 
     for (const auto& p : phdrs) {
-        if (p.p_type != PT_DYNAMIC || p.p_filesz > kMaxDynamicSize) continue;
+        if (p.p_type != PT_DYNAMIC || p.p_filesz > kMaxDynamicSize ||
+            p.p_filesz % sizeof(Elf32_Dyn) != 0 || !range_fits(p.p_offset, p.p_filesz, st.st_size)) continue;
         std::vector<Elf32_Dyn> dyn(p.p_filesz / sizeof(Elf32_Dyn));
         if (!read_exact(fd, dyn.data(), dyn.size() * sizeof(Elf32_Dyn), p.p_offset)) return false;
         for (const auto& d : dyn) {
             if (d.d_tag == DT_NULL) break;
-            if (d.d_tag == kDtZbTextrel) return true;
+            if (d.d_tag == kDtZbTextrel && d.d_un.d_val == 1) return true;
         }
     }
     return false;

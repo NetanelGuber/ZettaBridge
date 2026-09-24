@@ -233,10 +233,24 @@ void check_loads_and_natives() {
     CHECK(contains(text, "proxy-loaded: libstd.so jni=0x00010006"));
     CHECK(contains(text, "proxy-loaded: liblime.so jni=0x00010004"));
     // A multi-line error is folded onto the one record line.
-    CHECK(contains(text, "proxy-failed: libopenal.so guest dlopen failed: cannot locate symbol"));
+    CHECK(contains(text, "proxy-failed: libopenal.so kind=missing_symbol guest dlopen failed: cannot locate symbol"));
     CHECK(contains(text, "jni-onload: liblime.so ok jni=0x00010004"));
     CHECK(contains(text, "jni-onload: libopenal.so failed"));
     CHECK(line_with(text, "registered-natives:") == "registered-natives: 20");
+}
+
+void check_loader_failure_categories() {
+    zb::RuntimeReport report;
+    report.note_proxy_failed("missing.so", "library libmissing.so not found");
+    report.note_proxy_failed("wrong.so", "wrong ELF class: ELFCLASS64");
+    report.note_proxy_failed("reloc.so", "unsupported relocation 255");
+    report.note_guest_exit("guest SIGSEGV: read of 0x00000000, pc 0x1234");
+    const std::string text = report.text();
+    CHECK(contains(text, "proxy-failed: missing.so kind=missing_library"));
+    CHECK(contains(text, "proxy-failed: wrong.so kind=abi_mismatch"));
+    CHECK(contains(text, "proxy-failed: reloc.so kind=relocation_error"));
+    CHECK(contains(text, "guest SIGSEGV"));
+    CHECK(line_with(text, "guest-exit-kind:") == "guest-exit-kind: execution_fault");
 }
 
 void check_native_calls_and_opens() {
@@ -399,6 +413,7 @@ int main() {
     check_unimplemented_host_calls();
     check_host_call_bound();
     check_loads_and_natives();
+    check_loader_failure_categories();
     check_native_calls_and_opens();
     check_exit_reason();
     check_observer();

@@ -2,6 +2,7 @@ set(ZB_HOST_TESTS
     fault_pc_test
     egl_marshal_test
     elf_fixups_test
+    elf_loader_validation_test
     elf_symbols_test
     guest_memory_test
     hang_watchdog_test

@@ -462,11 +462,11 @@ hash before root, leaving version 2 and its data intact. The original synthetic
 conflict fixture remains installed for inspection. These device checks prove
 the bounded single-user, single-APK management path only; no user APK, split
 install, work-profile behavior, encrypted data restore or general lifecycle
-compatibility was claimed. Step 07 remains NOT STARTED.
+compatibility was claimed. Step 07 had not started at Step 06 completion.
 
 ### Step 07 - ELF loader, libraries and guest sysroot
 
-**Status:** NOT STARTED  
+**Status:** DONE
 **Tasks**
 - Harden ARM32 ELF parsing, relocations, symbol/version lookup, constructors/destructors, TLS, GNU hash, unwind/EXIDX, RELRO, weak symbols and binding modes.
 - Define guest library search order across APK guest assets, app-private extracted files, Android 17 guest sysroot and explicitly supported platform/vendor libraries. Never search host ABI paths.
@@ -478,6 +478,42 @@ compatibility was claimed. Step 07 remains NOT STARTED.
 **Done when:** Isolated guest fixtures cover claimed loader behaviors and failures; reports distinguish missing lib/symbol, ABI mismatch, relocation error and execution fault; loader cannot escape guest namespace.
 
 **Depends on:** Steps 04-05.
+
+**Evidence (2026-09-24):** The host ELF bootstrap now bounds file size, validates
+headers/segments/alignment/entry/program-header readability, combines permissions
+on shared pages and leaves segment gaps unmapped. The ARM32 Android 17 linker
+continues to own library relocations, symbol versions, TLS, constructors,
+destructors and unloads; the new isolated ARM32 fixtures exercise those paths.
+Guest library search and API scope are specified in `docs/guest-linker.md`.
+The runtime now adds only present ARM32 `system`, `system_ext`, `product`,
+`vendor` and `odm` library directories after bundled and app-private libraries,
+so an explicitly supplied guest platform/vendor library can resolve without a
+host ABI fallback.
+Missing mapped system libraries stay in the guest sysroot; only font data may
+fall through to device files. Traversal and escaping symlinks are rejected, and
+file-backed executable guest pages require ARM ELF32 under the sysroot or
+declared ARM32 library roots. A fixture found a valid ARM32 library outside
+those roots and confirmed `dlopen` rejected it. Legacy `DT_NEEDED` basenames
+are validated and text-relocation pages are sealed after guest linking.
+
+Preflight accepts explicit `--sysroot` and `--guest-lib-dir` inputs and reports
+missing/invalid guest libraries, ABI mismatches, unresolved strong imports,
+versioned imports and unverified dependencies separately. Runtime proxy reports
+label missing library/symbol, ABI mismatch and relocation errors; guest SIGSEGV
+or SIGILL is labeled as an execution fault. The Android 17 sysroot plus bundled
+ARM32 support libraries is the claimed API baseline; old/vendor APIs without
+matching guest files remain unverified or unsupported, not silently treated as
+compatible.
+
+WSL2 AArch64 cross-build completed. The focused QEMU host CTest selection had
+36 passes and one expected structural-test skip (no Android proxy build in
+this checkout); `library_runtime_test` also passed separately using the
+existing WSL sysroot and guest binaries. All 12 synthetic guest cases passed
+under QEMU, including the new loader and namespace fixtures; the optional
+licensed Orange Roulette case was skipped. Seven Python preflight tests passed.
+`readelf` confirmed GNU hash, version needs, RELRO and `.ARM.exidx` in the
+fixtures. These are host/QEMU/static results, not Android-device or user-app
+acceptance. Step 08 and later steps remain NOT STARTED.
 
 ### Step 08 - JNI and ART interoperability
 
