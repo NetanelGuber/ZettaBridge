@@ -392,12 +392,12 @@ force-stop/relaunch. A malformed synthetic feature split was rejected atomically
 before the corrected split set was installed. These are synthetic packaging and
 JNI proofs, not user-app compatibility or general lifecycle evidence. Loads in
 `Application.attachBaseContext` precede the provider and remain outside this
-step; secondary/isolated process bootstrap remains for Step 09. Step 06 remains
-NOT STARTED.
+step; secondary/isolated process bootstrap remains for Step 09. Package
+management is recorded separately in Step 06 below.
 
 ### Step 06 - Safe PackageManager install, update, remove and recovery
 
-**Status:** NOT STARTED  
+**Status:** DONE
 **Tasks**
 - Use Android PackageManager/PackageInstaller semantics, root only for authorized invocation/result. Never forge package-manager state or hand-copy files into /data/app.
 - Verify output package name, signer, version, ABI, process and Android-assigned UID.
@@ -408,6 +408,61 @@ NOT STARTED.
 **Done when:** Synthetic app appears in system app lists, launches normally, has its own PackageManager UID and permission prompts; same-personal-key update works; conflict and failure preserve original/data; guest never runs root.
 
 **Depends on:** Steps 03, 05.
+
+**Evidence (2026-09-24):** `ManagedPackage` now gates the manager's confirmed
+single-base-APK install/update/remove flow. It compares the selected
+`transformation.json` with staged APK SHA-256 and PackageManager archive
+package/version/signer/process, rejects non-ARM64 host libraries, enforces
+same-signer and non-downgrade updates, blocks original-signer conflicts before
+root invocation, and rechecks the installed signer/version/process/Android UID.
+The first successful converted install anchors the personal signer fingerprint.
+Private atomic records retain conversion metadata, input/output hashes, signer,
+prior version/UID, observed identity and one prior record; failed/unknown
+attempts do not replace the last successful record. Removal requires a matching
+successful record and current signer, with separate keep-data and delete-data
+confirmations. Root calls remain fixed PackageManager operations. A fixed
+`pm list users` check fails closed unless user 0 is the only Android user; this
+release refuses work profiles and split installs. `docs/package-management.md`
+specifies backup/data limits and recovery after failed, uncertain or successful
+updates. The manager can export the conversion report, hashes, signer, prior
+record and last attempt through the Android document picker. This final export
+UI passed the Android build but was not exercised on-device after the phone
+disconnected. Renamed copies are not offered in this release.
+
+The manager contract test passed, including owner-only, work-profile and
+ambiguous-user output cases. `:manager:assembleDebug` passed with SDK 35; final
+manager APK SHA-256 was
+`8445ce6b956692412b828e3d9963ac8dd839a261070ec109b08def1eaa30c982`.
+Four converter tests passed. The converter now rejects an ARM64 bridge missing
+the installed bootstrap JNI export before publishing; an actual stale bridge
+failed with no output directory. The synthetic converted version 1 and 2 APK
+SHA-256 values were respectively
+`b78271610c68500ff5abba4b366200768fbb70bda5404105c99648a07c76e0a3`
+and `b8392910cd6cdf6ff355558600463c435428467e66f1e4031d354e927e02bb51`.
+Both used the Step 05 device-verified bridge and personal signer SHA-256
+`d3fe5a914ad2f4139c645ae3a09ba845d484b2f946a50826326beb41d5575c00`.
+
+On Pixel 11 Pro XL `67161FDDV0011Q`, Android 17/API 37 build
+`CD1A.260905.001.B1`, KernelSU, sole user 0, the manager installed
+`com.zettabridge.step06managed` as a system-listed normal package with UID
+10389 and `primaryCpuAbi=arm64-v8a`. The app launched in process
+`u0_a389` and persisted `PASS uid=10389 native=12 callbacks=1`. Android showed
+its camera runtime permission prompt; denial remained `granted=false`. A
+confirmed same-personal-key version 1-to-2 update preserved UID 10389, a
+private marker, permission denial and the passing translated JNI probe. A
+confirmed keep-data removal removed the package while retaining the marker;
+fresh same-signer installation registered it again. Final version 2 remains
+installed and passed after force-stop/relaunch. Manager records show prior
+version 1 and Android-assigned UID 10389; the manager remains UID 10383.
+
+A separately signed synthetic package `com.zettabridge.step06fixture` (UID
+10388) and its private marker survived a converted-output signer-conflict
+review without root install. Selecting an APK with the wrong report failed on
+hash before root, leaving version 2 and its data intact. The original synthetic
+conflict fixture remains installed for inspection. These device checks prove
+the bounded single-user, single-APK management path only; no user APK, split
+install, work-profile behavior, encrypted data restore or general lifecycle
+compatibility was claimed. Step 07 remains NOT STARTED.
 
 ### Step 07 - ELF loader, libraries and guest sysroot
 

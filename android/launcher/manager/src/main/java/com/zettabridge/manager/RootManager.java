@@ -27,6 +27,7 @@ final class RootManager {
     static final long MAX_APK_BYTES = 2L * 1024 * 1024 * 1024;
     static final long TIMEOUT_MS = 120_000;
     private static final String ID = "/system/bin/id -u";
+    private static final String LIST_USERS = "/system/bin/pm list users";
     private static final String INSTALL_NEW = "/system/bin/pm install -R --user 0 -S %d";
     private static final String INSTALL_REPLACE = "/system/bin/pm install -r --user 0 -S %d";
     // The script is constant. The validated package is sent on stdin as data, never shell source.
@@ -106,6 +107,19 @@ final class RootManager {
             return new Result(State.DENIED, "su returned a non-root UID: " + result.detail);
         }
         return result;
+    }
+
+    /** Package code is device-wide. Refuse owner-user changes while any other user exists. */
+    Result checkPrimaryUserOnly(Cancellation cancel) {
+        Result result = provider.run(LIST_USERS, null, 0, cancel, TIMEOUT_MS);
+        if (!result.succeeded()) return result;
+        String[] lines = result.detail.trim().split("\\R");
+        if (lines.length != 2 || !"Users:".equals(lines[0].trim())
+                || !lines[1].trim().matches("UserInfo\\{0:[^}]*\\}.*")) {
+            return new Result(State.FAILED,
+                    "cannot verify sole Android user 0; other users/work profiles may exist");
+        }
+        return new Result(State.GRANTED, "sole Android user 0 verified");
     }
 
     /** Copy a selected content URI while unprivileged. No source path is passed to su. */
@@ -253,12 +267,14 @@ final class RootManager {
             }
             ByteArrayOutputStream output = new ByteArrayOutputStream();
             AtomicBoolean ioFailed = new AtomicBoolean();
+            AtomicBoolean outputTruncated = new AtomicBoolean();
             Thread reader = new Thread(() -> {
                 try (InputStream stream = process.getInputStream()) {
                     byte[] bytes = new byte[1024];
                     int count;
                     while ((count = stream.read(bytes)) != -1) {
                         synchronized (output) {
+                            if (count > 4096 - output.size()) outputTruncated.set(true);
                             if (output.size() < 4096) output.write(bytes, 0,
                                     Math.min(count, 4096 - output.size()));
                         }
@@ -301,10 +317,15 @@ final class RootManager {
                     detail = new String(output.toByteArray(), StandardCharsets.UTF_8).trim();
                 }
                 if (ioFailed.get()) return new Result(State.FAILED, "root command stream failed: " + detail);
+                if (fixedCommand.equals(LIST_USERS) && outputTruncated.get()) {
+                    return new Result(State.FAILED, "Android user list exceeded output limit");
+                }
                 if (process.exitValue() != 0) return new Result(
                         fixedCommand.equals(ID) ? State.DENIED : State.FAILED,
                         "root command exited " + process.exitValue() + ": " + detail);
-                if (fixedCommand.equals(ID)) return new Result(State.GRANTED, detail);
+                if (fixedCommand.equals(ID) || fixedCommand.equals(LIST_USERS)) {
+                    return new Result(State.GRANTED, detail);
+                }
                 if (!detail.startsWith("Success")) return new Result(State.FAILED,
                         "PackageManager did not report success: " + detail);
                 return new Result(State.GRANTED, detail);

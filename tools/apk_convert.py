@@ -156,6 +156,7 @@ def runtime_files(runtime_dir, bootstrap_apk, proxy_path, zbridge_path, readelf)
         info = pre.elf_report(path.read_bytes(), readelf)
         if (info["class"], info["machine"]) != (64, 183):
             raise pre.Invalid(f"{label} library is not ARM64")
+    require_installed_entry(zbridge_path, readelf)
     try:
         _, _, errors = check_zbproxy.check(proxy_path.read_bytes())
     except check_zbproxy.CheckError as error:
@@ -172,6 +173,16 @@ def runtime_files(runtime_dir, bootstrap_apk, proxy_path, zbridge_path, readelf)
     finally:
         z.close()
     return result, dex
+
+
+def require_installed_entry(zbridge_path, readelf):
+    """Reject an old ARM64 bridge that would crash the injected provider at startup."""
+    symbol = "Java_com_zettabridge_core_ZBridge_activateInstalled"
+    dynamic = run([readelf, "--dyn-syms", "--wide", str(zbridge_path)])
+    if not any((fields := line.split()) and len(fields) >= 8
+               and fields[4] == "GLOBAL" and fields[5] == "DEFAULT"
+               and fields[-1] == symbol for line in dynamic.splitlines()):
+        raise pre.Invalid("bridge lacks exported installed bootstrap entry: " + symbol)
 
 
 def source_layout(report, staged):

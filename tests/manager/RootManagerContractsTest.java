@@ -46,6 +46,15 @@ public final class RootManagerContractsTest {
         provider.answer = new RootManager.Result(RootManager.State.GRANTED, "0");
         check(manager.checkGrant(cancel).succeeded(), "UID zero grants root");
         provider.commands.clear();
+        provider.answer = new RootManager.Result(RootManager.State.GRANTED,
+                "Users:\n  UserInfo{0:Owner:4c13} running");
+        check(manager.checkPrimaryUserOnly(cancel).succeeded(), "sole owner allowed");
+        provider.answer = new RootManager.Result(RootManager.State.GRANTED,
+                "Users:\n  UserInfo{0:Owner:4c13} running\n  UserInfo{10:Work:30}");
+        check(!manager.checkPrimaryUserOnly(cancel).succeeded(), "work profile blocked");
+        provider.answer = new RootManager.Result(RootManager.State.GRANTED, "ambiguous output");
+        check(!manager.checkPrimaryUserOnly(cancel).succeeded(), "unknown users fail closed");
+        provider.commands.clear();
         check(manager.uninstall("com.example.app", false, (action, consequence) -> false, cancel)
                 .state == RootManager.State.CANCELLED, "unconfirmed uninstall denied");
         check(provider.commands.isEmpty(), "unconfirmed action did not contact su");

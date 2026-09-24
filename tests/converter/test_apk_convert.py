@@ -3,6 +3,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import apk_convert as c
@@ -18,6 +19,14 @@ def lib(abi, name):
 
 
 class LayoutTest(unittest.TestCase):
+    def test_installed_bridge_entry_required(self):
+        output = "   7: 0 10 FUNC GLOBAL DEFAULT 15 Java_com_zettabridge_core_ZBridge_activateInstalled\n"
+        with patch.object(c, "run", return_value=output):
+            c.require_installed_entry(Path("libzbridge.so"), "readelf")
+        with patch.object(c, "run", return_value=""):
+            with self.assertRaisesRegex(p.Invalid, "installed bootstrap entry"):
+                c.require_installed_entry(Path("libzbridge.so"), "readelf")
+
     def test_split_guest_mapping_uses_v7a_variant(self):
         report = {"status": "analyzed", "files": [
             item(None, [lib("armeabi", "liba.so")]),
