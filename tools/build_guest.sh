@@ -49,6 +49,10 @@ cp "$TOOLCHAIN/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" "$OUT/lib
     -o "$OUT/lib/libzbjni.so" "$ROOT/guest/zbjni/zbjni.c" "$ROOT/guest/zbjni/gen/hostcalls.S"
 "$CC" -shared -fPIC -O2 -Wall -I"$ROOT/core/include" -Wl,-soname,libzbjniprobe.so -o "$OUT/lib/libzbjniprobe.so" \
     "$ROOT/guest/testlib/zbjniprobe.c"
+for name in zbstep04a zbstep04b; do
+    "$CC" -shared -fPIC -O2 -Wall -Wextra -Wl,-soname,"lib$name.so" \
+        -o "$OUT/lib/lib$name.so" "$ROOT/guest/testlib/$name.c"
+done
 "$CC" -shared -fPIC -O2 -Wall -Wextra -Wno-unused-parameter -I"$ROOT/core/include" \
     -Wl,-soname,libzbt7probe.so -o "$OUT/lib/libzbt7probe.so" \
     "$ROOT/guest/testlib/zbt7probe.c" "$ROOT/guest/testlib/zbjniprobe.c"

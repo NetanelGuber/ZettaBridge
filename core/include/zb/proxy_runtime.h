@@ -82,7 +82,8 @@ struct ProxyLoadResult {
     std::string error;             // full, user-visible message when !ok
 };
 
-// Process-lifetime state machine behind ZBridge.onProxyLoaded.
+// Process-lifetime state machine behind ZBridge.onProxyLoaded. A process activates either one
+// launcher plugin or its own installed package; both routes use the same loader state machine.
 //
 //   activate_plugin  binds exactly one plugin (root, targetSdk, class loader) per process. The same
 //                    plugin may activate again; any other plugin is rejected (plan 4d, decision 7).
@@ -102,6 +103,11 @@ public:
 
     bool activate_plugin(JniBackend::Env env, const std::string& plugin_root, std::uint32_t target_sdk,
                          JniBackend::Ref class_loader, std::string& error);
+    // Ordinary installed package: proxies live in Android's nativeLibraryDir, while ARM32
+    // libraries live under the package's private files directory. No launcher context is used.
+    bool activate_installed(JniBackend::Env env, const std::string& files_dir,
+                            const std::string& native_lib_dir, std::uint32_t target_sdk,
+                            JniBackend::Ref class_loader, std::string& error);
     ProxyLoadResult on_proxy_loaded(JniBackend::Env env, const std::string& proxy_path);
 
     // The stored failure of a proxy path (canonical or as passed), or nullopt.
@@ -125,7 +131,10 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     bool active_ = false;
+    bool installed_ = false;
     std::string plugin_root_;
+    std::string native_lib_dir_;
+    std::string installed_guest_lib_dir_;
     std::uint32_t target_sdk_ = 0;
     LibraryRuntimeOptions options_;
     StartState start_state_ = StartState::NotStarted;

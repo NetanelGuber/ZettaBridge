@@ -54,6 +54,10 @@ public final class ZBridge {
      */
     public static native void activatePlugin(String pluginRoot, int targetSdk, ClassLoader classLoader);
 
+    /** Activates the bridge for a normal installed package using its own files and native libs. */
+    public static native void activateInstalled(String filesDir, String nativeLibraryDir,
+            int targetSdk, ClassLoader classLoader);
+
     /**
      * Called by libzbproxy.so from JNI_OnLoad. Loads the arm32 library that belongs to the proxy,
      * binds its Java_* exports and runs its JNI_OnLoad on the calling thread. Results are memoized

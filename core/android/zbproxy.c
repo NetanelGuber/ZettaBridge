@@ -1,11 +1,10 @@
-// libzbproxy.so: the arm64 proxy ART loads in place of an arm32 plugin library.
+// libzbproxy.so: the arm64 proxy ART loads in place of an arm32 library.
 //
-// The launcher's plugin class loader returns one copy of this library per arm32 library
-// (plugins/<pkg>/proxy/lib<name>.so). Its only job is to tell the translator which copy was
-// loaded: JNI_OnLoad finds its own path with dladdr and calls
+// A launcher plugin class loader or an ordinary installed APK supplies one named copy per
+// arm32 library. JNI_OnLoad finds its own path with dladdr and calls
 //     static int com.zettabridge.core.ZBridge.onProxyLoaded(String proxyPath)
-// During JNI_OnLoad ART's class-loader override is the plugin loader, which delegates
-// com.zettabridge.core.* to the launcher. The proxy links against nothing of ours (no
+// During JNI_OnLoad ART's class-loader override must find the package's
+// com.zettabridge.core.ZBridge bootstrap class. The proxy links against nothing of ours (no
 // libzbridge.so, no libc++): tools/check_zbproxy.py checks every Android link.
 //
 // Contract of onProxyLoaded: it returns the guest JNI version (0 means "no preference" and

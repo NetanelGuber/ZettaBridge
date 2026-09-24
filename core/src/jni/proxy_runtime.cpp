@@ -58,6 +58,11 @@ bool is_directory(const std::string& path) {
     return ::stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+bool is_library_name(const std::string& name) {
+    return name.size() > 6 && name.starts_with("lib") && name.ends_with(".so") &&
+           name.find('/') == std::string::npos;
+}
+
 std::string hex_version(std::int32_t version) {
     char text[11];
     std::snprintf(text, sizeof text, "0x%08x", static_cast<std::uint32_t>(version));
@@ -159,6 +164,10 @@ bool ProxyRuntime::activate_plugin(JniBackend::Env env, const std::string& plugi
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    if (active_ && installed_) {
+        error = "this process already has an installed-app runtime";
+        return false;
+    }
     if (active_ && (root != plugin_root_ || target_sdk != target_sdk_)) {
         error = "this :guest process already runs plugin " + plugin_root_ + " (targetSdk " +
                 std::to_string(target_sdk_) + "); cannot activate " + root + " (targetSdk " +
@@ -196,6 +205,48 @@ bool ProxyRuntime::activate_plugin(JniBackend::Env env, const std::string& plugi
     return true;
 }
 
+bool ProxyRuntime::activate_installed(JniBackend::Env env, const std::string& files_dir,
+                                      const std::string& native_lib_dir, std::uint32_t target_sdk,
+                                      JniBackend::Ref class_loader, std::string& error) {
+    if (target_sdk == 0 || target_sdk > kMaxTargetSdk || class_loader == 0) {
+        error = "installed-app targetSdk or class loader is invalid";
+        return false;
+    }
+    std::string files, native_libs, guest_libs;
+    if (!canonical_path(files_dir, files, error) || !is_directory(files)) return false;
+    if (!canonical_path(native_lib_dir, native_libs, error) || !is_directory(native_libs)) return false;
+    if (!canonical_path(files + "/zb/app/lib", guest_libs, error) ||
+        guest_libs != files + "/zb/app/lib" || !is_directory(guest_libs)) {
+        error = "installed ARM32 library directory must be <files>/zb/app/lib without symlinks";
+        return false;
+    }
+    GuestRuntimeLayout layout;
+    if (!resolve_guest_runtime_layout(files, layout, error)) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (active_ && (!installed_ || plugin_root_ != files || native_lib_dir_ != native_libs ||
+                    installed_guest_lib_dir_ != guest_libs || target_sdk_ != target_sdk)) {
+        error = "this process already has a different runtime configuration";
+        return false;
+    }
+    std::string bind_error;
+    if (!engine_.bind_class_loader(env, class_loader, bind_error)) {
+        error = "cannot bind the installed package class loader: " + bind_error;
+        return false;
+    }
+    if (!active_) {
+        active_ = true;
+        installed_ = true;
+        plugin_root_ = files;
+        native_lib_dir_ = native_libs;
+        installed_guest_lib_dir_ = guest_libs;
+        target_sdk_ = target_sdk;
+        options_ = guest_runtime_options(layout, files + "/zb/app", target_sdk);
+        log("guest JNI runtime: installed app %s activated (targetSdk %u)", files.c_str(), target_sdk);
+        runtime_report().note_plugin(files, target_sdk);
+    }
+    return true;
+}
+
 ProxyLoadResult ProxyRuntime::fail_locked(const std::string& key, const std::string& library, std::string detail) {
     Entry& entry = entries_[key];
     entry.state = LoadState::Failed;
@@ -228,16 +279,25 @@ ProxyLoadResult ProxyRuntime::on_proxy_loaded(JniBackend::Env env, const std::st
     entries_[key] = Entry{LoadState::Loading, std::this_thread::get_id(), 0, {}};
 
     ProxyLocation location;
-    if (!parse_proxy_path(canonical, location, error)) return fail_locked(key, base_name(key), error);
-    if (!active_) {
-        return fail_locked(key, location.library,
-                           "no plugin is active in this process; ZBridge.activatePlugin must run before "
-                           "plugin code loads libraries");
-    }
-    if (location.plugin_root != plugin_root_) {
-        return fail_locked(key, location.library,
-                           "the proxy belongs to plugin " + location.plugin_root + " but this :guest process runs " +
-                               plugin_root_ + ": " + kRestartHint);
+    if (installed_) {
+        location.proxy = canonical;
+        location.library = base_name(canonical);
+        if (parent_of(canonical) != native_lib_dir_ || !is_library_name(location.library)) {
+            return fail_locked(key, location.library, "proxy is not a lib<name>.so in the installed package native library directory");
+        }
+        location.guest_library = installed_guest_lib_dir_ + "/" + location.library;
+    } else {
+        if (!parse_proxy_path(canonical, location, error)) return fail_locked(key, base_name(key), error);
+        if (!active_) {
+            return fail_locked(key, location.library,
+                               "no plugin is active in this process; ZBridge.activatePlugin must run before "
+                               "plugin code loads libraries");
+        }
+        if (location.plugin_root != plugin_root_) {
+            return fail_locked(key, location.library,
+                               "the proxy belongs to plugin " + location.plugin_root + " but this :guest process runs " +
+                                   plugin_root_ + ": " + kRestartHint);
+        }
     }
     if (!is_regular_file(location.guest_library)) {
         return fail_locked(key, location.library,

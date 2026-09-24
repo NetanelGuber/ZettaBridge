@@ -426,6 +426,47 @@ void test_runtime_report(const Tree& tree) {
     CHECK(contains(text, "proxy-failed: libbad.so guest dlopen failed: cannot locate symbol"));
 }
 
+void test_installed_app(const fs::path& base) {
+    const Tree tree = make_tree(base, true);
+    const fs::path native = base / "installed/lib/arm64";
+    fs::create_directories(native);
+    fs::create_directories(tree.files / "zb/app/lib");
+    touch(native / "libone.so");
+    touch(native / "libtwo.so");
+    touch(tree.files / "zb/app/lib/libone.so");
+    touch(tree.files / "zb/app/lib/libtwo.so");
+    FakeEngine engine;
+    zb::ProxyRuntime runtime(engine);
+    std::string error;
+    CHECK(runtime.activate_installed(kEnv, tree.files.string(), native.string(), 35, kLoader, error));
+    CHECK(runtime.activate_installed(kEnv, tree.files.string(), native.string(), 35, kLoader, error));
+    CHECK(!runtime.activate_installed(kEnv, tree.files.string(), native.string(), 34, kLoader, error));
+    CHECK(!runtime.activate_plugin(kEnv, tree.root("com.example.a").string(), 35, kLoader, error));
+    const auto one = runtime.on_proxy_loaded(kEnv, (native / "libone.so").string());
+    const auto two = runtime.on_proxy_loaded(kEnv, (native / "libtwo.so").string());
+    CHECK(one.ok && two.ok && engine.start_count() == 1);
+    CHECK(engine.loads[0] == (tree.files / "zb/app/lib/libone.so").string());
+    CHECK(engine.started.guest_environment[0] ==
+          "LD_LIBRARY_PATH=" + (tree.files / "zb/guest/lib").string() + ":" +
+          (tree.files / "zb/app/lib").string());
+    CHECK(runtime.on_proxy_loaded(kEnv, (native / "libone.so").string()).ok);
+    CHECK(engine.load_count("libone.so") == 1);
+    touch(base / "other/libwrong.so");
+    CHECK(!runtime.on_proxy_loaded(kEnv, (base / "other/libwrong.so").string()).ok);
+    CHECK(engine.load_count("libwrong.so") == 0);
+    touch(native / "libmissing.so");
+    CHECK(!runtime.on_proxy_loaded(kEnv, (native / "libmissing.so").string()).ok);
+    CHECK(engine.load_count("libmissing.so") == 0);
+    touch(native / "libbad.so");
+    touch(tree.files / "zb/app/lib/libbad.so");
+    engine.reports["libbad.so"].error = "guest dlopen failed";
+    const auto bad = runtime.on_proxy_loaded(kEnv, (native / "libbad.so").string());
+    CHECK(!bad.ok && contains(bad.error, "guest dlopen failed"));
+    CHECK(runtime.load_error((native / "libbad.so").string()) == bad.error);
+    CHECK(!runtime.on_proxy_loaded(kEnv, (native / "libbad.so").string()).ok);
+    CHECK(engine.load_count("libbad.so") == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -440,6 +481,7 @@ int main() {
     test_concurrent_first_start(make_tree(base / "concurrent", true));
     test_preload_failure(make_tree(base / "preload", true));
     test_runtime_report(make_tree(base / "report", true));
+    test_installed_app(base / "installed-app");
 
     fs::remove_all(base);
     std::puts("proxy_runtime_test PASS");

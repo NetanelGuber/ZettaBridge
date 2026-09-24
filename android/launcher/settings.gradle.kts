@@ -8,3 +8,4 @@ dependencyResolutionManagement {
 rootProject.name = "ZettaBridge"
 include(":app")
 include(":manager")
+include(":step04probe")

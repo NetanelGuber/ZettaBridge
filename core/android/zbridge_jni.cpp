@@ -122,6 +122,24 @@ JNIEXPORT void JNICALL Java_com_zettabridge_core_ZBridge_activatePlugin(JNIEnv* 
     }
 }
 
+// Called by an ordinary installed package before its first System.loadLibrary of a proxy.
+JNIEXPORT void JNICALL Java_com_zettabridge_core_ZBridge_activateInstalled(
+        JNIEnv* env, jclass, jstring files_dir, jstring native_lib_dir, jint target_sdk, jobject class_loader) {
+    const auto files = to_string(env, files_dir);
+    const auto native_libs = to_string(env, native_lib_dir);
+    if (!files || !native_libs || env->ExceptionCheck()) {
+        throw_new(env, "java/lang/NullPointerException", "filesDir or nativeLibraryDir");
+        return;
+    }
+    std::string error;
+    if (!zb::GuestJniRuntime::get(env).proxies().activate_installed(
+            to_env(env), *files, *native_libs, static_cast<std::uint32_t>(target_sdk),
+            static_cast<zb::JniBackend::Ref>(reinterpret_cast<std::uintptr_t>(class_loader)), error)) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        throw_new(env, "java/lang/IllegalStateException", "ZettaBridge cannot activate installed app: " + error);
+    }
+}
+
 // static native int onProxyLoaded(String proxyPath), called by libzbproxy.so's JNI_OnLoad.
 // Returns the guest JNI version or throws UnsatisfiedLinkError with the full detail, which also
 // stays available through loadError/lastLoadError because ART replaces it.

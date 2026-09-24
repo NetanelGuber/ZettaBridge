@@ -288,7 +288,7 @@ Next: Step 04 remains NOT STARTED; no runtime bootstrap work was begun.
 
 ### Step 04 - Runtime bootstrap for ordinary installed apps
 
-**Status:** NOT STARTED  
+**Status:** DONE
 **Tasks**
 - Audit libzbridge.so, libzbproxy.so, LibraryRuntime, JNI and runtime bundle for assumptions about launcher process, :guest, DexClassLoader, shortcut context, plugin paths and reports.
 - Define stable per-app bootstrap config, guest library/assets path, private cache, backend choice and startup diagnostics.
@@ -299,6 +299,49 @@ Next: Step 04 remains NOT STARTED; no runtime bootstrap work was begun.
 **Done when:** Minimal installed ARM64 test package loads an injected proxy, calls a synthetic ARM32 library, and safely calls back to ART without the ZettaBridge launcher, shared UID, clone sandbox or guest root.
 
 **Depends on:** Steps 00-01.
+
+**Evidence (2026-09-24):** `docs/installed-bootstrap.md` records the version 1
+installed-package config and layout. `ZBridge.activateInstalled` binds the
+package's own class loader, files directory, native library directory and
+target SDK. `ProxyRuntime` maps only named ARM64 proxies in that native
+directory to ARM32 libraries under private `files/zb/app/lib`; it keeps the
+launcher plugin path separate. The process-lifetime guest engine and its
+`dlopen`/`dlsym`, JNI export binding and `RegisterNatives` implementation are
+reused. The synthetic `:step04probe` APK includes two ARM32 libraries, two
+ARM64 proxy copies, `libzbridge.so`, an ARM32 sysroot and guest runtime. Its
+assets are extracted read-only as the app UID with a cross-process install
+lock. JIT caches remain process memory; no root path or persistent JIT cache
+is used. Failures are reported in private result/runtime files and are final
+until process restart.
+
+In a clean Linux build copy synced from this checkout, NDK r29 built the
+ARM32 probes and Android ARM64 `zbridge`, `zbproxy` and JNI reflection link
+target. `check_zbridge_natives.py`, `check_zbproxy.py` for both named proxy
+copies, and `check_launcher_bundle.py` passed. The focused AArch64 host
+`proxy_runtime_test` passed under QEMU (1/1), including installed path
+validation, one-time startup, multiple/repeated loads, failure memoization,
+and the existing recursive/concurrent plugin state-machine checks. Gradle
+both `:app:assembleDebug` and `:step04probe:assembleDebug` passed with SDK 35.
+The final debug APK at
+`build/step04-probe-debug.apk` has SHA-256
+`1579f95870a97f791623bd120120869eb5669134f53fd119bfd7458d92c8f67f`.
+
+On Pixel 11 Pro XL `67161FDDV0011Q`, Android 17/API 37 build
+`CD1A.260905.001.B1`, ARM64-only ABI, SELinux enforcing, the standalone
+probe installed via `adb install -r` as package `com.zettabridge.step04`
+with UID 10385. After deleting old probe result files and restarting both
+processes, the main Activity and `:second` service each wrote `PASS` under
+UID 10385 with native results `12,18,16,15` and two Java callbacks from
+guest `JNI_OnLoad`. Each persisted report showed two proxy loads, two
+successful guest `JNI_OnLoad` calls, three registered natives, zero proxy
+failures and zero unimplemented host calls. The reports show ARM32 sysroot
+and guest libraries opened from the probe's private files directory. A
+force-stop and fresh process relaunch passed. `ps` showed both processes as
+`u0_a385`; the separate manager remained installed as UID 10383. No root
+command, launcher, plugin class loader, shared UID, conversion, or user APK
+was used. The probe remains installed for inspection. Step 05 remains NOT
+STARTED; this proof does not establish APK transformation or broad app
+compatibility.
 
 ### Step 05 - APK transformation, signing and verification
 
