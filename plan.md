@@ -345,7 +345,7 @@ compatibility.
 
 ### Step 05 - APK transformation, signing and verification
 
-**Status:** NOT STARTED  
+**Status:** DONE
 **Tasks**
 - Build a transactional pipeline: private staging -> analyze -> transformation manifest -> new output -> structural verification -> sign -> signature verification -> atomic publish. Never edit source input.
 - Preserve DEX/resources/manifest/package name where possible; record every manifest/resource change.
@@ -358,6 +358,42 @@ compatibility.
 **Done when:** Synthetic output passes APK/signature checks and PackageManager accepts it as ARM64; proxy libs are ARM64, guest libs are not host-loadable, failures preserve original input and installed apps.
 
 **Depends on:** Steps 02, 04.
+
+**Evidence (2026-09-24):** `tools/apk_convert.py`, `tools/axml_inject.py`,
+`android/launcher/step05bootstrap`, and `docs/apk-conversion.md` implement and
+document the bounded transactional converter. It stages input privately, uses
+Step 02 preflight, edits compiled binary AXML to add a private bootstrap provider
+and enable native extraction, preserves source DEX/resources, maps ARM32 ELF
+libraries into guest-only assets, adds ARM64 bridge/proxies and bootstrap DEX,
+aligns, signs with one owner-only personal PKCS12 key, verifies each signed APK,
+records input/output hashes and signer fingerprints, and atomically publishes a
+new output directory. Unsupported/colliding inputs fail closed; unsigned work
+is removed on success and failure. No source APK or installed package is
+modified by conversion.
+
+The Step 05 bootstrap/fixture Gradle APK builds passed under WSL2 Ubuntu 24.04
+with SDK/build-tools 35 and the NDK r29 Step 04 runtime. Three converter and six
+preflight tests passed. The single synthetic output passed `zipalign -c`,
+`apksigner verify`, `aapt2 dump badging` (`arm64-v8a` only), and post-sign
+structural/ELF/resource/DEX checks. Its SHA-256 was
+`e62549f3e419b05eb259dbb949ce24bc31ee646768fc94b4fcd5d13b873c291d`;
+the personal signer certificate SHA-256 was
+`d3fe5a914ad2f4139c645ae3a09ba845d484b2f946a50826326beb41d5575c00`.
+
+On Pixel 11 Pro XL `67161FDDV0011Q`, Android 17/API 37 build
+`CD1A.260905.001.B1`, ARM64-only ABI, PackageManager accepted the converted
+single APK. It registered the private provider, assigned UID 10387 and
+`primaryCpuAbi=arm64-v8a`; the app persisted
+`PASS uid=10387 native=12 callbacks=1`. A converted two-APK synthetic split set
+was accepted by `adb install-multiple -r`; `pm path` showed both base and feature,
+and the app passed again under UID 10387. A missing-proxy failure left no output
+directory, the input SHA-256 unchanged, and the installed fixture passed after
+force-stop/relaunch. A malformed synthetic feature split was rejected atomically
+before the corrected split set was installed. These are synthetic packaging and
+JNI proofs, not user-app compatibility or general lifecycle evidence. Loads in
+`Application.attachBaseContext` precede the provider and remain outside this
+step; secondary/isolated process bootstrap remains for Step 09. Step 06 remains
+NOT STARTED.
 
 ### Step 06 - Safe PackageManager install, update, remove and recovery
 

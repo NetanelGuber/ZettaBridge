@@ -9,3 +9,5 @@ rootProject.name = "ZettaBridge"
 include(":app")
 include(":manager")
 include(":step04probe")
+include(":step05bootstrap")
+include(":step05fixture")
