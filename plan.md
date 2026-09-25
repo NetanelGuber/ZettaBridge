@@ -583,7 +583,7 @@ general user-APK compatibility or later-step lifecycle acceptance is claimed.
 
 **Done when:** Every supported API has contract coverage for lengths, pointers, invalid handles, ownership/threading/errors. Used-but-unsupported calls appear in reports; host pointers are never exposed.
 
-**Depends on:** Steps 04, 08, 10.
+**Depends on:** Steps 04, 08.
 
 ### Step 12 - EGL/GLES correctness and renderer gaps
 
@@ -597,7 +597,7 @@ general user-APK compatibility or later-step lifecycle acceptance is claimed.
 
 **Done when:** Host tests cover claimed GLES/EGL calls/errors/marshaling/lifetimes; rooted-device synthetic 2D/3D probes present, accept input, recreate surfaces and swap repeatedly. Known onscreen text/raster issue has evidence-based resolution. One guest is not the definition of general coverage.
 
-**Depends on:** Steps 04, 08, 10-11.
+**Depends on:** Steps 04, 08, 11.
 
 ### Step 13 - Vulkan backend
 
