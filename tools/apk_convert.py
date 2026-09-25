@@ -17,7 +17,7 @@ import tempfile
 import zipfile
 
 import apk_preflight as pre
-from axml_inject import inject
+from axml_inject import inject, bootstrap_processes, bootstrap_class, MAX_BOOTSTRAP_PROCESSES
 import check_zbproxy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,7 +168,10 @@ def runtime_files(runtime_dir, bootstrap_apk, proxy_path, zbridge_path, readelf)
         dex_names = sorted((name for name in infos if DEX_NAME.fullmatch(name)),
                            key=lambda name: int(DEX_NAME.fullmatch(name).group(1) or 1))
         dex = [pre.read_small(z, name, 16 * 1024 * 1024) for name in dex_names]
-        if not dex or BOOTSTRAP_CLASS not in b"".join(dex) or BRIDGE_CLASS not in b"".join(dex):
+        combined = b"".join(dex)
+        required = [BRIDGE_CLASS] + [("L" + bootstrap_class(i).replace(".", "/") + ";").encode()
+                                     for i in range(MAX_BOOTSTRAP_PROCESSES)]
+        if not dex or any(cls not in combined for cls in required):
             raise pre.Invalid("bootstrap APK lacks required classes")
     finally:
         z.close()
@@ -233,7 +236,9 @@ def transform_one(src, dest, *, base, package, guest, selected_paths, runtime, d
             for name in infos:
                 if DEX_NAME.fullmatch(name):
                     data = zin.read(name)
-                    if BOOTSTRAP_CLASS in data or BRIDGE_CLASS in data:
+                    if BRIDGE_CLASS in data or any(
+                            ("L" + bootstrap_class(i).replace(".", "/") + ";").encode() in data
+                            for i in range(MAX_BOOTSTRAP_PROCESSES)):
                         raise pre.Invalid("source DEX conflicts with bridge bootstrap classes")
         with zipfile.ZipFile(dest, "w", allowZip64=False) as zout:
             for name, info in infos.items():
@@ -292,10 +297,14 @@ def verify_output(path, source_file, *, base, guest, proxy, bridge,
     expected_manifest = copy.deepcopy(original)
     if base:
         expected_manifest["extract_native_libs"] = "true"
-        expected_manifest["components"].append({
-            "type": "provider", "name": "com.zettabridge.bootstrap.BootstrapProvider",
-            "permission": None, "process": None,
-            "authorities": original["package"] + ".zettabridge.bootstrap"})
+        with zipfile.ZipFile(source_file["file"]) as source:
+            processes = bootstrap_processes(pre.parse_manifest(source.read("AndroidManifest.xml")))
+        for i, process in enumerate(processes):
+            expected_manifest["components"].insert(i, {
+                "type": "provider", "name": bootstrap_class(i),
+                "permission": None, "process": process,
+                "authorities": original["package"] + ".zettabridge.bootstrap" +
+                               ("." + str(i) if i else "")})
     if m != expected_manifest:
         raise pre.Invalid("output manifest differs outside recorded bootstrap edits")
     if result["signer"]["cert_sha256"] != [signer_fp]:

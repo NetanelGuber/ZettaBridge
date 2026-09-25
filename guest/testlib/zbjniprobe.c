@@ -389,7 +389,8 @@ JNIEXPORT jint JNICALL zbjniprobe_strings(JNIEnv* env, jobject unused) {
     char utf_region[8];
     memset(utf_region, 'x', sizeof utf_region);
     (*env)->GetStringUTFRegion(env, wide, 2, 2, utf_region);
-    CHECK(memcmp(utf_region, "\xed\xa0\xbd\xed\xb8\x80", 7) == 0); /* bytes and NUL, as in ART */
+    CHECK(memcmp(utf_region, "\xed\xa0\xbd\xed\xb8\x80", 6) == 0);
+    CHECK(utf_region[6] == 'x'); /* GetStringUTFRegion does not append a NUL. */
 
     /* Out of range: a pending exception, cleared here. */
     (*env)->GetStringRegion(env, wide, 3, 2, region);
@@ -496,6 +497,21 @@ JNIEXPORT jint JNICALL zbjniprobe_bad_direct_capacity(JNIEnv* env, jobject unuse
     return __LINE__;
 }
 
+JNIEXPORT jint JNICALL zbjniprobe_direct_buffer_throw(JNIEnv* env, jobject foreign) {
+    unsigned char* mirror = (unsigned char*)(*env)->GetDirectBufferAddress(env, foreign);
+    CHECK(mirror != NULL);
+    mirror[0] = 0x6B;
+    const jclass error = (*env)->FindClass(env, "java/lang/IllegalStateException");
+    CHECK(error != NULL);
+    CHECK((*env)->ThrowNew(env, error, "buffer write then throw") == JNI_OK);
+    return 0;
+}
+
+JNIEXPORT jint JNICALL zbjniprobe_bad_direct_address(JNIEnv* env, jobject unused) {
+    (void)(*env)->NewDirectByteBuffer(env, (void*)(uintptr_t)1, 16);
+    return __LINE__;
+}
+
 /* ---- Native registration and Java -> guest calls -------------------------------------------- */
 
 static jint native_add(JNIEnv* env, jclass cls, jint a, jfloat b, jfloat c, jint d, jfloat e, jfloat f) {
@@ -574,6 +590,9 @@ static int attach_worker(struct attach_job* job) {
     JavaVM* vm = job->vm;
     JNIEnv* env = NULL;
     job->tid = gettid();
+    CHECK((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) == JNI_EDETACHED && env == NULL);
+    JavaVMAttachArgs invalid = {0x7fff, "invalid-version", NULL};
+    CHECK((*vm)->AttachCurrentThread(vm, &env, &invalid) == JNI_EVERSION && env == NULL);
     CHECK((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) == JNI_EDETACHED && env == NULL);
     JavaVMAttachArgs args = {JNI_VERSION_1_6, "zbjni-worker", NULL};
     CHECK((*vm)->AttachCurrentThreadAsDaemon(vm, &env, &args) == JNI_OK && env != NULL);

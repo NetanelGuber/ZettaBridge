@@ -1195,12 +1195,24 @@ MockJvm::Ref MockJvm::new_direct_byte_buffer(Env env, void* address, std::int64_
 
 void* MockJvm::get_direct_buffer_address(Env env, Ref buffer) {
     std::lock_guard<std::mutex> lock(mutex_);
+    Thread* thread = thread_locked(env, "GetDirectBufferAddress");
+    if (thread == nullptr) return nullptr;
+    if (thread->exception != 0) {
+        error_locked("GetDirectBufferAddress called with a pending exception");
+        return nullptr;
+    }
     const ObjectId id = object_locked(env, buffer, "GetDirectBufferAddress");
     return id != 0 && objects_[id - 1].direct ? objects_[id - 1].address : nullptr;
 }
 
 std::int64_t MockJvm::get_direct_buffer_capacity(Env env, Ref buffer) {
     std::lock_guard<std::mutex> lock(mutex_);
+    Thread* thread = thread_locked(env, "GetDirectBufferCapacity");
+    if (thread == nullptr) return -1;
+    if (thread->exception != 0) {
+        error_locked("GetDirectBufferCapacity called with a pending exception");
+        return -1;
+    }
     const ObjectId id = object_locked(env, buffer, "GetDirectBufferCapacity");
     return id != 0 && objects_[id - 1].direct ? objects_[id - 1].capacity : -1;
 }

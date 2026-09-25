@@ -9,23 +9,22 @@
 
 namespace zb {
 
-// Guest-visible JNI references are 32-bit handles: 0 is null. Bits 0-1 give the kind, bits 2-7
-// are a serial that increments (mod 64) every time the slot is reused, and bits 8-31 index a
-// table of host references (up to 16,777,215 slots), stored as opaque 64-bit values. The serial
-// lets get()/remove() detect a handle from a slot that has since been freed and reused: a stale
-// handle carries the old serial and no longer matches the slot's current one.
+// Guest-visible JNI references are 32-bit handles: 0 is null. Bits 0-1 give the kind, bits 2-13
+// are a 12-bit serial and bits 14-31 index a table of host references (up to 262,143
+// concurrent slots), stored as opaque 64-bit values. A slot is retired when its serial would
+// wrap, so a stale handle can never become valid again during the process lifetime.
 enum class HandleKind : std::uint32_t { Local = 1, Global = 2, WeakGlobal = 3 };
 
 constexpr std::uint32_t make_handle(HandleKind kind, std::uint32_t slot, std::uint32_t serial = 0) {
-    return (slot << 8) | ((serial & 63u) << 2) | static_cast<std::uint32_t>(kind);
+    return (slot << 14) | ((serial & 4095u) << 2) | static_cast<std::uint32_t>(kind);
 }
 
 constexpr std::uint32_t handle_index(std::uint32_t handle) {
-    return handle >> 8;
+    return handle >> 14;
 }
 
 constexpr std::uint32_t handle_serial(std::uint32_t handle) {
-    return (handle >> 2) & 63u;
+    return (handle >> 2) & 4095u;
 }
 
 // nullopt for the null handle and for kind bits 00.
@@ -51,8 +50,9 @@ public:
 
 private:
     std::vector<std::uint64_t> refs_;      // 0 marks a deleted slot
-    std::vector<std::uint8_t> serials_;    // never shrinks; keeps every slot's current serial
+    std::vector<std::uint16_t> serials_;   // 4096 means permanently retired
     std::vector<std::size_t> frame_starts_;
+    std::size_t retired_prefix_ = 0;
 };
 
 // Global or weak global references of the process. Thread-safe; freed slots are reused.
@@ -67,7 +67,7 @@ private:
     HandleKind kind_;
     mutable std::mutex mutex_;
     std::vector<std::uint64_t> refs_;
-    std::vector<std::uint8_t> serials_;
+    std::vector<std::uint16_t> serials_;   // 4096 means permanently retired
     std::vector<std::uint32_t> free_;
 };
 

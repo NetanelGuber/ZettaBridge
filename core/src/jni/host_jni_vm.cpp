@@ -11,6 +11,7 @@ namespace {
 
 constexpr std::uint32_t kJniOk = 0;
 constexpr std::uint32_t kJniErr = static_cast<std::uint32_t>(-1);
+constexpr std::uint32_t kJniEVersion = static_cast<std::uint32_t>(-3);
 
 }  // namespace
 
@@ -22,12 +23,21 @@ bool HostJni::Impl::serve_vm(JniCall& call) {
         call.set(state.env != 0 ? state.guest_env : 0);
         return true;
     case ZB_JNI_HC_AttachCurrentThread: {
+        const std::uint32_t out = call.arg(0);
+        const std::uint32_t empty = 0;
+        std::memcpy(writable(state.env, out, sizeof empty, name), &empty, sizeof empty);
+        bool just_attached = false;
         if (state.env == 0) {
             std::string thread_name;
             JniBackend::Ref group = 0;
             if (call.arg(1) != 0) {
                 zb_jni_attach_args args;
                 std::memcpy(&args, readable(0, call.arg(1), sizeof args, name), sizeof args);
+                if (args.version != 0x00010002 && args.version != 0x00010004 &&
+                    args.version != 0x00010006) {
+                    call.set(kJniEVersion);
+                    return true;
+                }
                 if (args.name != 0) thread_name = read_string(0, args.name, name);
                 group = resolve(state, args.group, name);
             }
@@ -39,13 +49,19 @@ bool HostJni::Impl::serve_vm(JniCall& call) {
             }
             state.env = env;
             state.attached = true;
+            just_attached = true;
         }
         if (!ensure_guest_env(state)) {
+            if (just_attached) {
+                (void)backend.detach_current_thread();
+                state.env = 0;
+                state.attached = false;
+            }
             call.set(kJniErr);
             return true;
         }
         const std::uint32_t guest_env = state.guest_env;
-        std::memcpy(writable(state.env, call.arg(0), sizeof guest_env, name), &guest_env, sizeof guest_env);
+        std::memcpy(writable(state.env, out, sizeof guest_env, name), &guest_env, sizeof guest_env);
         call.set(kJniOk);
         return true;
     }
@@ -56,6 +72,10 @@ bool HostJni::Impl::serve_vm(JniCall& call) {
             return true;
         }
         const std::int32_t rc = backend.detach_current_thread();
+        if (rc != 0) {
+            call.set(static_cast<std::uint32_t>(rc));
+            return true;
+        }
         state.locals = LocalHandles();
         state.user_frames = 0;
         if (state.guest_env != 0) {

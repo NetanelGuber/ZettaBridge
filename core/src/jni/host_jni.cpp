@@ -446,7 +446,20 @@ std::optional<HostJni::NativeResult> HostJni::call_native(JniBackend::Env env, c
     // method returns. A guest that writes to a mirror outside a Java -> guest native call (from a
     // guest thread of its own, say) is not seen by Java until the next native call returns, and a
     // later GetDirectBufferAddress for the same buffer overwrites those writes with Java's bytes.
+    // GetDirectBufferAddress/Capacity are forbidden by CheckJNI while a Java exception is
+    // pending. The guest may have written a mirror and then thrown. Preserve the original
+    // throwable across the flush so Java sees both the writes and the same exception.
+    const JniBackend::Ref pending = jni.backend.exception_occurred(env);
+    if (pending != 0) jni.backend.exception_clear(env);
     jni.flush_buffer_mirrors(env);
+    if (pending != 0) {
+        if (jni.backend.exception_check(env)) {
+            log("JNI: direct-buffer flush raised while restoring a guest exception");
+            jni.backend.exception_clear(env);
+        }
+        jni.backend.throw_exception(env, pending);
+        jni.backend.delete_local_ref(env, pending);
+    }
 
     std::optional<NativeResult> result;
     JniBackend::Ref kept = 0;

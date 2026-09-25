@@ -1,5 +1,5 @@
-// 32-bit guest handles: kind in the low 2 bits, a 6-bit reuse serial above that, and the table
-// index in the top 24 bits; 0 is null.
+// 32-bit guest handles: kind in the low 2 bits, a 12-bit reuse serial above that, and the table
+// index in the top 18 bits; 0 is null.
 #include <cstdio>
 
 #include "check.h"
@@ -13,12 +13,10 @@ int main() {
     CHECK(zb::handle_kind(zb::make_handle(HandleKind::Global, 7)) == HandleKind::Global);
     CHECK(zb::handle_index(zb::make_handle(HandleKind::WeakGlobal, 7)) == 7);
 
-    // make_handle / handle_serial round trip, including the mod-64 wrap.
+    // make_handle / handle_serial round trip. Live slots never reuse a wrapped serial.
     CHECK(zb::handle_serial(zb::make_handle(HandleKind::Local, 5, 0)) == 0);
-    CHECK(zb::handle_serial(zb::make_handle(HandleKind::Local, 5, 63)) == 63);
-    CHECK(zb::handle_serial(zb::make_handle(HandleKind::Local, 5, 64)) == 0);   // wraps mod 64
-    CHECK(zb::handle_serial(zb::make_handle(HandleKind::Local, 5, 65)) == 1);
-    CHECK(zb::handle_index(zb::make_handle(HandleKind::Local, 5, 65)) == 5);
+    CHECK(zb::handle_serial(zb::make_handle(HandleKind::Local, 5, 4095)) == 4095);
+    CHECK(zb::handle_index(zb::make_handle(HandleKind::Local, 5, 4095)) == 5);
 
     zb::LocalHandles locals;
     CHECK(locals.add(0) == 0);
@@ -67,7 +65,31 @@ int main() {
             CHECK(lifo.remove(h) == Ref(0x3000 + static_cast<std::uint64_t>(i)));
         }
         const std::uint32_t y = lifo.add(0x4000);
-        CHECK(zb::handle_index(y) < 2);
+        CHECK(zb::handle_index(y) < 256);
+    }
+
+    // More than one whole generation cycle must never resurrect a stale local or global ref.
+    {
+        zb::LocalHandles repeated;
+        const std::uint32_t first = repeated.add(0x1111);
+        CHECK(repeated.remove(first) == Ref(0x1111));
+        for (int i = 0; i < 5000; ++i) {
+            const auto live = repeated.add(0x2222);
+            CHECK(!repeated.get(first));
+            CHECK(repeated.remove(live) == Ref(0x2222));
+        }
+        CHECK(!repeated.get(first));
+    }
+    {
+        zb::GlobalHandles repeated(HandleKind::Global);
+        const std::uint32_t first = repeated.add(0x1111);
+        CHECK(repeated.remove(first) == Ref(0x1111));
+        for (int i = 0; i < 5000; ++i) {
+            const auto live = repeated.add(0x2222);
+            CHECK(!repeated.get(first));
+            CHECK(repeated.remove(live) == Ref(0x2222));
+        }
+        CHECK(!repeated.get(first));
     }
 
     // Remove from an outer frame: releasing a's slot must not disturb b in the inner frame, and

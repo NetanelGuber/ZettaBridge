@@ -3,11 +3,13 @@
 from pathlib import Path
 import sys
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import apk_convert as c
 import apk_preflight as p
+from axml_inject import bootstrap_processes, bootstrap_class
 
 
 def item(split, libraries):
@@ -19,6 +21,22 @@ def lib(abi, name):
 
 
 class LayoutTest(unittest.TestCase):
+    def test_bootstrap_covers_each_normal_process_and_rejects_isolated_service(self):
+        xml = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+                  package="com.example.guest"><application android:process=":main">
+                  <provider android:name=".First" android:process=":remote"/>
+                  <service android:name=".Second" android:process="com.example.guest:remote"/>
+                  <activity android:name=".Third" android:process=":main"/>
+                  </application></manifest>'''
+        root = ET.fromstring(xml)
+        self.assertEqual(bootstrap_processes(root), [None, ":remote"])
+        self.assertNotEqual(bootstrap_class(0), bootstrap_class(1))
+        ET.SubElement(root.find("application"), "service", {
+            "{http://schemas.android.com/apk/res/android}name": ".Isolated",
+            "{http://schemas.android.com/apk/res/android}isolatedProcess": "true"})
+        with self.assertRaisesRegex(p.Invalid, "isolated or external service"):
+            bootstrap_processes(root)
+
     def test_installed_bridge_entry_required(self):
         output = "   7: 0 10 FUNC GLOBAL DEFAULT 15 Java_com_zettabridge_core_ZBridge_activateInstalled\n"
         with patch.object(c, "run", return_value=output):

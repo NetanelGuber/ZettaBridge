@@ -40,9 +40,12 @@ fs::path make_files(const fs::path& base, char** argv, bool valid_zbjni) {
     link(argv[1], files / "zb/sysroot");
     link(argv[2], files / "zb/guest/zbhost");
     const fs::path guest_lib = argv[3];
-    link(guest_lib / "libzbcompat.so", files / "zb/guest/lib/libzbcompat.so");
+    // Executable guest mappings must remain under the declared guest library root. Symlinks to
+    // the build tree are intentionally rejected by the Step 07 namespace guard.
+    fs::create_directories(files / "zb/guest/lib");
+    fs::copy_file(guest_lib / "libzbcompat.so", files / "zb/guest/lib/libzbcompat.so");
     if (valid_zbjni) {
-        link(guest_lib / "libzbjni.so", files / "zb/guest/lib/libzbjni.so");
+        fs::copy_file(guest_lib / "libzbjni.so", files / "zb/guest/lib/libzbjni.so");
     } else {
         std::ofstream(files / "zb/guest/lib/libzbjni.so") << "not an ELF file";
     }

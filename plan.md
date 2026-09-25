@@ -517,7 +517,8 @@ acceptance. Step 08 and later steps remain NOT STARTED.
 
 ### Step 08 - JNI and ART interoperability
 
-**Status:** NOT STARTED  
+**Status:** DONE
+
 **Tasks**
 - Audit JNIEnv/JavaVM, references/handles, JNI_OnLoad, RegisterNatives, Java_* exports, method rebinding, exceptions, monitors, strings/arrays, direct buffers, critical regions, attach/detach, class loaders and multiple Java threads.
 - Bootstrap against the installed package's ART class loader/context; handle Application and ContentProvider startup ordering, secondary/isolated processes and dynamic native-load paths.
@@ -528,6 +529,19 @@ acceptance. Step 08 and later steps remain NOT STARTED.
 **Done when:** Generated JNI checks and host/guest probes pass across claimed transitions; no wrong ABI args, stale handles, unsafe pointer exposure or ART reference misuse in focused stress checks.
 
 **Depends on:** Steps 04, 07.
+
+**Evidence (2026-09-25):** `docs/jni-interop.md` records the supported JNI
+transitions, exact startup and process limits, host/QEMU stress checks, and the
+synthetic Android API 37 device run. Generated JNI output, AArch64 host and
+ARM32 guest probes, converter/preflight tests, Android builds and the converted
+two-process fixture passed. Invalid handles and guest pointers failed in
+controlled negative tests; a Java-owned direct buffer write and pending
+exception survived a native return. The device fixture confirmed source
+ContentProvider JNI startup after bootstrap and a distinct `:worker` process.
+Application class-initializer/`attachBaseContext` native loads, isolated or
+external services, and asynchronous access to mirrored buffers are explicitly
+outside the claimed transitions; preflight or conversion reports them. No
+general user-APK compatibility or later-step lifecycle acceptance is claimed.
 
 ### Step 09 - Android component and lifecycle integration
 

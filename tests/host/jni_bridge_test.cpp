@@ -252,6 +252,20 @@ void check_bad_direct_capacity(char** argv) {
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == zb::mock::kFatalExitStatus);
 }
 
+void check_bad_direct_address(char** argv) {
+    std::fflush(stdout);
+    const pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        Bridge bridge = start_bridge(argv);
+        run_probe(bridge, "zbjniprobe_bad_direct_address");
+        std::_Exit(10);
+    }
+    int status = 0;
+    CHECK(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == zb::mock::kFatalExitStatus);
+}
+
 void check_objects(Bridge& bridge) {
     MockJvm& vm = *bridge.vm;
     const auto held = vm.new_object("zb/Probe");
@@ -309,6 +323,14 @@ void check_data(Bridge& bridge) {
     foreign[15] = 0;
     CHECK(run_probe(bridge, "zbjniprobe_direct_buffers", buffer) == 0);
     CHECK(foreign[0] == 0x22 && foreign[15] == 0x5A);
+
+    CHECK(run_probe(bridge, "zbjniprobe_direct_buffer_throw", buffer) == 0);
+    CHECK(foreign[0] == 0x6B);
+    const auto env = vm.thread_env();
+    const auto pending = vm.pending_exception(env);
+    CHECK(pending != 0 && vm.class_name_of(pending) == "java/lang/IllegalStateException");
+    CHECK(vm.string_value(pending) == u"buffer write then throw");
+    vm.clear_pending_exception(env);
 }
 
 bool wait_thread_count(zb::LibraryRuntime& runtime, std::size_t expected) {
@@ -410,6 +432,7 @@ int main(int argc, char** argv) {
     check_invalid_handle(argv);
     check_buffer_overflow(argv);
     check_bad_direct_capacity(argv);
+    check_bad_direct_address(argv);
     Bridge bridge = start_bridge(argv);
     check_objects(bridge);
     check_values(bridge);

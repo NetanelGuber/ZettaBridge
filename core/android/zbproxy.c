@@ -9,10 +9,9 @@
 //
 // Contract of onProxyLoaded: it returns the guest JNI version (0 means "no preference" and
 // becomes JNI_VERSION_1_6) or throws UnsatisfiedLinkError. Any exception, or a version ART
-// would reject, makes JNI_OnLoad return JNI_ERR. A pending exception is left pending; note
-// that ART's JVM_NativeLoad clears it and System.loadLibrary throws its own
-// "JNI_ERR returned from JNI_OnLoad" error, so the translator must record failure detail
-// itself.
+// would reject, makes JNI_OnLoad return JNI_ERR. Clear an exception raised here before ART
+// resumes its native-load bookkeeping: Android 17 CheckJNI aborts on its NewGlobalRef otherwise.
+// The bridge keeps the detailed failure in lastLoadError and the runtime report.
 
 #define _GNU_SOURCE  // Dl_info and dladdr on glibc (host unit test).
 
@@ -69,6 +68,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     jclass bridge = (*env)->FindClass(env, kBridgeClass);
     if (bridge == NULL) {
         log_error("%s: class %s not found", proxy_path, kBridgeClass);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
         return JNI_ERR;
     }
 
@@ -103,5 +103,6 @@ done:
     // DeleteLocalRef is one of the calls JNI allows with an exception pending.
     if (path != NULL) (*env)->DeleteLocalRef(env, path);
     (*env)->DeleteLocalRef(env, bridge);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
     return result;
 }

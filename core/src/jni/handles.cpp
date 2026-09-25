@@ -1,5 +1,6 @@
 #include "zb/jni_handles.h"
 
+#include <algorithm>
 #include <cstdlib>
 
 #include "zb/log.h"
@@ -8,7 +9,8 @@ namespace zb {
 
 namespace {
 
-constexpr std::uint32_t kMaxSlots = 1u << 24;
+constexpr std::uint32_t kMaxSlots = 1u << 18;
+constexpr std::uint16_t kRetiredSerial = 1u << 12;
 
 }  // namespace
 
@@ -29,16 +31,19 @@ std::vector<std::uint64_t> LocalHandles::pop_frame() {
     frame_starts_.pop_back();
     for (std::size_t i = start; i < refs_.size(); ++i) {
         if (refs_[i] != 0) released.push_back(refs_[i]);
-        serials_[i] = static_cast<std::uint8_t>((serials_[i] + 1) & 63u);
+        if (serials_[i] < kRetiredSerial) ++serials_[i];
     }
     refs_.resize(start);
+    while (retired_prefix_ < serials_.size() && serials_[retired_prefix_] == kRetiredSerial)
+        ++retired_prefix_;
     return released;
 }
 
 std::uint32_t LocalHandles::add(std::uint64_t host_ref) {
     if (host_ref == 0) return 0;
     if (frame_starts_.empty()) push_frame();
-    const std::size_t index = refs_.size();
+    std::size_t index = std::max(refs_.size(), retired_prefix_);
+    while (index < serials_.size() && serials_[index] == kRetiredSerial) ++index;
     if (index >= kMaxSlots) {
         log("too many JNI local references");
         std::abort();
@@ -50,7 +55,8 @@ std::uint32_t LocalHandles::add(std::uint64_t host_ref) {
         serials_.push_back(0);
         serial = 0;
     }
-    refs_.push_back(host_ref);
+    refs_.resize(index + 1);
+    refs_[index] = host_ref;
     return make_handle(HandleKind::Local, static_cast<std::uint32_t>(index), serial);
 }
 
@@ -69,7 +75,7 @@ std::optional<std::uint64_t> LocalHandles::remove(std::uint32_t handle) {
     if (!ref) return std::nullopt;
     const std::uint32_t index = handle_index(handle);
     refs_[index] = 0;
-    serials_[index] = static_cast<std::uint8_t>((serials_[index] + 1) & 63u);
+    if (serials_[index] < kRetiredSerial) ++serials_[index];
     const std::size_t floor = frame_starts_.empty() ? 0 : frame_starts_.back();
     while (refs_.size() > floor && refs_.back() == 0) refs_.pop_back();
     return ref;
@@ -117,8 +123,8 @@ std::optional<std::uint64_t> GlobalHandles::remove(std::uint32_t handle) {
     if (handle_serial(handle) != serials_[index]) return std::nullopt;
     const std::uint64_t ref = refs_[index];
     refs_[index] = 0;
-    serials_[index] = static_cast<std::uint8_t>((serials_[index] + 1) & 63u);
-    free_.push_back(index);
+    ++serials_[index];
+    if (serials_[index] < kRetiredSerial) free_.push_back(index);
     return ref;
 }
 

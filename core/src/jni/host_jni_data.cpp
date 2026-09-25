@@ -152,9 +152,10 @@ bool HostJni::Impl::serve_data(JniCall& call) {
         const JniBackend::Ref str = ref(0);
         std::string utf;
         if (!backend.get_string_utf_region(env, str, sint(1), sint(2), utf)) return true;
-        if (call.arg(3) == 0 && utf.empty()) return true;
-        // ART writes the modified UTF-8 bytes and a NUL.
-        std::memcpy(writable(env, call.arg(3), utf.size() + 1, name), utf.c_str(), utf.size() + 1);
+        if (utf.empty()) return true;
+        // JNI GetStringUTFRegion does not promise a terminator. Callers may supply exactly the
+        // encoded byte count; the GetStringUTFChars wrapper allocates its own zeroed slack byte.
+        std::memcpy(writable(env, call.arg(3), utf.size(), name), utf.data(), utf.size());
         return true;
     }
     case ZB_JNI_HC_GetArrayLength:
@@ -205,11 +206,13 @@ bool HostJni::Impl::serve_data(JniCall& call) {
             fatal(env, "NewDirectByteBuffer: capacity %lld is outside the 32-bit guest range",
                   static_cast<long long>(capacity));
         }
-        if (capacity > 0 && static_cast<std::uint64_t>(address) + static_cast<std::uint64_t>(capacity) > kGuestSpaceSize) {
-            fatal(env, "NewDirectByteBuffer: 0x%08x + %lld leaves the guest address space", address,
-                  static_cast<long long>(capacity));
+        const std::uint64_t checked_size = capacity == 0 && address != 0 ? 1 : static_cast<std::uint64_t>(capacity);
+        void* host = address != 0 ? runtime.memory().host_ptr(address, checked_size, kPageRead | kPageWrite)
+                                  : nullptr;
+        if (address != 0 && host == nullptr) {
+            fatal(env, "NewDirectByteBuffer: guest range 0x%08x + %lld is not mapped read/write",
+                  address, static_cast<long long>(capacity));
         }
-        void* host = address != 0 ? runtime.memory().base() + address : nullptr;
         call.set(local(state, backend.new_direct_byte_buffer(env, host, capacity)));
         return true;
     }
@@ -218,14 +221,22 @@ bool HostJni::Impl::serve_data(JniCall& call) {
         const JniBackend::Ref buffer = ref(0);
         const auto* host = static_cast<const std::uint8_t*>(backend.get_direct_buffer_address(env, buffer));
         const std::uint8_t* base = runtime.memory().base();
-        const bool inside = host != nullptr && host >= base &&
-                            static_cast<std::uint64_t>(host - base) < kGuestSpaceSize;
+        const std::uintptr_t base_address = reinterpret_cast<std::uintptr_t>(base);
+        const std::uintptr_t host_address = reinterpret_cast<std::uintptr_t>(host);
+        const bool inside = host != nullptr && host_address >= base_address &&
+                            host_address - base_address < kGuestSpaceSize;
         std::uint32_t answer = 0;
         const char* failure = "";
         bool mirrored = false;
         if (inside) {
             // A buffer the guest itself made with NewDirectByteBuffer: hand over its own address.
-            answer = static_cast<std::uint32_t>(host - base);
+            const std::uint32_t address = static_cast<std::uint32_t>(host_address - base_address);
+            const std::int64_t capacity = backend.get_direct_buffer_capacity(env, buffer);
+            if (capacity < 0 || !runtime.memory().accessible(address,
+                    capacity == 0 ? 1 : static_cast<std::uint64_t>(capacity), kPageRead | kPageWrite)) {
+                fatal(env, "GetDirectBufferAddress: guest buffer range is no longer mapped read/write");
+            }
+            answer = address;
         } else if (host != nullptr) {
             // A direct buffer Java allocated lives outside the guest's 4 GiB space, so its host
             // address cannot be handed over. Mirror it into guest memory instead; the guest reads

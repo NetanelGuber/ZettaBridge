@@ -53,6 +53,20 @@ class PreflightTest(unittest.TestCase):
         self.assertEqual(result["files"][0]["manifest"]["min_sdk"], "23")
         self.assertEqual(source.read_bytes(), before)
 
+    def test_jni_startup_findings(self):
+        xml = manifest().replace(b"<application>",
+            b'<application android:name=".EarlyApp"><service android:name=".Sandbox" '
+            b'android:isolatedProcess="true"/></application><application>')
+        # Keep one application element while inserting its startup requirements.
+        xml = xml.replace(b"</application><application>", b"")
+        source = self.apk("isolated.apk", xml)
+        report = p.analyze([source], "unused", "unused")
+        self.assertEqual(report["status"], "unsupported")
+        self.assertEqual(report["files"][0]["manifest"]["isolated_services"], [".Sandbox"])
+        kinds = {finding["kind"] for finding in report["findings"]}
+        self.assertIn("isolated_process", kinds)
+        self.assertIn("early_application_load", kinds)
+
     def test_splits_and_container(self):
         base = self.apk("base.apk", manifest(extra='<uses-split android:name="feature"/>'))
         feature = self.apk("feature.apk", manifest(split="feature", extra='<uses-split android:name="base"/>'))

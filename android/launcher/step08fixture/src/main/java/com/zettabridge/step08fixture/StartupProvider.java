@@ -1,30 +1,30 @@
-package com.zettabridge.bootstrap;
+package com.zettabridge.step08fixture;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.net.Uri;
 
-import com.zettabridge.core.ZBridge;
+import com.zettabridge.step04.Probe;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
-/** Starts the installed bridge before normal Activity/Service/Receiver callbacks. */
-public class BootstrapProvider extends ContentProvider {
+/** Proves guest JNI can load in an app provider after the injected bootstrap provider. */
+public final class StartupProvider extends ContentProvider {
     @Override public boolean onCreate() {
         try {
-            RuntimeInstaller.install(getContext());
-            File files = getContext().getFilesDir();
-            ZBridge.activateInstalled(files.getCanonicalPath(),
-                    new File(getContext().getApplicationInfo().nativeLibraryDir).getCanonicalPath(),
-                    getContext().getApplicationInfo().targetSdkVersion,
-                    getContext().getClassLoader());
+            System.loadLibrary("zbstep04a");
+            boolean passed = Probe.add(5) == 12 && Probe.multiply(4) == 12 && Probe.callbacks == 1;
+            Files.write(new File(getContext().getFilesDir(), "step08-provider.txt").toPath(),
+                    (passed ? "PASS\n" : "FAIL\n").getBytes(StandardCharsets.US_ASCII));
+            if (!passed) throw new IllegalStateException("provider guest JNI result differs");
             return true;
-        } catch (Throwable failure) {
-            throw new IllegalStateException("ZettaBridge bootstrap failed", failure);
+        } catch (Exception failure) {
+            throw new IllegalStateException("provider guest JNI failed", failure);
         }
     }
-
     @Override public Cursor query(Uri uri, String[] projection, String selection,
             String[] selectionArgs, String sortOrder) { throw new UnsupportedOperationException(); }
     @Override public String getType(Uri uri) { throw new UnsupportedOperationException(); }

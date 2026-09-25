@@ -260,7 +260,11 @@ def describe_manifest(root):
                           "required": attr(x, "required")} for x in root.findall("uses-feature")],
             "components": components, "extract_native_libs": attr(app, "extractNativeLibs") if app is not None else None,
             "has_code": attr(app, "hasCode") if app is not None else None,
-            "native_activity": native_activity}
+            "native_activity": native_activity,
+            "application_class": attr(app, "name") if app is not None else None,
+            "isolated_services": [attr(x, "name") for x in app.findall("service")
+                                  if attr(x, "isolatedProcess") == "true" or
+                                     attr(x, "externalService") == "true"] if app is not None else []}
 
 
 def signer(path, apksigner):
@@ -601,6 +605,13 @@ def analyze(paths, apksigner, readelf, sysroot=None, guest_lib_dir=None):
             finding("unsupported", "install_signing", "shared_uid", "Re-signing cannot preserve the source shared UID/signing identity.")
         if any(r["manifest"]["native_activity"] for r in result):
             finding("unsupported", "runtime", "native_activity", "NativeActivity bootstrap is not implemented; it is a later runtime step.")
+        if any(r["manifest"]["isolated_services"] for r in result):
+            services = sorted({str(name) for r in result for name in r["manifest"]["isolated_services"]})
+            finding("unsupported", "jni", "isolated_process",
+                    "Isolated/external services cannot access the per-app guest runtime: " + ", ".join(services))
+        if any(r["manifest"]["application_class"] for r in result):
+            finding("warning", "jni", "early_application_load",
+                    "A custom Application runs its class initializer and attachBaseContext before bootstrap providers; native loads there require manual review.")
         if any(r["manifest"]["is_feature_split"] == "true" for r in result):
             finding("warning", "runtime", "feature_split", "Dynamic feature split startup/resources need later integration proof.")
         if any(r["embedded_apks"] for r in result):

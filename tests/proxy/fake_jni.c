@@ -257,7 +257,7 @@ static void test_call_throws(void) {
     fake.call_result = JNI_VERSION_1_6;  // A value next to the exception must not count.
     CHECK(run() == JNI_ERR);
     check_request();
-    CHECK(fake.exception_pending);  // Left for System.loadLibrary.
+    CHECK(!fake.exception_pending);  // ART can continue native-load bookkeeping under CheckJNI.
     check_clean();
 }
 
@@ -284,7 +284,7 @@ static void test_find_class_fails(void) {
     fake.find_class_fails = 1;
     CHECK(run() == JNI_ERR);
     CHECK(fake.method_calls == 0 && fake.new_string_calls == 0 && fake.static_int_calls == 0);
-    CHECK(fake.exception_pending);
+    CHECK(!fake.exception_pending);
     check_clean();
 }
 
@@ -293,7 +293,7 @@ static void test_method_fails(void) {
     fake.method_fails = 1;
     CHECK(run() == JNI_ERR);
     CHECK(fake.new_string_calls == 0 && fake.static_int_calls == 0);
-    CHECK(fake.exception_pending);
+    CHECK(!fake.exception_pending);
     check_clean();
 }
 
@@ -302,7 +302,7 @@ static void test_new_string_fails(void) {
     fake.new_string_fails = 1;
     CHECK(run() == JNI_ERR);
     CHECK(fake.static_int_calls == 0);
-    CHECK(fake.exception_pending);
+    CHECK(!fake.exception_pending);
     check_clean();
 }
 

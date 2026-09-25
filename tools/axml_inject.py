@@ -11,9 +11,15 @@ import struct
 from apk_preflight import Invalid, binary_manifest, attr
 
 ANDROID_URI = "http://schemas.android.com/apk/res/android"
-ATTR_IDS = {"name": 16842755, "exported": 16842768, "authorities": 16842776,
+ATTR_IDS = {"name": 16842755, "exported": 16842768, "process": 16842769,
+            "authorities": 16842776, "initOrder": 16842778,
             "extractNativeLibs": 16844010}
 NO_INDEX = 0xffffffff
+MAX_BOOTSTRAP_PROCESSES = 8
+
+
+def bootstrap_class(index):
+    return "com.zettabridge.bootstrap.BootstrapProvider" + (str(index) if index else "")
 
 
 def u16(data, pos):
@@ -74,13 +80,44 @@ def attribute(ns, name, raw=NO_INDEX, typ=3, value=0):
     return struct.pack("<IIIHBBI", ns, name, raw, 8, 0, typ, value)
 
 
+def bootstrap_processes(root):
+    """One provider in each ordinary app process; isolated services cannot access this runtime."""
+    app = root.find("application")
+    package = root.get("package")
+    default = attr(app, "process") or package
+    default = package + default if default.startswith(":") else default
+    processes = [None]
+    seen = {default}
+    for component in app:
+        if component.tag not in ("activity", "activity-alias", "service", "receiver", "provider"):
+            continue
+        if component.tag == "service" and (attr(component, "isolatedProcess") == "true" or
+                                           attr(component, "externalService") == "true"):
+            raise Invalid("isolated or external service " + str(attr(component, "name")) +
+                          " cannot access the per-app guest runtime")
+        raw = attr(component, "process")
+        if raw is None:
+            continue
+        resolved = package + raw if raw.startswith(":") else raw
+        if resolved not in seen:
+            seen.add(resolved)
+            processes.append(raw)
+        if len(processes) > MAX_BOOTSTRAP_PROCESSES:
+            raise Invalid("more than 8 Android processes require bootstrap providers")
+    return processes
+
+
 def provider_chunks(name_idx, ns_idx, attr_name_idx, attr_exported_idx, attr_auth_idx,
-                    class_idx, authority_idx):
+                    attr_order_idx, attr_process_idx, class_idx, authority_idx, process_idx):
     attrs = attribute(ns_idx, attr_name_idx, class_idx, 3, class_idx)
     attrs += attribute(ns_idx, attr_exported_idx, NO_INDEX, 18, 0)
+    if process_idx is not None:
+        attrs += attribute(ns_idx, attr_process_idx, process_idx, 3, process_idx)
     attrs += attribute(ns_idx, attr_auth_idx, authority_idx, 3, authority_idx)
+    attrs += attribute(ns_idx, attr_order_idx, NO_INDEX, 16, 0x7fffffff)
     start = struct.pack("<HHIIIIIHHHHHH", 0x102, 16, 36 + len(attrs),
-                        0, NO_INDEX, NO_INDEX, name_idx, 20, 20, 3, 0, 0, 0) + attrs
+                        0, NO_INDEX, NO_INDEX, name_idx, 20, 20, 5 if process_idx is not None else 4,
+                        0, 0, 0) + attrs
     end = struct.pack("<HHIIIII", 0x103, 16, 24, 0, NO_INDEX, NO_INDEX, name_idx)
     return start + end
 
@@ -94,11 +131,14 @@ def inject(data, package):
     app = root.find("application")
     if app is None:
         raise Invalid("manifest lacks application")
-    authority = package + ".zettabridge.bootstrap"
+    processes = bootstrap_processes(root)
+    authorities = [package + ".zettabridge.bootstrap" + ("." + str(i) if i else "")
+                   for i in range(len(processes))]
     for provider in app.findall("provider"):
-        if attr(provider, "name") == "com.zettabridge.bootstrap.BootstrapProvider":
+        if attr(provider, "name") in (bootstrap_class(i) for i in range(MAX_BOOTSTRAP_PROCESSES)):
             raise Invalid("bootstrap provider already present")
-        if authority in (attr(provider, "authorities") or "").split(";"):
+        if any(authority in (attr(provider, "authorities") or "").split(";")
+               for authority in authorities):
             raise Invalid("bootstrap provider authority collision")
     parts = list(chunks(data))
     pools = [x for x in parts if x[1] == 1]
@@ -107,11 +147,13 @@ def inject(data, package):
     strings = pool_strings(pools[0][3])
     if ANDROID_URI not in strings:
         raise Invalid("manifest lacks Android namespace")
-    for key in (ANDROID_URI, "name", "exported", "authorities", "extractNativeLibs"):
+    for key in (ANDROID_URI, "name", "exported", "process", "authorities", "initOrder",
+                "extractNativeLibs"):
         if strings.count(key) > 1:
             raise Invalid("ambiguous manifest string: " + key)
-    for value in ("provider", "com.zettabridge.bootstrap.BootstrapProvider", authority,
-                  "name", "exported", "authorities", "extractNativeLibs"):
+    for value in ("provider", *(bootstrap_class(i) for i in range(len(processes))), *authorities,
+                  *(process for process in processes if process is not None),
+                  "name", "exported", "process", "authorities", "initOrder", "extractNativeLibs"):
         if value not in strings:
             strings.append(value)
     idx = {value: strings.index(value) for value in strings}
@@ -178,14 +220,17 @@ def inject(data, package):
             output.extend(changed)
             changes.append({"kind": "application_attribute", "name": "android:extractNativeLibs",
                             "before": attr(app, "extractNativeLibs"), "after": "true"})
+            for i, process in enumerate(processes):
+                output.extend(provider_chunks(idx["provider"], idx[ANDROID_URI], idx["name"],
+                                              idx["exported"], idx["authorities"], idx["initOrder"],
+                                              idx["process"],
+                                              idx[bootstrap_class(i)],
+                                              idx[authorities[i]], idx[process] if process is not None else None))
+                changes.append({"kind": "provider", "class": bootstrap_class(i),
+                                "authorities": authorities[i], "exported": False,
+                                "process": process, "initOrder": 0x7fffffff})
         elif pos == app_end:
-            output.extend(provider_chunks(idx["provider"], idx[ANDROID_URI], idx["name"],
-                                          idx["exported"],
-                                          idx["authorities"],
-                                          idx["com.zettabridge.bootstrap.BootstrapProvider"], idx[authority]))
             output.extend(blob)
-            changes.append({"kind": "provider", "class": "com.zettabridge.bootstrap.BootstrapProvider",
-                            "authorities": authority, "exported": False})
         else:
             output.extend(blob)
     struct.pack_into("<I", output, 4, len(output))
@@ -193,8 +238,10 @@ def inject(data, package):
     if checked.get("package") != package or attr(checked.find("application"), "extractNativeLibs") != "true":
         raise Invalid("manifest rewrite did not validate")
     providers = checked.find("application").findall("provider")
-    if not any(attr(p, "name") == "com.zettabridge.bootstrap.BootstrapProvider" and
-               attr(p, "authorities") == authority and attr(p, "exported") == "false"
-               for p in providers):
+    if sum(attr(p, "name") in (bootstrap_class(i) for i in range(len(processes))) for p in providers) != len(processes) or not all(
+            any(attr(p, "name") == bootstrap_class(i) and
+                attr(p, "authorities") == authorities[i] and attr(p, "exported") == "false" and
+                attr(p, "process") == process and attr(p, "initOrder") == str(0x7fffffff)
+                for p in providers) for i, process in enumerate(processes)):
         raise Invalid("injected provider did not validate")
     return bytes(output), changes

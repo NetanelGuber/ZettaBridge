@@ -575,7 +575,7 @@ static const char* zbjni_GetStringUTFChars(JNIEnv* env, jstring str, jboolean* i
     const jsize length = zbjni_GetStringLength(env, str);
     char* utf = zbjni_buffer_new('U', bytes);
     if (utf == NULL) return NULL;
-    /* Writes the bytes and a NUL, which the buffer has room for. */
+    /* The buffer's zeroed slack byte terminates the copied region. */
     zbjni_hc_GetStringUTFRegion(U(str), 0, (uint32_t)length, U(utf));
     if (is_copy != NULL) *is_copy = JNI_TRUE;
     return utf;

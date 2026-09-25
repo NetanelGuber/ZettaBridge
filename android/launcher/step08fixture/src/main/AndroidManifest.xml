@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="ZettaBridge Step 08 Fixture">
+        <provider android:name=".StartupProvider" android:authorities="com.zettabridge.step08fixture.startup"
+            android:initOrder="99" android:exported="false" />
+        <activity android:name=".FixtureActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service android:name=".WorkerService" android:process=":worker" android:exported="false" />
+    </application>
+</manifest>
