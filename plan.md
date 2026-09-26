@@ -545,7 +545,7 @@ general user-APK compatibility or later-step lifecycle acceptance is claimed.
 
 ### Step 09 - Android component and lifecycle integration
 
-**Status:** NOT STARTED  
+**Status:** DONE
 **Tasks**
 - Preserve/test activities, aliases, services, receivers, providers, task affinity/launch modes, orientation, themes, metadata, permissions, intent filters, process names and configuration changes.
 - Make bootstrap ready before ContentProvider/Application/native library startup.
@@ -556,6 +556,23 @@ general user-APK compatibility or later-step lifecycle acceptance is claimed.
 **Done when:** Synthetic fixtures establish correct system-managed components, lifecycle, internal intents and process separation; no home-grown PackageManager emulation is used.
 
 **Depends on:** Steps 05-08.
+
+**Evidence (2026-09-26):** `docs/component-lifecycle.md` records the supported
+startup contract, preflight limits, complete manifest-preservation check and
+synthetic Pixel 11 Pro XL/API 37 results. Eleven preflight and seven converter
+tests passed; the bootstrap and component-fixture APKs built. The converted
+fixture installed as its own package/UID, ran guest JNI after per-process
+bootstrap in source providers and `Application.onCreate`, and exercised Android
+activities/alias, service, receiver, content/file provider, deep link, alarm,
+notification permission, recents, configuration callback/recreation and
+force-stop/restart. Main and `:worker` had distinct PIDs under UID 10391.
+Custom Application class-initializer/`attachBaseContext` native loads remain an
+explicit preflight warning and outside the claimed startup path. Direct-boot,
+multiprocess-provider, isolated/external-service, `hasCode=false`, over-eight-
+process and bootstrap-authority cases are reported unsupported. Exact source
+manifest tree, DEX and resource preservation was verified after signing. This
+is synthetic device evidence, not arbitrary APK compatibility; Step 10 and
+later steps remain NOT STARTED.
 
 ### Step 10 - NativeActivity and pure-NDK entry points
 

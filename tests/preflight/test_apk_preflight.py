@@ -67,6 +67,35 @@ class PreflightTest(unittest.TestCase):
         self.assertIn("isolated_process", kinds)
         self.assertIn("early_application_load", kinds)
 
+    def test_component_modes_that_escape_bootstrap_are_reported(self):
+        for extra, expected in (
+                ('<provider android:name=".P" android:multiprocess="true"/>', "multiprocess_provider"),
+                ('<receiver android:name=".R" android:directBootAware="true"/>', "direct_boot_startup"),
+                ('', "no_application_code")):
+            app_attr = ' android:hasCode="false"' if not extra else ''
+            xml = manifest().replace(b'<application>', f'<application{app_attr}>{extra}'.encode())
+            report = p.analyze([self.apk("component.apk", xml)], "unused", "unused")
+            self.assertEqual(report["status"], "unsupported")
+            self.assertIn(expected, {f["kind"] for f in report["findings"]})
+
+    def test_bootstrap_process_limit_and_authority_collision_are_reported(self):
+        processes = ''.join(f'<service android:name=".S{i}" android:process=":p{i}"/>'
+                            for i in range(8))
+        xml = manifest().replace(b'<application>',
+            ('<application><provider android:name=".Collision" '
+             'android:authorities="test.fixture.zettabridge.bootstrap"/>' + processes).encode())
+        report = p.analyze([self.apk("limits.apk", xml)], "unused", "unused")
+        self.assertEqual(report["status"], "unsupported")
+        self.assertGreater(report["files"][0]["manifest"]["process_count"], 8)
+        self.assertIn("bootstrap_authority_collision", {f["kind"] for f in report["findings"]})
+        self.assertIn("too_many_processes", {f["kind"] for f in report["findings"]})
+
+    def test_custom_component_factory_is_reported_for_review(self):
+        xml = manifest().replace(b'<application>',
+                                 b'<application android:appComponentFactory=".Factory">')
+        report = p.analyze([self.apk("factory.apk", xml)], "unused", "unused")
+        self.assertIn("custom_component_factory", {f["kind"] for f in report["findings"]})
+
     def test_splits_and_container(self):
         base = self.apk("base.apk", manifest(extra='<uses-split android:name="feature"/>'))
         feature = self.apk("feature.apk", manifest(split="feature", extra='<uses-split android:name="base"/>'))

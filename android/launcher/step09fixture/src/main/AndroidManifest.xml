@@ -1,0 +1,37 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <application android:name=".FixtureApplication" android:label="ZettaBridge Step 09 Fixture"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:taskAffinity="com.zettabridge.step09fixture.task">
+        <meta-data android:name="step09.application" android:value="preserved" />
+        <provider android:name=".StartupProvider" android:authorities="com.zettabridge.step09fixture.startup"
+            android:initOrder="99" android:exported="false" />
+        <provider android:name=".DataProvider" android:authorities="com.zettabridge.step09fixture.files"
+            android:process=":worker" android:exported="true" android:grantUriPermissions="true" />
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop"
+            android:screenOrientation="portrait" android:configChanges="orientation|screenSize|uiMode"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar">
+            <meta-data android:name="step09.activity" android:value="preserved" />
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="zbfixture" android:host="open" />
+            </intent-filter>
+        </activity>
+        <activity-alias android:name=".LauncherAlias" android:targetActivity=".MainActivity"
+            android:label="Step 09 alias" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity android:name=".ConfigActivity" android:exported="true"
+            android:configChanges="orientation|screenSize|uiMode" />
+        <service android:name=".WorkerService" android:process=":worker" android:exported="false" />
+        <receiver android:name=".AlarmReceiver" android:process=":worker" android:exported="true">
+            <intent-filter><action android:name="com.zettabridge.step09fixture.ALARM" /></intent-filter>
+        </receiver>
+    </application>
+</manifest>

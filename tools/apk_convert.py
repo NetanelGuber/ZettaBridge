@@ -305,8 +305,27 @@ def verify_output(path, source_file, *, base, guest, proxy, bridge,
                 "permission": None, "process": process,
                 "authorities": original["package"] + ".zettabridge.bootstrap" +
                                ("." + str(i) if i else "")})
+        expected_manifest["bootstrap_authority_collisions"] = [
+            original["package"] + ".zettabridge.bootstrap" + ("." + str(i) if i else "")
+            for i in range(len(processes))]
     if m != expected_manifest:
         raise pre.Invalid("output manifest differs outside recorded bootstrap edits")
+    with zipfile.ZipFile(source_file["file"]) as source, zipfile.ZipFile(path) as output:
+        original_tree = pre.parse_manifest(source.read("AndroidManifest.xml"))
+        output_tree = pre.parse_manifest(output.read("AndroidManifest.xml"))
+    if base:
+        original_app = original_tree.find("application")
+        output_app = output_tree.find("application")
+        if original_app is None or output_app is None:
+            raise pre.Invalid("output manifest lacks application")
+        output_app.attrib.pop(pre.ANDROID + "extractNativeLibs", None)
+        original_app.attrib.pop(pre.ANDROID + "extractNativeLibs", None)
+        for provider in list(output_app):
+            if provider.tag == "provider" and pre.attr(provider, "name") in {
+                    bootstrap_class(i) for i in range(len(processes))}:
+                output_app.remove(provider)
+    if _manifest_tree(original_tree) != _manifest_tree(output_tree):
+        raise pre.Invalid("output changed source manifest attributes, components or children")
     if result["signer"]["cert_sha256"] != [signer_fp]:
         raise pre.Invalid("output signer does not match personal key")
     libs = {x["path"]: x for x in result["libraries"]}
@@ -344,6 +363,12 @@ def verify_output(path, source_file, *, base, guest, proxy, bridge,
     finally:
         zin.close()
     return result
+
+
+def _manifest_tree(element):
+    """Compare complete parsed manifests, including component filters and metadata."""
+    return (element.tag, tuple(sorted(element.attrib.items())),
+            tuple(_manifest_tree(child) for child in element))
 
 
 def convert(args):

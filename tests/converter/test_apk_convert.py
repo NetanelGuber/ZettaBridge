@@ -37,6 +37,27 @@ class LayoutTest(unittest.TestCase):
         with self.assertRaisesRegex(p.Invalid, "isolated or external service"):
             bootstrap_processes(root)
 
+    def test_bootstrap_rejects_process_modes_without_early_guest_assets(self):
+        ns = "{http://schemas.android.com/apk/res/android}"
+        root = ET.fromstring('<manifest package="com.example" xmlns:android="http://schemas.android.com/apk/res/android"><application/></manifest>')
+        app = root.find("application")
+        for tag, key, value, message in (
+                ("provider", "multiprocess", "true", "multiprocess provider"),
+                ("receiver", "directBootAware", "true", "direct-boot component"),
+                ("application", "hasCode", "false", "hasCode=false")):
+            target = app if tag == "application" else ET.SubElement(app, tag, {ns + "name": ".Probe"})
+            target.set(ns + key, value)
+            with self.subTest(key=key), self.assertRaisesRegex(p.Invalid, message):
+                bootstrap_processes(root)
+            target.attrib.pop(ns + key)
+            if target is not app:
+                app.remove(target)
+
+    def test_manifest_tree_detects_nested_component_changes(self):
+        original = ET.fromstring('<manifest><application><activity name="A"><intent-filter><data host="old"/></intent-filter></activity></application></manifest>')
+        changed = ET.fromstring('<manifest><application><activity name="A"><intent-filter><data host="new"/></intent-filter></activity></application></manifest>')
+        self.assertNotEqual(c._manifest_tree(original), c._manifest_tree(changed))
+
     def test_installed_bridge_entry_required(self):
         output = "   7: 0 10 FUNC GLOBAL DEFAULT 15 Java_com_zettabridge_core_ZBridge_activateInstalled\n"
         with patch.object(c, "run", return_value=output):

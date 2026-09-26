@@ -83,6 +83,12 @@ def attribute(ns, name, raw=NO_INDEX, typ=3, value=0):
 def bootstrap_processes(root):
     """One provider in each ordinary app process; isolated services cannot access this runtime."""
     app = root.find("application")
+    if app is None:
+        raise Invalid("manifest lacks application")
+    if attr(app, "hasCode") == "false":
+        raise Invalid("android:hasCode=false prevents the injected bootstrap provider from running")
+    if attr(app, "directBootAware") == "true":
+        raise Invalid("direct-boot application startup cannot use the credential-protected guest bundle")
     package = root.get("package")
     default = attr(app, "process") or package
     default = package + default if default.startswith(":") else default
@@ -91,11 +97,18 @@ def bootstrap_processes(root):
     for component in app:
         if component.tag not in ("activity", "activity-alias", "service", "receiver", "provider"):
             continue
+        if attr(component, "directBootAware") == "true":
+            raise Invalid("direct-boot component " + str(attr(component, "name")) +
+                          " cannot use the credential-protected guest bundle")
+        if component.tag == "provider" and attr(component, "multiprocess") == "true":
+            raise Invalid("multiprocess provider " + str(attr(component, "name")) +
+                          " can run outside its declared bootstrap process")
         if component.tag == "service" and (attr(component, "isolatedProcess") == "true" or
                                            attr(component, "externalService") == "true"):
             raise Invalid("isolated or external service " + str(attr(component, "name")) +
                           " cannot access the per-app guest runtime")
-        raw = attr(component, "process")
+        # An activity-alias has no process attribute: its target activity owns the process.
+        raw = attr(component, "process") if component.tag != "activity-alias" else None
         if raw is None:
             continue
         resolved = package + raw if raw.startswith(":") else raw

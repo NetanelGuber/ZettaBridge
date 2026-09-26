@@ -240,6 +240,17 @@ def describe_manifest(root):
             if el.tag in ("activity", "activity-alias", "service", "receiver", "provider"):
                 components.append({"type": el.tag, "name": attr(el, "name"), "permission": attr(el, "permission"),
                                    "process": attr(el, "process"), "authorities": attr(el, "authorities")})
+    package = root.get("package")
+    default_process = attr(app, "process") or package if app is not None else package
+    def resolved(raw):
+        return package + raw if raw.startswith(":") else raw
+    process_names = {resolved(default_process)}
+    if app is not None:
+        for component in app:
+            if component.tag in ("activity", "service", "receiver", "provider"):
+                process_names.add(resolved(attr(component, "process") or default_process))
+    bootstrap_authorities = {package + ".zettabridge.bootstrap" + ("." + str(i) if i else "")
+                             for i in range(8)}
     native_activity = False
     if app is not None:
         for el in app.findall("activity"):
@@ -262,6 +273,19 @@ def describe_manifest(root):
             "has_code": attr(app, "hasCode") if app is not None else None,
             "native_activity": native_activity,
             "application_class": attr(app, "name") if app is not None else None,
+            "component_factory": attr(app, "appComponentFactory") if app is not None else None,
+            "has_code_false": attr(app, "hasCode") == "false" if app is not None else False,
+            "direct_boot_components": (["application"] if attr(app, "directBootAware") == "true" else []) +
+                                      [attr(x, "name") for x in app
+                                       if x.tag in ("activity", "service", "receiver", "provider") and
+                                       attr(x, "directBootAware") == "true"] if app is not None else [],
+            "multiprocess_providers": [attr(x, "name") for x in app.findall("provider")
+                                       if attr(x, "multiprocess") == "true"] if app is not None else [],
+            "process_count": len(process_names),
+            "bootstrap_authority_collisions": [attr(x, "authorities") for x in app.findall("provider")
+                                               if bootstrap_authorities.intersection(
+                                                   (attr(x, "authorities") or "").split(";"))]
+                                              if app is not None else [],
             "isolated_services": [attr(x, "name") for x in app.findall("service")
                                   if attr(x, "isolatedProcess") == "true" or
                                      attr(x, "externalService") == "true"] if app is not None else []}
@@ -609,9 +633,29 @@ def analyze(paths, apksigner, readelf, sysroot=None, guest_lib_dir=None):
             services = sorted({str(name) for r in result for name in r["manifest"]["isolated_services"]})
             finding("unsupported", "jni", "isolated_process",
                     "Isolated/external services cannot access the per-app guest runtime: " + ", ".join(services))
+        if any(r["manifest"]["has_code_false"] for r in result):
+            finding("unsupported", "components", "no_application_code",
+                    "android:hasCode=false prevents the injected Java bootstrap provider from running.")
+        if any(r["manifest"]["direct_boot_components"] for r in result):
+            names = sorted({str(name) for r in result for name in r["manifest"]["direct_boot_components"]})
+            finding("unsupported", "components", "direct_boot_startup",
+                    "Credential-protected guest assets are unavailable before unlock: " + ", ".join(names))
+        if any(r["manifest"]["multiprocess_providers"] for r in result):
+            names = sorted({str(name) for r in result for name in r["manifest"]["multiprocess_providers"]})
+            finding("unsupported", "components", "multiprocess_provider",
+                    "Provider can run in a caller process without its bootstrap: " + ", ".join(names))
+        if any(r["manifest"]["process_count"] > 8 for r in result):
+            finding("unsupported", "components", "too_many_processes",
+                    "More than eight declared app processes exceed the available bootstrap provider classes.")
+        if any(r["manifest"]["bootstrap_authority_collisions"] for r in result):
+            finding("unsupported", "components", "bootstrap_authority_collision",
+                    "Source provider authority collides with a generated bootstrap authority.")
         if any(r["manifest"]["application_class"] for r in result):
             finding("warning", "jni", "early_application_load",
                     "A custom Application runs its class initializer and attachBaseContext before bootstrap providers; native loads there require manual review.")
+        if any(r["manifest"]["component_factory"] for r in result):
+            finding("warning", "components", "custom_component_factory",
+                    "A source AppComponentFactory may alter class loading or component creation before bootstrap; manual review is required.")
         if any(r["manifest"]["is_feature_split"] == "true" for r in result):
             finding("warning", "runtime", "feature_split", "Dynamic feature split startup/resources need later integration proof.")
         if any(r["embedded_apks"] for r in result):
