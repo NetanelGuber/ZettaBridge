@@ -12,23 +12,29 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 /** Explicit manager controls. No guest process or native runtime is started here. */
 public final class RootManagerActivity extends Activity {
     private static final int PICK_APK = 1;
     private static final int PICK_REPORT = 2;
     private static final int PICK_EXPORT = 3;
+    private static final int PICK_SOURCE = 4;
+    private static final int PICK_KEY = 5;
     private RootManager manager;
     private ManagedPackage managed;
     private volatile RootManager.StagedApk staged;
     private volatile String report;
     private volatile String pendingExport;
-    private RootManager.Cancellation active;
+    private volatile RootManager.Cancellation active;
     private TextView status;
     private volatile boolean closed;
 
@@ -36,6 +42,7 @@ public final class RootManagerActivity extends Activity {
         super.onCreate(state);
         manager = RootManager.kernelSu(new File(getFilesDir(), "root-staging"));
         managed = new ManagedPackage(this);
+        InAppConverter.cleanupStale(this);
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (16 * getResources().getDisplayMetrics().density);
@@ -48,9 +55,11 @@ public final class RootManagerActivity extends Activity {
             status.setText("Staging cleanup failed: " + e.getMessage());
         }
         column.addView(status);
+        addButton(column, "Choose ARM32 APK, convert and install", this::pickSource);
+        addButton(column, "Import existing personal signing key", this::pickSigningKey);
         addButton(column, "Check KernelSU grant", () -> runOperation(() -> manager.checkGrant(active)));
-        addButton(column, "Stage converted base APK", this::pickApk);
-        addButton(column, "Select transformation.json", this::pickReport);
+        addButton(column, "Advanced: stage converted base APK", this::pickApk);
+        addButton(column, "Advanced: select transformation.json", this::pickReport);
         addButton(column, "Review install or same-key update", this::confirmInstall);
         addButton(column, "Remove converted package (delete data)", () -> enterPackage(false));
         addButton(column, "Remove converted package (keep data)", () -> enterPackage(true));
@@ -78,6 +87,20 @@ public final class RootManagerActivity extends Activity {
         startActivityForResult(intent, PICK_APK);
     }
 
+    private void pickSource() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("application/vnd.android.package-archive");
+        startActivityForResult(intent, PICK_SOURCE);
+    }
+
+    private void pickSigningKey() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("application/x-pkcs12");
+        startActivityForResult(intent, PICK_KEY);
+    }
+
     private void pickReport() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
                 .addCategory(Intent.CATEGORY_OPENABLE).setType("application/json");
@@ -100,6 +123,16 @@ public final class RootManagerActivity extends Activity {
                 }
                 return "Exported conversion metadata, hashes, signer and prior version. No APK, app data or private key was exported.";
             });
+            return;
+        }
+        if (requestCode == PICK_SOURCE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null)
+                convertSource(data.getData());
+            return;
+        }
+        if (requestCode == PICK_KEY) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null)
+                promptSigningKeyPassword(data.getData());
             return;
         }
         if ((requestCode != PICK_APK && requestCode != PICK_REPORT)
@@ -136,6 +169,125 @@ public final class RootManagerActivity extends Activity {
             if (old != null) old.file.delete();
             return "Staged " + next.size + " bytes\nSHA-256: " + next.sha256;
         });
+    }
+
+    private void promptSigningKeyPassword(Uri uri) {
+        EditText password = new EditText(this);
+        password.setSingleLine(true);
+        password.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        new AlertDialog.Builder(this)
+                .setTitle("Import personal APK signer")
+                .setMessage("Choose the PKCS#12 signing key previously used by the converter. The key stays in this manager's private storage.")
+                .setView(password)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Import key", (dialog, which) -> {
+                    String secret = password.getText().toString();
+                    start(() -> {
+                        String fingerprint = PersonalSignerStore.importPkcs12(
+                                this, getContentResolver(), uri, secret, active);
+                        return "Imported signer SHA-256: " + fingerprint;
+                    });
+                }).show();
+    }
+
+    private void convertSource(Uri uri) {
+        if (active != null) {
+            status.setText("An operation is already running. Cancel it first.");
+            return;
+        }
+        RootManager.Cancellation operation = new RootManager.Cancellation();
+        active = operation;
+        status.setText("Preparing in-app conversion...");
+        new Thread(() -> {
+            RootManager.StagedApk source = null;
+            RootManager.StagedApk converted = null;
+            try {
+                source = manager.stage(getContentResolver(), uri, operation);
+                InAppConverter.Result result = new InAppConverter(this, operation,
+                        message -> runOnUiThread(() -> {
+                            if (active == operation && !closed) status.setText(message);
+                        })).convert(source.file);
+                converted = manager.stageFile(result.apk, operation);
+                result.apk.delete();
+                new File(result.apk.getParentFile(), "transformation.json").delete();
+                result.apk.getParentFile().delete();
+                ManagedPackage.Review review = managed.review(converted, result.report);
+                String warningText = warningSummary(result.report);
+                RootManager.StagedApk ready = converted;
+                converted = null;
+                runOnUiThread(() -> {
+                    if (active == operation) active = null;
+                    if (closed) {
+                        ready.file.delete();
+                        return;
+                    }
+                    RootManager.StagedApk previous = staged;
+                    staged = ready;
+                    report = result.report;
+                    if (previous != null) previous.file.delete();
+                    status.setText("Conversion finished and verified. Review the install details.");
+                    String message = review.summary() + "\n\nTranslated ARM32 libraries: "
+                            + result.guestLibraryCount
+                            + "\nThe input APK remains unchanged. Its original signing identity is replaced."
+                            + (warningText.isEmpty() ? "" : "\n\nPreflight warning:\n" + warningText);
+                    new AlertDialog.Builder(this)
+                            .setTitle(review.update ? "Confirm converted-app update" : "Confirm converted-app install")
+                            .setMessage(message)
+                            .setNegativeButton("Cancel", null)
+                            .setPositiveButton(review.update ? "Update" : "Install", (dialog, which) ->
+                                    runOperation(() -> managed.install(manager, ready, review, active)))
+                            .show();
+                });
+            } catch (Exception e) {
+                if (converted != null) {
+                    converted.file.delete();
+                }
+                String message = "Conversion failed:\n" + exceptionChain(e);
+                runOnUiThread(() -> {
+                    if (active == operation) active = null;
+                    if (!closed) {
+                        status.setText("Conversion failed. See details dialog.");
+                        new AlertDialog.Builder(RootManagerActivity.this)
+                                .setTitle("Conversion failed")
+                                .setMessage(message)
+                                .setPositiveButton("OK", null)
+                                .show();
+                    }
+                });
+            } finally {
+                if (source != null) source.file.delete();
+            }
+        }, "zb-in-app-converter").start();
+    }
+
+    private static String exceptionChain(Throwable error) {
+        StringBuilder details = new StringBuilder();
+        for (int depth = 0; error != null && depth < 8; depth++, error = error.getCause()) {
+            if (details.length() > 0) details.append("\nCaused by: ");
+            details.append(error.getClass().getSimpleName());
+            String message = error.getMessage();
+            if (message != null && !message.isEmpty()) details.append(": ").append(message);
+            if (error.getCause() == error) break;
+        }
+        return details.toString();
+    }
+
+    private static String warningSummary(String report) {
+        try {
+            JSONArray findings = new JSONObject(report).optJSONArray("preflight_findings");
+            if (findings == null || findings.length() == 0) return "";
+            StringBuilder text = new StringBuilder();
+            for (int i = 0; i < findings.length(); i++) {
+                JSONObject finding = findings.optJSONObject(i);
+                if (finding == null || !"warning".equals(finding.optString("level"))) continue;
+                if (text.length() > 0) text.append('\n');
+                text.append(finding.optString("detail", finding.optString("kind")));
+            }
+            return text.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private void confirmInstall() {

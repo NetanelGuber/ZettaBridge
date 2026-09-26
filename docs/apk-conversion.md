@@ -67,6 +67,74 @@ bootstrap path. Component lifecycle coverage belongs to Step 09. NativeActivity
 belongs to Step 10.
 This synthetic proof does not claim arbitrary user-app compatibility.
 
+## In-app conversion
+
+The `:manager` app now has a **Choose ARM32 APK, convert and install** action.
+It performs conversion as the manager's ordinary app UID, generates the
+`transformation.json` report for its own review/install checks, then opens the
+existing explicit Install/Update confirmation. The user does not need to run
+`tools/apk_convert.py` or select a report. The original source APK is not
+modified. The manager build succeeded and was installed and launched on a Pixel
+11 Pro XL running Android 17/API 37. The bootstrap DEX verifier was corrected
+to use the same default-provider class name as the manifest injector. An
+invalidated Android Keystore RSA key is replaced only when no signer anchor or
+install records exist. The output minimum SDK is raised to 26, matching the
+signing floor needed by the configured signature schemes; the target SDK is at
+least that minimum (GP Retro's output is 26, raised from 13). This addresses
+signature compatibility and old-target install policy, but does not repair
+unrelated manifest parse errors or signer and key failures. Raising the target
+SDK further would opt into more platform behavior changes without changing the
+APK signer or its signing keys.
+
+The first converted GP Retro APK was rejected by PackageManager. On-device
+probes isolated the cause to its second injected bootstrap provider: Android
+accepted a second provider with no process attribute or
+`android:process=":swarm"`, but returned null for the same provider with
+PackageManager's expanded value `com.smallthinggame.gpretro:swarm`. The
+converter now writes package-local processes in manifest shorthand. After that
+fix, the manager built and updated on the Pixel 11 Pro XL without clearing
+manager data. GP Retro 2.16 completed in-app conversion, signing, and
+PackageManager identity/signer validation, and reached the explicit install
+review dialog for package `com.smallthinggame.gpretro`, version 16, with one
+ARM32 library translated. The dialog was left at its Install/Cancel choice.
+Installing and launching the converted app, and validating its runtime
+behavior, remain unverified. The preflight warning about native loads in a
+custom `Application` initializer or `attachBaseContext` also remains applicable.
+
+Before building the manager, build the guest and ARM64 runtime bundle as in
+[development workflow](development.md#android-runtime-link-and-launcher-apk):
+run `tools/build_guest.sh`, build the Android `zbridge` and `zbproxy` targets,
+and run `tools/make_launcher_bundle.sh`. Then build with:
+
+```sh
+cd android/launcher
+ANDROID_HOME="$ANDROID_SDK_ROOT" ./gradlew :manager:assembleDebug --no-daemon
+```
+
+The manager build task assembles `:step05bootstrap:assembleDebug` and packages
+the runtime bundle, ARM64 bridge/proxy libraries, and bootstrap APK into the
+manager APK assets. It fails if the runtime bundle is missing. The
+installed manager therefore does not need host-side converter tools or a
+runtime download.
+
+The in-app prototype accepts a single signed base APK with ARM32 native `.so`
+files, DEX code, and a default process layout it can bootstrap. It rejects split
+APKs, APKs without ARM32 native libraries or DEX, ARM64/x86 native libraries,
+shared UIDs, custom default processes, direct-boot components, NativeActivity,
+pure-NDK apps, isolated/external services, multiprocess providers, and more than
+eight app processes. It also fails closed on malformed/duplicate ZIP entries,
+reserved runtime paths, malformed ARM32 ELF files, oversized inputs, or an
+unavailable bundled bridge/bootstrap. These are admission limits, not a claim
+that every APK which passes them will run. Certificate-bound apps may fail
+because conversion replaces the original signer.
+
+For updates to apps previously converted with the CLI tool, import the same
+PKCS#12 personal key into the manager before converting. Otherwise the manager
+creates an Android Keystore signing key for its own future outputs. That key is
+not exportable; removing manager data or losing the device key can prevent
+same-signer updates. The signing key stays on the device and is never included
+in the generated report.
+
 ## Step 05 validation on 2026-09-24
 
 The WSL2 Ubuntu 24.04 build used Android SDK platform/build-tools 35, NDK r29

@@ -85,9 +85,16 @@ final class ManagedPackage {
         }
         PackageManager pm = context.getPackageManager();
         PackageInfo archive = pm.getPackageArchiveInfo(staged.file.getAbsolutePath(), FLAGS);
-        if (archive == null || archive.applicationInfo == null || archive.signingInfo == null) {
-            throw new Exception("PackageManager cannot read APK identity or signer");
+        if (archive == null) {
+            PackageInfo identityOnly = pm.getPackageArchiveInfo(staged.file.getAbsolutePath(), 0);
+            if (identityOnly == null)
+                throw new Exception("PackageManager cannot parse the converted APK manifest or identity");
+            throw new Exception("PackageManager parsed the converted APK but could not load signer metadata");
         }
+        if (archive.applicationInfo == null)
+            throw new Exception("PackageManager parsed the converted APK but returned no application identity");
+        if (archive.signingInfo == null)
+            throw new Exception("PackageManager parsed the converted APK but returned no signer metadata");
         String signer = signer(archive);
         long version = archive.getLongVersionCode();
         if (!packageName.equals(archive.packageName)

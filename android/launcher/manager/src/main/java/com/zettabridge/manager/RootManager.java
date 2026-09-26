@@ -156,6 +156,37 @@ final class RootManager {
         }
     }
 
+    /** Stage a converter-produced APK through the same bounded, hashed private path. */
+    StagedApk stageFile(File selected, Cancellation cancel) throws IOException {
+        if (selected == null || !selected.isFile() || Files.isSymbolicLink(selected.toPath()))
+            throw new IOException("converted APK is missing or unsafe");
+        if (cancel.isCancelled()) throw new IOException("staging cancelled");
+        if (Files.isSymbolicLink(privateDir.toPath())) throw new IOException("staging directory is a link");
+        if (!privateDir.isDirectory() && !privateDir.mkdirs()) throw new IOException("cannot create private staging");
+        File staged = Files.createTempFile(privateDir.toPath(), "selected-converted-", ".apk").toFile();
+        boolean complete = false;
+        try (InputStream in = Files.newInputStream(selected.toPath());
+             OutputStream out = Files.newOutputStream(staged.toPath(), StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+            MessageDigest digest = sha256();
+            byte[] buffer = new byte[65536];
+            long size = 0;
+            int count;
+            while ((count = in.read(buffer)) != -1) {
+                if (cancel.isCancelled()) throw new IOException("staging cancelled");
+                if (count > MAX_APK_BYTES - size) throw new IOException("converted APK exceeds size limit");
+                out.write(buffer, 0, count);
+                digest.update(buffer, 0, count);
+                size += count;
+            }
+            out.flush();
+            if (size == 0) throw new IOException("converted APK is empty");
+            complete = true;
+            return new StagedApk(staged, size, hex(digest.digest()));
+        } finally {
+            if (!complete) staged.delete();
+        }
+    }
+
     Result install(StagedApk apk, boolean replace, Confirmation confirmation, Cancellation cancel) {
         String action = replace ? "Replace installed package" : "Install new package";
         String consequence = installConsequence(apk, replace);

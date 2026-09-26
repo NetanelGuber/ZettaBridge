@@ -1,33 +1,60 @@
 # Package management (Step 06)
 
-The separate `:manager` app installs and removes converted packages through
-Android PackageManager commands under KernelSU. It does not execute guest code
-or copy files into `/data/app`. Conversion is an unprivileged host operation;
-the output app runs under the UID assigned by Android. This release accepts one
-converted base APK and one matching `transformation.json`. It refuses split sets,
-custom default processes, shared UIDs, signer changes, downgrades, and any device
-with another Android user or work profile. The manager must run as system user 0.
+The separate `:manager` app now includes a source-APK conversion entry point as
+well as the existing advanced flow for externally converted APKs. Conversion
+runs unprivileged inside the manager; KernelSU is used only for the user's
+confirmed PackageManager install/remove action. The output app runs under the UID
+assigned by Android. The integrated path generates its `transformation.json`
+report internally and passes it directly into the existing review/install flow,
+so the user does not need to create or select that report. This in-app path is
+now built into the manager and has been installed and launched on a Pixel 11 Pro XL
+running Android 17/API 37. A first source-APK attempt failed at the bootstrap DEX
+class-name check (`BootstrapProvider0` versus the actual default-process class
+`BootstrapProvider`). That verifier mapping is fixed in the installed build. The next attempt hit a
+saved signer anchor from synthetic device fixtures; manager app data was cleared
+with user approval, removing manager records and the anchor without uninstalling
+the fixture packages. A retry then failed at APK signing (`Failed to sign using
+signer "ZETTABRI"`). The latest manager build displays nested exception details
+in a dialog. It then converted, signed, and verified the same GP Retro source
+on the Pixel and reached the install review. The earlier signing failure did
+not recur; its cause remains unknown. The manager-signed output was not
+installed because the existing CLI-converted package has a different signer.
+Manager-path installation and runtime startup remain unverified.
+
+The manager currently accepts one converted base APK. The in-app converter only
+accepts one signed ARM32 APK and refuses split sets, custom default processes,
+shared UIDs, unsupported component layouts, signer changes, downgrades, and any
+device with another Android user or work profile. The manager must run as system user 0.
 The root user check is a fixed `pm list users` call before every install/remove.
 Package code may be shared across Android users, so this restriction prevents a
 user-0 action from unexpectedly changing another profile's app code.
 
 ## Install and update
 
-1. Build the manager with `cd android/launcher && ./gradlew :manager:assembleDebug`
-   in the documented Linux/SDK environment. Convert an ARM32 source with
-   `tools/apk_convert.py`; retain its signed `base.apk` and `transformation.json`.
-   The converter checks that `libzbridge.so` exports the installed bootstrap JNI
-   entry point before publishing. Keep the personal signing key outside the repo.
-2. On the owner user, open ZettaBridge Manager. Select **Stage converted base
-   APK**, then **Select transformation.json** through DocumentsUI. Use **Review
-   install or same-key update**. The review binds the report's APK SHA-256 to the
-   staged bytes and compares package, version, signer, default process and ARM64
-   host-library layout with PackageManager's archive inspection.
-3. Read the package name, version, signer fingerprint and APK hash in the dialog.
-   Choose **Install** or **Update** explicitly. A new install uses `pm install -R`;
-   an update uses `pm install -r`. Both stream the verified APK to PackageManager
-   and target user 0. PackageManager decides install success and the app UID.
-4. The manager re-queries the installed package, signer, version, default
+1. Build the runtime bundle and manager as described in
+   [APK conversion](apk-conversion.md#in-app-conversion). The manager's Gradle
+   task packages the existing runtime bundle and bootstrap DEX into its assets.
+2. On the owner user, open ZettaBridge Manager and choose **Choose ARM32 APK,
+   convert and install**. Select a single source APK. The app checks and converts
+   it, signs it, generates the report internally, and then shows the package,
+   version, signer, APK hash and any preflight warning for review. The input APK
+   is left unchanged.
+3. To keep the same signing identity as previous command-line conversions,
+   import the matching PKCS#12 key in the manager before converting. Otherwise
+   the manager creates and keeps a personal signing key in Android Keystore.
+   Every converted package is re-signed; apps tied to their original certificate
+   may refuse to run or connect to their services.
+4. Choose **Install** or **Update** explicitly. The review binds the generated
+   report's APK SHA-256 to the staged bytes and compares package, version, signer,
+   default process and ARM64 host-library layout with PackageManager's archive
+   inspection.
+5. The advanced path remains available: select **Advanced: stage converted base
+   APK**, **Advanced: select transformation.json**, then **Review install or
+   same-key update** for outputs made by `tools/apk_convert.py`.
+6. A new install uses `pm install -R`; an update uses `pm install -r`. Both
+   stream the verified APK to PackageManager and target user 0. PackageManager
+   decides install success and the app UID.
+7. The manager re-queries the installed package, signer, version, default
    process and Android-assigned UID. It displays the native library directory.
    The converted app appears in system app lists and handles its own runtime
    permission prompts. Device diagnostics can confirm `primaryCpuAbi=arm64-v8a`
@@ -40,6 +67,10 @@ not offered: a safely renamed copy needs manifest, provider, URI and API identit
 rewrites beyond this step. The manager does not silently uninstall the original
 or delete its data. The first verified converted install anchors the personal
 signer fingerprint in the manager's private storage; later outputs must match it.
+The in-app generated key is not exportable. If the manager is removed and its
+Android Keystore key is lost, same-signer updates cannot be made; import a
+backed-up PKCS#12 key before the first install if you need a portable signer
+that matches the CLI converter.
 
 ## Remove, records and recovery
 

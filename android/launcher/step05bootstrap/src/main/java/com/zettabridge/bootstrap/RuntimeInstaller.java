@@ -23,7 +23,8 @@ final class RuntimeInstaller {
     static void install(Context context) throws IOException {
         File files = context.getFilesDir();
         File target = new File(files, "zb");
-        String version = readVersion(context);
+        // A previous extraction may contain unprepared legacy ELFs under the same asset hash.
+        String version = "elf-fixups-v1:" + readVersion(context);
         try (RandomAccessFile lockFile = new RandomAccessFile(new File(files, "zb-install.lock"), "rw");
              FileLock ignored = lockFile.getChannel().lock()) {
             File marker = new File(target, ".bundle-version");
@@ -56,6 +57,11 @@ final class RuntimeInstaller {
                                     output.write(buffer, 0, n);
                                 }
                             }
+                        }
+                        if (asset.startsWith("zb/app/lib/") && asset.endsWith(".so")) {
+                            String fixup = com.zettabridge.core.ZBridge.fixGuestLibrary(out.getCanonicalPath());
+                            if (fixup == null || fixup.startsWith("skipped:"))
+                                throw new IOException("cannot prepare ARM32 library " + asset + ": " + fixup);
                         }
                         if (!out.setReadOnly()) throw new IOException("cannot make read-only " + out);
                     }

@@ -74,6 +74,11 @@ done
     -Wl,-soname,libzbloadunknown.so -o "$OUT/lib/libzbloadunknown.so" "$ROOT/guest/testlib/zbloadprobe.c"
 "$CC" -shared -fPIC -O2 -Wall -Wextra -Wl,-soname,libzbloadskip.so \
     -o "$OUT/lib/libzbloadskip.so" "$ROOT/guest/testlib/zbloadskip.c"
+"$CC" -shared -fPIC -O2 -Wall -Wextra -Wl,-z,notext -Wl,-soname,libzbloadtextrel.so \
+    -o "$OUT/lib/libzbloadtextrel-raw.so" "$ROOT/guest/testlib/zbloadprobe.c" \
+    "$ROOT/guest/testlib/zbloadtextrel.S"
+cp "$OUT/lib/libzbloadtextrel-raw.so" "$OUT/lib/libzbloadtextrel.so"
+python3 "$ROOT/tools/fix_guest_lib.py" "$OUT/lib/libzbloadtextrel.so" >/dev/null
 for src in "$ROOT"/guest/tests/*_dynamic.cpp; do
     name=$(basename "$src" .cpp)
     "$CXX" -O2 -Wall -nostdlib++ -o "$OUT/$name" "$src" -L"$OUT/lib" -lzbthrow -lc++_shared

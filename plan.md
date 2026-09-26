@@ -395,6 +395,30 @@ JNI proofs, not user-app compatibility or general lifecycle evidence. Loads in
 step; secondary/isolated process bootstrap remains for Step 09. Package
 management is recorded separately in Step 06 below.
 
+**In-app conversion follow-on (2026-09-26):** The manager now contains a
+single-APK conversion entry point, binary-manifest injector, runtime-asset
+packaging task, signer store/import flow, and generated report handoff into the
+Step 06 review path. The existing CLI converter/device evidence above does not
+validate this new implementation. The manager build succeeds and is
+installed/launched on a Pixel 11 Pro XL running Android 17/API 37. A first
+source-APK attempt exposed an incorrect verifier expectation for
+`BootstrapProvider0`; the default-process component is `BootstrapProvider`. The
+verifier now shares `BinaryManifestInjector.bootstrapClass()`'s mapping and the
+fixed build is installed. A later attempt was blocked by the saved personal
+signer anchor from synthetic device packages `step05fixture` and `step06managed`.
+After user authorization, manager app data was cleared, removing that test anchor
+and manager-side records while leaving those packages installed. A later attempt
+reached APK signing but failed with `Failed to sign using signer "ZETTABRI"`;
+that build hid its nested cause. The current build shows the exception chain in
+a dialog. On 2026-09-26, the manager rebuilt with the Step 08.1 bootstrap was
+installed as an update on the Pixel; its in-app conversion of the same GP Retro
+source completed, signed, verified, and reached the install review. The output
+SHA-256 was `bfc3352456e577e80e428c0649925c6b8942d6139b38dfcb6caee0590488bbd6`.
+The earlier signing failure did not recur; its cause remains unproven. This
+manager-signed APK was not installed because the already-installed CLI-signed
+copy has a different signing identity. Thus manager conversion is device-verified,
+while manager-path package installation remains unverified.
+
 ### Step 06 - Safe PackageManager install, update, remove and recovery
 
 **Status:** DONE
@@ -463,6 +487,25 @@ conflict fixture remains installed for inspection. These device checks prove
 the bounded single-user, single-APK management path only; no user APK, split
 install, work-profile behavior, encrypted data restore or general lifecycle
 compatibility was claimed. Step 07 had not started at Step 06 completion.
+
+**In-app path follow-on (2026-09-26):** `RootManagerActivity` now offers
+**Choose ARM32 APK, convert and install**. It uses `InAppConverter` to create
+the converted APK and report in the manager, then routes them through the
+existing review and confirmed PackageManager path. Build integration packages
+the Step 04 runtime bundle and Step 05 bootstrap APK into manager assets. This
+is not covered by the preceding Step 06 conversion/device evidence. The manager
+build completed successfully and was installed/launched on the connected Pixel
+11 Pro XL (Android 17/API 37); the update retained manager data and used the same
+signing certificate. A first source-APK attempt exposed a verifier mismatch:
+the manifest injector uses `BootstrapProvider` for process zero, but the verifier
+looked for `BootstrapProvider0`. The verifier now gets the name from the injector
+mapping. The corrected app resumed after installation without an AndroidRuntime
+crash in the checked log window. APK SHA-256:
+`6d86ed3f52b5e89c0ca6409d4d31278e213e5f357da24a53955fc7e19b8fabd4`.
+The manager data was cleared after identifying that the old signer anchor
+belonged to the two synthetic fixture records; both fixture packages remain
+installed on the phone. The subsequent Manager conversion succeeded as recorded
+in Step 05 above; manager-path installation remains unverified.
 
 ### Step 07 - ELF loader, libraries and guest sysroot
 
@@ -542,6 +585,71 @@ Application class-initializer/`attachBaseContext` native loads, isolated or
 external services, and asynchronous access to mirrored buffers are explicitly
 outside the claimed transitions; preflight or conversion reports them. No
 general user-APK compatibility or later-step lifecycle acceptance is claimed.
+
+### Step 08.1 - Diagnose and fix real-app JNI startup failures
+
+**Status:** DONE
+
+**Goal:** Close the gap exposed by a converted real app whose launcher Activity
+loads an ARM32 native library during class initialization. This is a focused
+real-app follow-up to Step 08; completing it does not claim general APK
+compatibility.
+
+**Observed failure (2026-09-26):** On Pixel 11 Pro XL `67161FDDV0011Q`, Android
+17/API 37, converted package `com.smallthinggame.gpretro` crashed while creating
+`com.smallthinggame.gpretro.GP`. `System.loadLibrary("game")` failed with
+`JNI_ERR returned from JNI_OnLoad` for the injected ARM64 proxy
+`libgame.so`. The available logcat did not include the bridge's underlying
+failure detail. The user reports that the original creator's ZettaBridge runs
+the same app successfully; that comparison has not been independently
+reproduced in this checkout.
+
+**Tasks**
+- Persist the per-process bridge runtime report before native proxy loading and
+  make the report retrievable after a process crash or app restart.
+- Reproduce the failure from the same source APK and identify the exact failing
+  loader/JNI operation behind `JNI_ERR`; compare with the creator's build if it
+  is available for a controlled comparison.
+- Fix the demonstrated bridge/runtime incompatibility and add a focused
+  regression fixture for the failing behavior while retaining the existing
+  synthetic JNI checks.
+- Verify the converted app on the Pixel: `JNI_OnLoad` succeeds during the
+  launcher Activity's native load, the app reaches its initial usable screen,
+  and a fresh process launch also succeeds. Record source/output hashes and the
+  runtime report.
+- Keep SDK-level changes separate; do not count an `minSdkVersion` or
+  `targetSdkVersion` increase as a fix unless device evidence identifies an
+  SDK-dependent cause.
+
+**Done when:** The converted GP Retro app passes the previously failing native
+startup and the focused regression check reproduces the relevant JNI behavior
+without failure. Record any remaining app-specific limitations explicitly;
+one passing APK is not general compatibility evidence.
+
+**Depends on:** Steps 05-08.
+
+**Evidence (2026-09-26):** `docs/step08.1-gpretro.md` records the same-source
+Pixel/API 37 reproduction, source/output SHA-256 hashes, baseline and corrected
+per-process reports, and screen evidence. The hidden cause was guest `dlopen`
+rejecting `libgame.so`'s `DT_TEXTREL` before `JNI_OnLoad`. Installed bootstrap
+now persists a report before proxy loading and applies the existing checked ELF
+fixup to extracted ARM32 libraries before publishing them; a versioned marker
+replaces earlier unprepared copies. A synthetic ARM32 text-relocation JNI
+fixture failed raw `dlopen`, then reached `JNI_OnLoad` after preparation;
+AArch64/QEMU ELF/JNI/proxy checks passed. The corrected real app registered
+48 natives, rendered its main menu, and opened the Play selection screen;
+after force-stop, a new process again loaded `libgame.so` and rendered the menu.
+The manager follow-on uses the same fixed bootstrap automatically through
+`:manager:prepareConverterAssets`. The updated manager's bundled bootstrap APK
+matched the freshly built Step 08.1 bootstrap byte-for-byte, and the manager's
+converted APK contained its `elf-fixups-v1`/`fixGuestLibrary` DEX and the built
+ARM64 bridge library. Conversion and signing passed on the Pixel, but the
+manager-signed output was not installed or launched; the Step 08.1 runtime
+startup result above remains the CLI-converted, separately signed device proof.
+The source `targetSdkVersion` 13 and `minSdkVersion` 9 were unchanged; Android
+17 installation used its low-target bypass. Play Games sign-in did not authorize
+the new package signature. The creator's build was unavailable for a controlled
+comparison, and one passing app does not establish general compatibility.
 
 ### Step 09 - Android component and lifecycle integration
 

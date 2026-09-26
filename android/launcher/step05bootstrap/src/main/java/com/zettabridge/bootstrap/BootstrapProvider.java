@@ -4,6 +4,8 @@ import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Process;
+import android.util.Log;
 
 import com.zettabridge.core.ZBridge;
 
@@ -11,8 +13,19 @@ import java.io.File;
 
 /** Starts the installed bridge before normal Activity/Service/Receiver callbacks. */
 public class BootstrapProvider extends ContentProvider {
+    private static final String TAG = "ZettaBridge";
+
     @Override public boolean onCreate() {
         try {
+            // Keep one report per process launch so a crash remains inspectable after a restart.
+            File reports = getContext().getExternalFilesDir("zb-reports");
+            if (reports == null) reports = new File(getContext().getFilesDir(), "zb-reports");
+            if (!reports.isDirectory() && !reports.mkdirs())
+                throw new IllegalStateException("cannot create runtime report directory " + reports);
+            File report = new File(reports, "zb-runtime-" + Process.myPid() + ".txt");
+            if (!ZBridge.setReportFile(report.getCanonicalPath()))
+                throw new IllegalStateException("cannot persist runtime report to " + report);
+            Log.i(TAG, "runtime report: " + report);
             RuntimeInstaller.install(getContext());
             File files = getContext().getFilesDir();
             ZBridge.activateInstalled(files.getCanonicalPath(),

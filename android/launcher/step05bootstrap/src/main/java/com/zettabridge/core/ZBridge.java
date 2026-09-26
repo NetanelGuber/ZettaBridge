@@ -11,4 +11,5 @@ public final class ZBridge {
     public static native String lastLoadError();
     public static native boolean setReportFile(String path);
     public static native String runtimeReport();
+    public static native String fixGuestLibrary(String path) throws java.io.IOException;
 }

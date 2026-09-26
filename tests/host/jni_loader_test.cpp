@@ -135,6 +135,16 @@ int main(int argc, char** argv) {
     CHECK(report_text.find("registered-natives: " + std::to_string(report.registered_natives())) !=
           std::string::npos);
 
+    // The installed GP Retro path had skipped ELF preparation. This JNI fixture
+    // verifies that the raw text-relocation library fails before JNI_OnLoad,
+    // while the prepared copy reaches JNI_OnLoad and binds its native methods.
+    const auto raw_textrel = loader.load(env, library(argv[3], "libzbloadtextrel-raw.so"), ZB_GUEST_RTLD_NOW);
+    CHECK(!raw_textrel.ok && raw_textrel.error.find("text relocations") != std::string::npos);
+    const auto fixed_textrel = loader.load(env, library(argv[3], "libzbloadtextrel.so"), ZB_GUEST_RTLD_NOW);
+    CHECK(fixed_textrel.ok && fixed_textrel.jni_version == 0x00010006);
+    CHECK(fixed_textrel.bound_methods == 4);
+    CHECK(report.text().find("jni-onload: libzbloadtextrel.so ok") != std::string::npos);
+
     CHECK(frame.close() == 0);
     CHECK(vm->errors().empty());
     std::puts("jni_loader_test PASS");

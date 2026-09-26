@@ -21,10 +21,17 @@ The inherited launcher runs such an app as a plugin inside a process owned by Ze
 
 The inherited plugin launcher needs no root, custom ROM, or system image changes.
 
-The current source is the inherited non-root plugin launcher described below. This
-fork's selected product is an offline per-app converter and narrow root manager; that
-installed-package path is not implemented yet. Root is planned only for explicitly
-authorized manager operations, never to run the guest. See [plan.md](plan.md).
+The current source includes the inherited non-root plugin launcher described below,
+a separate manager for installed packages, and a new in-app single-APK conversion
+path. The manager can install externally converted packages, and the in-app
+conversion path has been built and installed on a Pixel 11 Pro XL. Device
+attempts exposed and fixed a bootstrap class-name mismatch, then a stale signer
+anchor from synthetic test installs; manager data was cleared to remove that
+anchor. The updated manager converted and signed GP Retro and reached its install
+review. That manager-signed output was not installed because the phone already
+has a separately signed copy. Root is used only for explicitly authorized
+PackageManager operations, never to run the guest. See [plan.md](plan.md) and
+[docs/apk-conversion.md](docs/apk-conversion.md).
 
 > **Status: early development.** Not usable by end users yet. See [Roadmap](#roadmap).
 
@@ -89,15 +96,18 @@ ZettaBridge launcher (arm64 app)
     though rendering is not yet complete.
 
 `NativeActivity` (including Unity and pure-NDK entry points) and Vulkan are not supported
-yet. The current source also does not produce normally installed packages with their own
-PackageManager identity; that is the goal of this fork, not a working feature.
+yet. The in-app converter currently targets only a narrow single-APK ARM32-native subset.
+The manager build was installed and launched on a Pixel 11 Pro XL (Android 17/API 37).
+The bootstrap class-name verifier was corrected. Manager app data was then cleared
+to remove a signer anchor left by synthetic test installs. The updated manager
+converted, signed, and verified GP Retro, but that output was not installed or
+launched. The earlier signing failure did not recur; its cause remains unknown.
 
 ## Roadmap
 
 The inherited milestone table described the original plugin launcher and is retired.
 This fork's active scope, step dependencies, acceptance criteria, and evidence live in
-[plan.md](plan.md). The next work is to establish a reproducible baseline before adding
-the APK analyzer or root manager.
+[plan.md](plan.md).
 
 ## Honest limits
 

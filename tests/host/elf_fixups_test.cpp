@@ -198,6 +198,23 @@ void check_no_spare_is_atomic_error() {
     CHECK(read_file(file.path) == before);
 }
 
+// GP Retro's libgame.so has DT_TEXTREL without DF_TEXTREL. Check the exact
+// marker conversion used by the installed bootstrap before the guest dlopen.
+void check_textrel_only_marker() {
+    auto bytes = make_elf({dyn(DT_TEXTREL, 0), dyn(DT_NULL, 0)});
+    TempFile file(bytes);
+    CHECK(zb::fix_guest_library(file.path).status == zb::ElfFixupStatus::Changed);
+    const auto fixed = read_file(file.path);
+    const auto marker = get<Elf32_Dyn>(fixed, kDynamicOffset);
+    CHECK(marker.d_tag == zb::kDtZbTextrel);
+    CHECK(marker.d_un.d_val == 1);
+    for (std::size_t i = 0; i < fixed.size(); ++i) {
+        if (i < kDynamicOffset || i >= kDynamicOffset + sizeof(Elf32_Dyn))
+            CHECK(fixed[i] == bytes[i]);
+    }
+    CHECK(zb::fix_guest_library(file.path).status == zb::ElfFixupStatus::Unchanged);
+}
+
 void check_invalid_needed_basename_is_atomic_error() {
     auto bytes = make_elf({dyn(DT_STRTAB, kStringAddress), dyn(DT_NEEDED, 0), dyn(DT_NULL, 0)});
     put_string(bytes, kStringOffset, "/legacy/path/");
@@ -248,6 +265,7 @@ void check_malformed_files() {
 
 int main() {
     check_path_and_textrel_fixups();
+    check_textrel_only_marker();
     check_flags_only_insertion();
     check_no_spare_is_atomic_error();
     check_invalid_needed_basename_is_atomic_error();
