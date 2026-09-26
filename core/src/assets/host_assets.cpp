@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -51,6 +52,38 @@ std::uint64_t HostAssets::require_asset(std::uint32_t handle) const {
     return assets_.get(handle).value_or(0);
 }
 
+void HostAssets::free_guest(std::uint32_t address) {
+    if (address == 0) return;
+    if (deallocate_) {
+        deallocate_(address);
+        return;
+    }
+    GuestCall args;
+    args.regs = {address, 0, 0, 0};
+    (void)runtime_.call_on_current(runtime_.service_api().free_fn, args);
+}
+
+std::uint32_t HostAssets::allocate_guest(std::uint32_t size) {
+    if (allocate_) return allocate_(size);
+    GuestCall args;
+    args.regs = {size, 0, 0, 0};
+    const auto allocated = runtime_.call_on_current(runtime_.service_api().malloc_fn, args);
+    return allocated ? allocated->r0 : 0;
+}
+
+std::uint32_t HostAssets::copy_to_guest(const void* source, std::uint64_t size) {
+    if (size == 0 || size > UINT32_MAX) return 0;
+    const std::uint32_t address = allocate_guest(static_cast<std::uint32_t>(size));
+    if (address == 0) return 0;
+    std::uint8_t* destination = runtime_.memory().host_ptr(address, size, kPageWrite);
+    if (destination == nullptr) {
+        free_guest(address);
+        return 0;
+    }
+    std::memcpy(destination, source, static_cast<std::size_t>(size));
+    return address;
+}
+
 std::uint32_t HostAssets::asset_buffer(std::uint64_t asset) {
     const auto cached = asset_buffers_.find(asset);
     if (cached != asset_buffers_.end()) return cached->second;
@@ -66,29 +99,59 @@ std::uint32_t HostAssets::asset_buffer(std::uint64_t asset) {
         log("AAsset_getBuffer: %llu bytes exceed the buffer budget", static_cast<unsigned long long>(size));
         return 0;
     }
-    // Guest malloc runs guest code on this thread; HostAssets holds no lock here.
-    GuestCall args;
-    args.regs = {static_cast<std::uint32_t>(size), 0, 0, 0};
-    const auto allocated = runtime_.call_on_current(runtime_.service_api().malloc_fn, args);
-    if (!allocated || allocated->r0 == 0) {
+    const std::uint32_t address = copy_to_guest(host, size);
+    if (address == 0) {
         log("AAsset_getBuffer: the guest allocator refused %llu bytes",
             static_cast<unsigned long long>(size));
         return 0;
     }
-    std::uint8_t* destination = runtime_.memory().host_ptr(allocated->r0, size, kPageRead | kPageWrite);
-    if (destination == nullptr) {
-        log("AAsset_getBuffer: the guest allocator returned an unusable buffer");
-        return 0;
-    }
-    std::memcpy(destination, host, size);
-    asset_buffers_.emplace(asset, allocated->r0);
+    asset_buffers_.emplace(asset, address);
     buffered_bytes_ += size;
-    return allocated->r0;
+    return address;
 }
 
 bool HostAssets::handle_host_call(std::uint32_t index, GuestThread& thread) {
+    if (index < ZB_ASSET_HC_AAssetDir_close || index > ZB_ASSET_HC_AAsset_seek64) return false;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto& regs = thread.regs();
     switch (index) {
+    case ZB_ASSET_HC_AAssetDir_close: {
+        const auto directory = directories_.remove(regs[0]);
+        if (directory && *directory != 0) {
+            auto name = directory_names_.find(*directory);
+            if (name != directory_names_.end()) {
+                free_guest(name->second);
+                directory_names_.erase(name);
+            }
+            backend_.close_dir(*directory);
+        }
+        regs[0] = 0;
+        return true;
+    }
+    case ZB_ASSET_HC_AAssetDir_getNextFileName: {
+        const auto directory = directories_.get(regs[0]);
+        regs[0] = 0;
+        if (!directory || *directory == 0) return true;
+        auto old = directory_names_.find(*directory);
+        if (old != directory_names_.end()) {
+            free_guest(old->second);
+            directory_names_.erase(old);
+        }
+        const char* name = backend_.next_file_name(*directory);
+        if (name == nullptr) return true;
+        const std::size_t length = strnlen(name, kMaxFilenameLength + 1);
+        if (length > kMaxFilenameLength) return true;
+        const std::uint32_t address = copy_to_guest(name, length + 1);
+        if (address != 0) directory_names_.emplace(*directory, address);
+        regs[0] = address;
+        return true;
+    }
+    case ZB_ASSET_HC_AAssetDir_rewind: {
+        const auto directory = directories_.get(regs[0]);
+        if (directory && *directory != 0) backend_.rewind_dir(*directory);
+        regs[0] = 0;
+        return true;
+    }
     case ZB_ASSET_HC_AAssetManager_fromJava: {
         // regs[0] is the guest JNIEnv*: ignored, we use the real host JNIEnv of this thread
         // (0 outside an active JNI transition; the backend decides what to do with that).
@@ -106,18 +169,45 @@ bool HostAssets::handle_host_call(std::uint32_t index, GuestThread& thread) {
         std::uint64_t asset = 0;
         if (manager != 0 && ok) asset = backend_.open(manager, filename, static_cast<std::int32_t>(regs[2]));
         regs[0] = asset == 0 ? 0 : assets_.add(asset);
+        if (asset != 0 && regs[0] == 0) backend_.close(asset);
+        return true;
+    }
+    case ZB_ASSET_HC_AAssetManager_openDir: {
+        const std::uint64_t manager = require_manager(regs[0]);
+        bool ok = false;
+        std::string name;
+        if (manager != 0) name = read_guest_string(runtime_.memory(), regs[1], ok);
+        const std::uint64_t directory = manager != 0 && ok ? backend_.open_dir(manager, name) : 0;
+        regs[0] = directory == 0 ? 0 : directories_.add(directory);
+        if (directory != 0 && regs[0] == 0) backend_.close_dir(directory);
         return true;
     }
     case ZB_ASSET_HC_AAsset_close: {
         const std::optional<std::uint64_t> asset = assets_.remove(regs[0]);
-        if (asset && *asset != 0) backend_.close(*asset);
+        if (asset && *asset != 0) {
+            auto buffer = asset_buffers_.find(*asset);
+            if (buffer != asset_buffers_.end()) {
+                free_guest(buffer->second);
+                asset_buffers_.erase(buffer);
+                const auto size = backend_.length(*asset);
+                if (size > 0) buffered_bytes_ -= static_cast<std::uint64_t>(size);
+            }
+            backend_.close(*asset);
+        }
         regs[0] = 0;
         return true;
     }
-    case ZB_ASSET_HC_AAsset_getLength: {
+    case ZB_ASSET_HC_AAsset_getLength:
+    case ZB_ASSET_HC_AAsset_getRemainingLength:
+    case ZB_ASSET_HC_AAsset_getLength64:
+    case ZB_ASSET_HC_AAsset_getRemainingLength64: {
         const std::uint64_t asset = require_asset(regs[0]);
-        std::int64_t length = asset != 0 ? backend_.length(asset) : -1;
-        if (length > std::numeric_limits<std::int32_t>::max()) {
+        const bool remaining = index == ZB_ASSET_HC_AAsset_getRemainingLength ||
+                               index == ZB_ASSET_HC_AAsset_getRemainingLength64;
+        const bool wide = index == ZB_ASSET_HC_AAsset_getLength64 ||
+                          index == ZB_ASSET_HC_AAsset_getRemainingLength64;
+        std::int64_t length = asset != 0 ? (remaining ? backend_.remaining_length(asset) : backend_.length(asset)) : -1;
+        if (!wide && length > std::numeric_limits<std::int32_t>::max()) {
             if (!logged_overflow_) {
                 log("AAsset_getLength: asset length %lld exceeds INT32_MAX; returning -1",
                     static_cast<long long>(length));
@@ -126,6 +216,12 @@ bool HostAssets::handle_host_call(std::uint32_t index, GuestThread& thread) {
             length = -1;
         }
         regs[0] = static_cast<std::uint32_t>(static_cast<std::int32_t>(length));
+        regs[1] = wide ? static_cast<std::uint32_t>(static_cast<std::uint64_t>(length) >> 32) : 0;
+        return true;
+    }
+    case ZB_ASSET_HC_AAsset_isAllocated: {
+        const auto asset = require_asset(regs[0]);
+        regs[0] = static_cast<std::uint32_t>(asset == 0 ? -1 : backend_.is_allocated(asset));
         return true;
     }
     case ZB_ASSET_HC_AAsset_read: {
@@ -136,7 +232,7 @@ bool HostAssets::handle_host_call(std::uint32_t index, GuestThread& thread) {
         if (asset != 0) {
             if (count == 0) {
                 result = 0;
-            } else {
+            } else if (count <= INT32_MAX) {
                 std::uint8_t* host_buf = runtime_.memory().host_ptr(buf_addr, count, kPageWrite);
                 if (host_buf != nullptr) result = backend_.read(asset, host_buf, count);
             }
@@ -149,23 +245,23 @@ bool HostAssets::handle_host_call(std::uint32_t index, GuestThread& thread) {
         regs[0] = asset != 0 ? asset_buffer(asset) : 0;
         return true;
     }
-    case ZB_ASSET_HC_AAsset_openFileDescriptor: {
+    case ZB_ASSET_HC_AAsset_openFileDescriptor:
+    case ZB_ASSET_HC_AAsset_openFileDescriptor64: {
         const std::uint64_t asset = require_asset(regs[0]);
         std::int32_t fd = -1;
         if (asset != 0) {
             AssetBackend::FileDescriptor descriptor = backend_.open_file_descriptor(asset);
-            const bool fits = descriptor.fd >= 0 && descriptor.start >= 0 &&
-                              descriptor.start <= std::numeric_limits<std::int32_t>::max() &&
-                              descriptor.length >= 0 &&
-                              descriptor.length <= std::numeric_limits<std::int32_t>::max();
+            const bool wide = index == ZB_ASSET_HC_AAsset_openFileDescriptor64;
+            const bool fits = descriptor.fd >= 0 && descriptor.start >= 0 && descriptor.length >= 0 &&
+                              (wide || (descriptor.start <= std::numeric_limits<std::int32_t>::max() &&
+                                        descriptor.length <= std::numeric_limits<std::int32_t>::max()));
             if (fits) {
-                std::uint8_t* out_start = runtime_.memory().host_ptr(regs[1], 4, kPageWrite);
-                std::uint8_t* out_length = runtime_.memory().host_ptr(regs[2], 4, kPageWrite);
+                const std::size_t bytes = wide ? 8 : 4;
+                std::uint8_t* out_start = runtime_.memory().host_ptr(regs[1], bytes, kPageWrite);
+                std::uint8_t* out_length = runtime_.memory().host_ptr(regs[2], bytes, kPageWrite);
                 if (out_start != nullptr && out_length != nullptr) {
-                    const std::uint32_t start32 = static_cast<std::uint32_t>(descriptor.start);
-                    const std::uint32_t length32 = static_cast<std::uint32_t>(descriptor.length);
-                    std::memcpy(out_start, &start32, 4);
-                    std::memcpy(out_length, &length32, 4);
+                    std::memcpy(out_start, &descriptor.start, bytes);
+                    std::memcpy(out_length, &descriptor.length, bytes);
                     fd = descriptor.fd;
                 } else {
                     ::close(descriptor.fd);
@@ -175,6 +271,28 @@ bool HostAssets::handle_host_call(std::uint32_t index, GuestThread& thread) {
             }
         }
         regs[0] = static_cast<std::uint32_t>(fd);
+        return true;
+    }
+    case ZB_ASSET_HC_AAsset_seek:
+    case ZB_ASSET_HC_AAsset_seek64: {
+        const auto asset = require_asset(regs[0]);
+        const bool wide = index == ZB_ASSET_HC_AAsset_seek64;
+        std::int64_t offset = static_cast<std::int32_t>(regs[1]);
+        int whence = static_cast<std::int32_t>(regs[2]);
+        if (wide) {
+            offset = static_cast<std::int64_t>(static_cast<std::uint64_t>(regs[2]) |
+                                               (static_cast<std::uint64_t>(regs[3]) << 32));
+            const std::uint8_t* stack = runtime_.memory().host_ptr(regs[13], 4, kPageRead);
+            if (stack == nullptr) {
+                regs[0] = regs[1] = UINT32_MAX;
+                return true;
+            }
+            std::memcpy(&whence, stack, 4);
+        }
+        std::int64_t result = asset == 0 ? -1 : backend_.seek(asset, offset, whence);
+        if (!wide && result > INT32_MAX) result = -1;
+        regs[0] = static_cast<std::uint32_t>(result);
+        regs[1] = wide ? static_cast<std::uint32_t>(static_cast<std::uint64_t>(result) >> 32) : 0;
         return true;
     }
     default:

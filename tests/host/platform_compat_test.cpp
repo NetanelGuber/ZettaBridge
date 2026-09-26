@@ -46,7 +46,15 @@ int main() {
           static_cast<std::uint32_t>(-1));
     CHECK(!compat.handle_host_call(zb::ZB_COMPAT_HC_ALooper_prepare, thread));
 
-    CHECK(zb::runtime_report().unimplemented_host_calls() == 8);
+    // A host build without InputBackend reports these queue calls as explicit failures.
+    // The Android build routes them through HostInput instead.
+    CHECK(call(compat, thread, 396) == 0);  // AInputQueue_detachLooper: void
+    CHECK(call(compat, thread, 397) == 0);  // AInputQueue_finishEvent: void
+    CHECK(call(compat, thread, 398) == 0);  // AInputQueue_fromJava: NULL
+    CHECK(call(compat, thread, 399) == static_cast<std::uint32_t>(-ENOSYS));
+    CHECK(call(compat, thread, 400) == static_cast<std::uint32_t>(-ENOSYS));
+
+    CHECK(zb::runtime_report().unimplemented_host_calls() == 13);
     CHECK(zb::runtime_report().first_unimplemented_host_call() ==
           "libandroid.so ANativeWindow_lock");
 

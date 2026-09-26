@@ -3,9 +3,14 @@
 // backend, release drops the handle and an unknown handle is rejected without reaching the
 // backend, and toSurface hands the original surface back out as a guest jobject.
 #include <cstdint>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
+#include <thread>
+
+#include <sys/mman.h>
 
 #include <dynarmic/interface/exclusive_monitor.h>
 
@@ -14,7 +19,9 @@
 #include "mock_native_window.h"
 #include "zb/host_jni.h"
 #include "zb/host_native_window.h"
+#include "zb/guest_memory.h"
 #include "zb/library_runtime.h"
+#include "zb/platform_compat_hostcalls.h"
 #include "zb/window_hostcalls.h"
 
 namespace {
@@ -38,7 +45,12 @@ int main() {
     auto* vm = new zb::mock::MockJvm();
     auto* host_jni = new zb::HostJni(runtime, *vm);
     auto* backend = new MockNativeWindow();
-    auto* windows = new zb::HostNativeWindow(runtime, *backend, *host_jni);
+    CHECK(runtime.memory().map_anon(0x10000, 0x2000, PROT_READ | PROT_WRITE));
+    std::uint32_t next_alloc = 0x11000;
+    unsigned freed = 0;
+    auto* windows = new zb::HostNativeWindow(runtime, *backend, *host_jni,
+        [&](std::uint32_t bytes) { const auto result = next_alloc; next_alloc += bytes; return result; },
+        [&](std::uint32_t) { ++freed; });
 
     Dynarmic::ExclusiveMonitor monitor(1);
     zb::GuestThread thread(runtime.memory(), &monitor, 0, false, zb::kCarrierCodeCacheSize);
@@ -77,9 +89,37 @@ int main() {
     CHECK(surface_back != 0);
     CHECK(host_jni->resolve_ref(surface_back, "check") == surface_object);
 
-    // release drops the handle; every further use is rejected and never reaches the backend.
+    CHECK(call_window(*windows, thread, zb::ZB_COMPAT_HC_ANativeWindow_lock,
+                      {window, 0xFFFF0000, 0}) == static_cast<std::uint32_t>(-EFAULT));
+    CHECK(!backend->locked());
+    CHECK(call_window(*windows, thread, zb::ZB_COMPAT_HC_ANativeWindow_lock,
+                      {window, 0x10000, 0}) == 0);
+    CHECK(backend->locked());
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, runtime.memory().host_ptr(0x10010, 4, zb::kPageRead), 4);
+    CHECK(bits == 0x11000);
+    CHECK(call_window(*windows, thread, zb::ZB_COMPAT_HC_ANativeWindow_lock,
+                      {window, 0x10000, 0}) == static_cast<std::uint32_t>(-EBUSY));
+    std::uint32_t other_result = 0;
+    std::thread other([&] {
+        Dynarmic::ExclusiveMonitor other_monitor(1);
+        zb::GuestThread other_guest(runtime.memory(), &other_monitor, 0, false, zb::kCarrierCodeCacheSize);
+        other_result = call_window(*windows, other_guest,
+                                   zb::ZB_COMPAT_HC_ANativeWindow_unlockAndPost, {window});
+    });
+    other.join();
+    CHECK(other_result == static_cast<std::uint32_t>(-EPERM));
+    runtime.memory().host_ptr(bits, 16, zb::kPageWrite)[0] = 91;
+    CHECK(call_window(*windows, thread, zb::ZB_COMPAT_HC_ANativeWindow_unlockAndPost,
+                      {window}) == 0);
+    CHECK(!backend->locked() && backend->posted() == 1 && backend->pixels()[0] == 91 && freed == 1);
+
+    // The acquired reference keeps the guest handle valid until the matching second release.
     call_window(*windows, thread, zb::ZB_WINDOW_HC_ANativeWindow_release, {window});
     CHECK(backend->released() == 1);
+    CHECK(call_window(*windows, thread, zb::ZB_WINDOW_HC_ANativeWindow_getWidth, {window}) == 1080);
+    call_window(*windows, thread, zb::ZB_WINDOW_HC_ANativeWindow_release, {window});
+    CHECK(backend->released() == 2);
 
     CHECK(call_window(*windows, thread, zb::ZB_WINDOW_HC_ANativeWindow_getWidth, {window}) ==
           static_cast<std::uint32_t>(-1));
@@ -90,6 +130,10 @@ int main() {
     // An unknown handle also never reaches the backend.
     CHECK(call_window(*windows, thread, zb::ZB_WINDOW_HC_ANativeWindow_getFormat, {0xdeadbeef}) ==
           static_cast<std::uint32_t>(-1));
+    CHECK(call_window(*windows, thread, zb::ZB_COMPAT_HC_ANativeWindow_lock, {0xdeadbeef, 0, 0}) ==
+          static_cast<std::uint32_t>(-EINVAL));
+    CHECK(call_window(*windows, thread, zb::ZB_COMPAT_HC_ANativeWindow_unlockAndPost, {0xdeadbeef}) ==
+          static_cast<std::uint32_t>(-EINVAL));
 
     std::puts("native_window_test PASS");
     std::fflush(stdout);

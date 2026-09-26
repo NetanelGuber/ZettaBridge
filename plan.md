@@ -590,7 +590,7 @@ later steps remain NOT STARTED.
 
 ### Step 11 - Common Android NDK platform APIs
 
-**Status:** NOT STARTED  
+**Status:** DONE
 **Tasks**
 - Inventory current generated stubs and imports; classify each as implemented, explicit failure, unsupported or pending; preserve append-only host-call indices.
 - Implement/test AAsset*, ANativeWindow, ALooper*, AInputQueue*, configuration, bitmap/graphics APIs and common callbacks.
@@ -601,6 +601,50 @@ later steps remain NOT STARTED.
 **Done when:** Every supported API has contract coverage for lengths, pointers, invalid handles, ownership/threading/errors. Used-but-unsupported calls appear in reports; host pointers are never exposed.
 
 **Depends on:** Steps 04, 08.
+
+**Evidence (2026-09-26):** On personal `main` from `b296ed1`, the generated
+host-call table is append-only at 459 entries. `tools/gen_stubs.py --check`
+locks indices 0-401 and appends 57 NDK-derived input-event exports at 402-458.
+`tools/platform_surface.py --check` classifies 150 implemented platform calls,
+12 explicit failures and 297 GLES/EGL calls pending Step 12 audit. APK preflight
+and runtime reports identify unresolved and used-but-unsupported calls. The
+API inventory, pointer/length, handle ownership, thread and error contracts are
+in [NDK platform APIs](docs/ndk-platform-apis.md).
+
+Assets have bounded guest copies, directory iteration, 64-bit length/seek/FD
+marshaling and close-time cleanup. Native windows have counted references,
+checked CPU buffer lock/post copies and fresh Java `Surface` references.
+Bitmap pixels copy through bounded guest memory and retain JNI object identity
+until same-thread unlock. Configuration handles and fields are checked; missing
+version-specific host symbols report explicit failure. Guest and Java-borrower
+looper callback paths remain covered. Input queues now signal the guest looper
+through a process fd; queue and event pointers stay behind generation-checked
+handles. Event accessors cover key/motion scalars, 64-bit and float returns,
+type/index validation and one-use event ownership. Four event JNI/lifetime
+exports remain explicit reported failures. EGLImage/KHR and graphics exclusions
+remain reported; GLES/EGL correctness remains Step 12.
+
+**Validation:** The ARM32 guest stubs and both Step 11 fixture APKs built.
+Android arm64 `zbridge`, `zbproxy` and `zbjni_reflection_compile_test` linked.
+Nine focused AArch64 CTest checks passed under QEMU after the final edits,
+including asset/window/bitmap/configuration, input invalid-handle/ownership/
+thread and guest/borrower looper callback cases. The full host suite passed
+51/52; `library_runtime_test` still fails its separate `RTLD_NOLOAD` lookup for
+`libzbcallprobe.so` in the recovered sysroot/QEMU environment. No Step 11
+focused test failed.
+
+The converted `step11fixture` APK (`build/step11-converted3/base.apk`, SHA-256
+`c193a36c2c4a27a728ead0cf2c06f25f89787e443f897dff60c3610da1da1019`)
+installed on Pixel 11 Pro XL, Android API 37, under UID 10392 and enforcing
+SELinux. Its guest probe passed asset, configuration, native-window lock/post
+and bitmap lock/copyback paths (`result=0x1f`, Java pixel `0xff996633`); the
+runtime report recorded one native call, zero proxy failures and zero
+unimplemented host calls. It requested no permissions. A separate direct
+ARM64 `NativeActivity` fixture exercised the real Android `InputQueue` backend:
+two `adb` key down/up pairs, codes 66 and 67, were delivered after queue rearm;
+a Java-created motion event yielded type 2, one pointer and coordinates
+(12.5, 7.5). The ARM32 event-handle path was QEMU/mock tested; arbitrary APK
+compatibility is not claimed.
 
 ### Step 12 - EGL/GLES correctness and renderer gaps
 

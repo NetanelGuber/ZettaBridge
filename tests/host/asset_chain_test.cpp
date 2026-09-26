@@ -67,6 +67,14 @@ int main() {
     CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_getLength, thread));
     CHECK(thread.regs()[0] == std::strlen("hello asset bridge"));
 
+    thread.regs()[0] = asset;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_getLength64, thread));
+    CHECK(thread.regs()[0] == std::strlen("hello asset bridge") && thread.regs()[1] == 0);
+
+    thread.regs()[0] = asset;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_isAllocated, thread));
+    CHECK(thread.regs()[0] == 1);
+
     const std::uint32_t buffer_addr = 0x11100;
     thread.regs()[0] = asset;
     thread.regs()[1] = buffer_addr;
@@ -77,6 +85,33 @@ int main() {
     const std::uint8_t* read_back = runtime.memory().host_ptr(buffer_addr, static_cast<std::size_t>(bytes_read), zb::kPageRead);
     CHECK(read_back != nullptr);
     CHECK(std::memcmp(read_back, "hello asset bridge", static_cast<std::size_t>(bytes_read)) == 0);
+
+    thread.regs()[0] = asset;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_getRemainingLength64, thread));
+    CHECK(thread.regs()[0] == 0 && thread.regs()[1] == 0);
+
+    thread.regs()[0] = asset;
+    thread.regs()[1] = static_cast<std::uint32_t>(-6);
+    thread.regs()[2] = SEEK_END;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_seek, thread));
+    CHECK(thread.regs()[0] == std::strlen("hello asset bridge") - 6);
+
+    thread.regs()[0] = asset;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_getRemainingLength, thread));
+    CHECK(thread.regs()[0] == 6);
+
+    thread.regs()[0] = asset;
+    thread.regs()[1] = 0;  // AAPCS padding before the 64-bit offset.
+    thread.regs()[2] = 0;
+    thread.regs()[3] = 0;
+    const std::uint32_t whence = SEEK_SET;
+    std::memcpy(runtime.memory().host_ptr(thread.regs()[13], 4, zb::kPageWrite), &whence, 4);
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_seek64, thread));
+    CHECK(thread.regs()[0] == 0 && thread.regs()[1] == 0);
+
+    thread.regs()[0] = asset;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_getRemainingLength64, thread));
+    CHECK(thread.regs()[0] == std::strlen("hello asset bridge"));
 
     // A missing file: AAssetManager_open returns 0.
     const std::uint32_t missing_addr = write_guest_string(runtime, 0x11200, "assets/missing.txt");
@@ -108,6 +143,38 @@ int main() {
     CHECK(out_start == static_cast<std::uint32_t>(backend->fake_fd_start));
     CHECK(out_length == static_cast<std::uint32_t>(backend->fake_fd_length));
 
+    thread.regs()[0] = asset;
+    thread.regs()[1] = 0x11310;
+    thread.regs()[2] = 0x11318;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_openFileDescriptor64, thread));
+    std::uint64_t start64 = 0, length64 = 0;
+    std::memcpy(&start64, runtime.memory().host_ptr(0x11310, 8, zb::kPageRead), 8);
+    std::memcpy(&length64, runtime.memory().host_ptr(0x11318, 8, zb::kPageRead), 8);
+    CHECK(start64 == static_cast<std::uint64_t>(backend->fake_fd_start));
+    CHECK(length64 == static_cast<std::uint64_t>(backend->fake_fd_length));
+
+    backend->length_override = static_cast<std::int64_t>(INT32_MAX) + 7;
+    thread.regs()[0] = asset;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_getLength, thread));
+    CHECK(static_cast<std::int32_t>(thread.regs()[0]) == -1);
+    thread.regs()[0] = asset;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_getLength64, thread));
+    CHECK(thread.regs()[0] == static_cast<std::uint32_t>(INT32_MAX) + 7u && thread.regs()[1] == 0);
+    backend->length_override.reset();
+
+    write_guest_string(runtime, 0x11400, "assets");
+    thread.regs()[0] = manager;
+    thread.regs()[1] = 0x11400;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAssetManager_openDir, thread));
+    const auto directory = thread.regs()[0];
+    CHECK(directory != 0);
+    thread.regs()[0] = directory;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAssetDir_rewind, thread));
+    // The name needs guest malloc and is exercised in the guest runtime probe. A host-only
+    // unstarted runtime must fail closed instead of exposing the mock's host pointer.
+    thread.regs()[0] = directory;
+    CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAssetDir_close, thread));
+
     // AAsset_close, then every further operation on the closed handle is rejected.
     thread.regs()[0] = asset;
     CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_close, thread));
@@ -132,6 +199,47 @@ int main() {
     thread.regs()[0] = asset;
     CHECK(assets.handle_host_call(zb::ZB_ASSET_HC_AAsset_getBuffer, thread));
     CHECK(thread.regs()[0] == 0);
+
+    // With a bounded guest allocator seam, both AAsset_getBuffer and directory names must be
+    // copied into guest memory, retained for their NDK lifetimes, and freed on close.
+    std::uint32_t next_alloc = 0x11600;
+    unsigned freed = 0;
+    zb::HostAssets copied(runtime, *backend, engine->host_jni(),
+        [&](std::uint32_t bytes) {
+            const auto result = next_alloc;
+            next_alloc += (bytes + 15) & ~15u;
+            return result;
+        },
+        [&](std::uint32_t) { ++freed; });
+    thread.regs()[0] = thread.regs()[1] = 0;
+    CHECK(copied.handle_host_call(zb::ZB_ASSET_HC_AAssetManager_fromJava, thread));
+    const auto copied_manager = thread.regs()[0];
+    thread.regs()[0] = copied_manager;
+    thread.regs()[1] = filename_addr;
+    thread.regs()[2] = 0;
+    CHECK(copied.handle_host_call(zb::ZB_ASSET_HC_AAssetManager_open, thread));
+    const auto copied_asset = thread.regs()[0];
+    thread.regs()[0] = copied_asset;
+    CHECK(copied.handle_host_call(zb::ZB_ASSET_HC_AAsset_getBuffer, thread));
+    const auto guest_buffer = thread.regs()[0];
+    CHECK(guest_buffer >= 0x11600 && guest_buffer < 0x12000);
+    CHECK(std::memcmp(runtime.memory().host_ptr(guest_buffer, 18, zb::kPageRead),
+                      "hello asset bridge", 18) == 0);
+    thread.regs()[0] = copied_manager;
+    thread.regs()[1] = 0x11400;
+    CHECK(copied.handle_host_call(zb::ZB_ASSET_HC_AAssetManager_openDir, thread));
+    const auto copied_dir = thread.regs()[0];
+    thread.regs()[0] = copied_dir;
+    CHECK(copied.handle_host_call(zb::ZB_ASSET_HC_AAssetDir_getNextFileName, thread));
+    const auto guest_name = thread.regs()[0];
+    CHECK(guest_name >= 0x11600 && guest_name < 0x12000);
+    CHECK(std::strcmp(reinterpret_cast<const char*>(runtime.memory().host_ptr(guest_name, 10,
+                        zb::kPageRead)), "hello.txt") == 0);
+    thread.regs()[0] = copied_dir;
+    CHECK(copied.handle_host_call(zb::ZB_ASSET_HC_AAssetDir_close, thread));
+    thread.regs()[0] = copied_asset;
+    CHECK(copied.handle_host_call(zb::ZB_ASSET_HC_AAsset_close, thread));
+    CHECK(freed == 2);
 
     std::puts("asset_chain_test PASS");
     return 0;

@@ -372,7 +372,8 @@ std::optional<std::string> ProxyRuntime::last_load_error() const {
 
 GuestJniEngine::GuestJniEngine(JniBackend& backend, GlBackend* gl_backend, HostGl::EglContextProbe egl_context_probe,
                                AssetBackend* asset_backend, EglBackend* egl_backend, NativeWindowBackend* window_backend,
-                               AndroidLooperBackend* looper_backend)
+                               AndroidLooperBackend* looper_backend, BitmapBackend* bitmap_backend,
+                               ConfigurationBackend* configuration_backend, InputBackend* input_backend)
     : backend_(backend),
       runtime_(new LibraryRuntime()),
       host_jni_(new HostJni(*runtime_, backend)),
@@ -384,12 +385,21 @@ GuestJniEngine::GuestJniEngine(JniBackend& backend, GlBackend* gl_backend, HostG
         return jni->call_on_host_thread(function, args);
     };
     host_looper_ = new HostLooper(*runtime_, looper_backend, std::move(looper_invoker));
+    if (input_backend != nullptr) {
+        host_input_ = new HostInput(*runtime_, *host_jni_, *host_looper_, *input_backend);
+    }
     host_compat_ = new HostPlatformCompat();
     if (gl_backend != nullptr) {
         host_gl_ = new HostGl(*runtime_, *gl_backend, HostGl::GuestAllocator{}, std::move(egl_context_probe));
     }
     if (asset_backend != nullptr) {
         host_assets_ = new HostAssets(*runtime_, *asset_backend, *host_jni_);
+    }
+    if (bitmap_backend != nullptr) {
+        host_bitmap_ = new HostBitmap(*runtime_, *host_jni_, *bitmap_backend);
+    }
+    if (configuration_backend != nullptr) {
+        host_configuration_ = new HostConfiguration(*runtime_, *configuration_backend, host_assets_);
     }
     if (window_backend != nullptr) {
         host_windows_ = new HostNativeWindow(*runtime_, *window_backend, *host_jni_);
@@ -405,6 +415,9 @@ GuestJniEngine::GuestJniEngine(JniBackend& backend, GlBackend* gl_backend, HostG
     HostJni* host_jni = host_jni_;
     HostGl* host_gl = host_gl_;
     HostAssets* host_assets = host_assets_;
+    HostBitmap* host_bitmap = host_bitmap_;
+    HostConfiguration* host_configuration = host_configuration_;
+    HostInput* host_input = host_input_;
     HostNativeWindow* host_windows = host_windows_;
     HostEgl* host_egl = host_egl_;
     HostLooper* host_looper = host_looper_;
@@ -412,11 +425,16 @@ GuestJniEngine::GuestJniEngine(JniBackend& backend, GlBackend* gl_backend, HostG
     // Core ranges never overlap (GLES 0-141, assets 142-159, windows 160-167, EGL 168-211,
     // append-only platform compatibility 212-227, JNI 0xFB00+), so the chain order is free;
     // GL stays first because it is by far the hotter path during rendering.
-    runtime_->set_host_call_handler([host_jni, host_gl, host_assets, host_windows, host_egl,
+    runtime_->set_host_call_handler([host_jni, host_gl, host_assets, host_bitmap, host_configuration,
+                                     host_input,
+                                     host_windows, host_egl,
                                      host_looper, host_compat](std::uint32_t index,
                                                                GuestThread& thread) {
         if (host_gl != nullptr && host_gl->handle_host_call(index, thread)) return true;
         if (host_assets != nullptr && host_assets->handle_host_call(index, thread)) return true;
+        if (host_bitmap != nullptr && host_bitmap->handle_host_call(index, thread)) return true;
+        if (host_configuration != nullptr && host_configuration->handle_host_call(index, thread)) return true;
+        if (host_input != nullptr && host_input->handle_host_call(index, thread)) return true;
         if (host_windows != nullptr && host_windows->handle_host_call(index, thread)) return true;
         if (host_egl != nullptr && host_egl->handle_host_call(index, thread)) return true;
         if (host_looper->handle_host_call(index, thread)) return true;

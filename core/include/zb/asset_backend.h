@@ -28,6 +28,15 @@ public:
 
     // AAsset_getLength. -1 for an invalid asset handle.
     virtual std::int64_t length(std::uint64_t asset) = 0;
+    virtual std::int64_t remaining_length(std::uint64_t asset) = 0;
+    virtual std::int64_t seek(std::uint64_t asset, std::int64_t offset, int whence) = 0;
+    virtual int is_allocated(std::uint64_t asset) = 0;
+
+    virtual std::uint64_t open_dir(std::uint64_t manager, const std::string& name) = 0;
+    // The name remains valid until the next call on the same directory or close_dir.
+    virtual const char* next_file_name(std::uint64_t directory) = 0;
+    virtual void rewind_dir(std::uint64_t directory) = 0;
+    virtual void close_dir(std::uint64_t directory) = 0;
 
     // AAsset_read. Returns the number of bytes read (0 at EOF), or -1 on error / invalid handle.
     virtual std::int64_t read(std::uint64_t asset, void* buffer, std::size_t count) = 0;

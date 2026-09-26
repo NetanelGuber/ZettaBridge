@@ -19,6 +19,9 @@ public:
     // guest JNIEnv/jobject handles on the calling thread). Returns an opaque host ANativeWindow*,
     // or nullptr on failure.
     virtual void* from_surface(void* env, void* surface) = 0;
+    // Returns a new host JNI local Surface reference, or null. The JNI bridge owns that local
+    // reference after wrapping it as a guest jobject handle.
+    virtual void* to_surface(void* env, void* window) = 0;
 
     // ANativeWindow_acquire. A no-op for a null window.
     virtual void acquire(void* window) = 0;
@@ -32,6 +35,16 @@ public:
     // ANativeWindow_setBuffersGeometry. Returns the NDK status (0 on success, negative on error).
     virtual std::int32_t set_buffers_geometry(void* window, std::int32_t width, std::int32_t height,
                                               std::int32_t format) = 0;
+
+    struct Rect { std::int32_t left, top, right, bottom; };
+    struct Buffer {
+        std::int32_t width = 0, height = 0, stride = 0, format = 0;
+        void* bits = nullptr;
+    };
+    // The returned host bits stay valid only until unlock_and_post. Rect is optional and can be
+    // updated by the platform. The caller stages bytes in guest memory and never passes bits out.
+    virtual std::int32_t lock(void* window, Buffer& buffer, Rect* dirty) = 0;
+    virtual std::int32_t unlock_and_post(void* window) = 0;
 };
 
 }  // namespace zb

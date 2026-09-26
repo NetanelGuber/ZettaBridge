@@ -43,7 +43,7 @@ public:
     void set_observer(Observer observer);
 
     void note_plugin(const std::string& plugin_root, std::uint32_t target_sdk);
-    // One host call that had no handler. The caller still writes r0 = 0 and continues.
+    // One host call without support. The caller determines the guest-visible result.
     void note_unimplemented_host_call(std::uint32_t index, const char* library, const char* function);
     void note_proxy_loaded(const std::string& library, std::int32_t jni_version);
     void note_proxy_failed(const std::string& library, const std::string& error);

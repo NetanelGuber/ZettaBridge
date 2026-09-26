@@ -43,6 +43,11 @@ public:
     HostLooper& operator=(const HostLooper&) = delete;
 
     bool handle_host_call(std::uint32_t index, GuestThread& thread);
+    // Register a backend-owned readable fd using the same callback/ident contract as addFd.
+    // The fd remains owned by the backend. Used by AInputQueue_attachLooper.
+    int add_external_fd(std::uint32_t looper, int fd, int ident, std::uint32_t callback,
+                        std::uint32_t data);
+    int remove_external_fd(std::uint32_t looper, int fd);
 
 private:
     struct Impl;

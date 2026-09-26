@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <unordered_map>
 
 #include "zb/native_window_backend.h"
@@ -13,18 +14,26 @@ public:
         last_env = env;
         last_surface = surface;
         auto* window = new int(static_cast<int>(++next_window_));
-        windows_[window] = true;
+        windows_[window] = 1;
         return window;
     }
 
     void acquire(void* window) override {
-        if (windows_.count(window)) ++acquired_;
+        auto it = windows_.find(window);
+        if (it != windows_.end()) {
+            ++it->second;
+            ++acquired_;
+        }
     }
 
     void release(void* window) override {
-        if (windows_.erase(window) != 0) {
+        auto it = windows_.find(window);
+        if (it != windows_.end()) {
             ++released_;
-            delete static_cast<int*>(window);
+            if (--it->second == 0) {
+                windows_.erase(it);
+                delete static_cast<int*>(window);
+            }
         }
     }
 
@@ -49,6 +58,30 @@ public:
         return 0;
     }
 
+    void* to_surface(void* env, void* window) override {
+        last_env = env;
+        return windows_.count(window) ? last_surface : nullptr;
+    }
+
+    std::int32_t lock(void* window, Buffer& buffer, Rect* dirty) override {
+        if (!windows_.count(window) || locked_) return -1;
+        locked_ = true;
+        buffer = {2, 2, 2, format, pixels_.data()};
+        if (dirty != nullptr) *dirty = {0, 0, 2, 2};
+        return 0;
+    }
+
+    std::int32_t unlock_and_post(void* window) override {
+        if (!windows_.count(window) || !locked_) return -1;
+        locked_ = false;
+        ++posted_;
+        return 0;
+    }
+
+    bool locked() const { return locked_; }
+    int posted() const { return posted_; }
+    const std::array<std::uint8_t, 16>& pixels() const { return pixels_; }
+
     int released() const { return released_; }
     int acquired() const { return acquired_; }
 
@@ -62,8 +95,11 @@ public:
     std::int32_t last_geometry_format = 0;
 
 private:
-    std::unordered_map<void*, bool> windows_;
+    std::unordered_map<void*, unsigned> windows_;
     std::uint64_t next_window_ = 0;
     int released_ = 0;
     int acquired_ = 0;
+    bool locked_ = false;
+    int posted_ = 0;
+    std::array<std::uint8_t, 16> pixels_{};
 };

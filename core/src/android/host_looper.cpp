@@ -641,6 +641,15 @@ HostLooper::HostLooper(LibraryRuntime& runtime, AndroidLooperBackend* backend, G
     : impl_(std::make_unique<Impl>(runtime, backend, std::move(invoker), std::move(borrower_probe))) {}
 HostLooper::~HostLooper() = default;
 
+int HostLooper::add_external_fd(std::uint32_t looper, int fd, int ident,
+                                std::uint32_t callback, std::uint32_t data) {
+    return impl_->add_fd(looper, fd, ident, kEventInput, callback, data);
+}
+
+int HostLooper::remove_external_fd(std::uint32_t looper, int fd) {
+    return impl_->remove_fd(looper, fd);
+}
+
 bool HostLooper::handle_host_call(std::uint32_t index, GuestThread& thread) {
     bool valid = true;
     const std::uint32_t r0 = impl_->argument(thread, 0, valid);

@@ -34,6 +34,8 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME gen_jni_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gen_jni.py --check)
 add_test(NAME gen_gles_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gen_gles.py --check)
 add_test(NAME gen_egl_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gen_egl.py --check)
+add_test(NAME gen_stubs_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gen_stubs.py --check)
+add_test(NAME platform_surface_check COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/platform_surface.py --check)
 
 target_sources(egl_marshal_test PRIVATE mock_egl.cpp)
 target_sources(gles_marshal_test PRIVATE mock_gles.cpp)
@@ -52,6 +54,18 @@ endforeach()
 add_executable(asset_chain_test asset_chain_test.cpp)
 target_link_libraries(asset_chain_test PRIVATE zbcore zbmockjvm)
 add_test(NAME asset_chain_test COMMAND asset_chain_test)
+
+add_executable(host_bitmap_test host_bitmap_test.cpp)
+target_link_libraries(host_bitmap_test PRIVATE zbcore zbmockjvm)
+add_test(NAME host_bitmap_test COMMAND host_bitmap_test)
+
+add_executable(host_configuration_test host_configuration_test.cpp)
+target_link_libraries(host_configuration_test PRIVATE zbcore zbmockjvm)
+add_test(NAME host_configuration_test COMMAND host_configuration_test)
+
+add_executable(host_input_test host_input_test.cpp)
+target_link_libraries(host_input_test PRIVATE zbcore zbmockjvm)
+add_test(NAME host_input_test COMMAND host_input_test)
 
 # ANativeWindow_* host calls against the mock NativeWindowBackend (Phase 7a Task 5).
 add_executable(native_window_test native_window_test.cpp)

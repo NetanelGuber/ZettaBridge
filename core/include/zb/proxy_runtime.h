@@ -10,15 +10,21 @@
 
 #include "zb/android_looper_backend.h"
 #include "zb/asset_backend.h"
+#include "zb/bitmap_backend.h"
+#include "zb/configuration_backend.h"
 #include "zb/egl_backend.h"
 #include "zb/gl_backend.h"
 #include "zb/host_assets.h"
+#include "zb/host_bitmap.h"
+#include "zb/host_configuration.h"
 #include "zb/host_egl.h"
 #include "zb/host_gl.h"
+#include "zb/host_input.h"
 #include "zb/host_looper.h"
 #include "zb/host_native_window.h"
 #include "zb/host_platform_compat.h"
 #include "zb/jni_backend.h"
+#include "zb/input_backend.h"
 #include "zb/jni_loader.h"
 #include "zb/library_runtime.h"
 #include "zb/native_window_backend.h"
@@ -159,7 +165,10 @@ public:
                             HostGl::EglContextProbe egl_context_probe = {},
                             AssetBackend* asset_backend = nullptr, EglBackend* egl_backend = nullptr,
                             NativeWindowBackend* window_backend = nullptr,
-                            AndroidLooperBackend* looper_backend = nullptr);
+                            AndroidLooperBackend* looper_backend = nullptr,
+                            BitmapBackend* bitmap_backend = nullptr,
+                            ConfigurationBackend* configuration_backend = nullptr,
+                            InputBackend* input_backend = nullptr);
     ~GuestJniEngine() override;
     GuestJniEngine(const GuestJniEngine&) = delete;
     GuestJniEngine& operator=(const GuestJniEngine&) = delete;
@@ -175,6 +184,9 @@ public:
     HostGl* host_gl() { return host_gl_; }
     // nullptr unless an asset_backend was passed to the constructor.
     HostAssets* host_assets() { return host_assets_; }
+    HostBitmap* host_bitmap() { return host_bitmap_; }
+    HostConfiguration* host_configuration() { return host_configuration_; }
+    HostInput* host_input() { return host_input_; }
     // nullptr unless an egl_backend was passed to the constructor.
     HostEgl* host_egl() { return host_egl_; }
     // nullptr unless a window_backend was passed to the constructor.
@@ -194,6 +206,9 @@ private:
     HostJni* host_jni_;
     HostGl* host_gl_ = nullptr;
     HostAssets* host_assets_ = nullptr;
+    HostBitmap* host_bitmap_ = nullptr;
+    HostConfiguration* host_configuration_ = nullptr;
+    HostInput* host_input_ = nullptr;
     HostEgl* host_egl_ = nullptr;
     HostNativeWindow* host_windows_ = nullptr;
     HostLooper* host_looper_ = nullptr;

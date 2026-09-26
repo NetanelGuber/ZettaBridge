@@ -1,7 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <mutex>
+#include <thread>
+#include <utility>
 #include <unordered_map>
 
 #include "zb/guest_thread.h"
@@ -21,8 +24,12 @@ class HostJni;
 // the query functions and never reaches the backend.
 class HostNativeWindow {
 public:
-    HostNativeWindow(LibraryRuntime& runtime, NativeWindowBackend& backend, HostJni& host_jni)
-        : runtime_(runtime), backend_(backend), host_jni_(host_jni) {}
+    using Allocator = std::function<std::uint32_t(std::uint32_t)>;
+    using Deallocator = std::function<void(std::uint32_t)>;
+    HostNativeWindow(LibraryRuntime& runtime, NativeWindowBackend& backend, HostJni& host_jni,
+                     Allocator allocate = {}, Deallocator deallocate = {})
+        : runtime_(runtime), backend_(backend), host_jni_(host_jni),
+          allocate_(std::move(allocate)), deallocate_(std::move(deallocate)) {}
     HostNativeWindow(const HostNativeWindow&) = delete;
     HostNativeWindow& operator=(const HostNativeWindow&) = delete;
 
@@ -35,16 +42,27 @@ public:
 
 private:
     const void* require_window(std::uint32_t handle) const;
+    void free_guest(std::uint32_t address);
+    std::uint32_t allocate_guest(std::uint32_t bytes);
+    std::int32_t lock_window(std::uint32_t handle, std::uint32_t out_buffer, std::uint32_t dirty);
+    std::int32_t unlock_window(std::uint32_t handle);
+
+    struct LockState {
+        std::uint32_t address;
+        std::uint64_t bytes;
+        void* bits;
+        std::thread::id owner;
+    };
 
     LibraryRuntime& runtime_;
     NativeWindowBackend& backend_;
     HostJni& host_jni_;
+    Allocator allocate_;
+    Deallocator deallocate_;
     GlobalHandles windows_{HandleKind::Global};
-    // The host jobject Ref (android.view.Surface) each window handle was created from, so
-    // ANativeWindow_toSurface can hand back a guest jobject for the same Java object without a
-    // backend call. Keyed by window handle.
     mutable std::mutex surfaces_mutex_;
-    std::unordered_map<std::uint32_t, std::uint64_t> surfaces_;
+    std::unordered_map<std::uint32_t, std::uint32_t> references_;
+    std::unordered_map<std::uint32_t, LockState> locks_;
 };
 
 }  // namespace zb

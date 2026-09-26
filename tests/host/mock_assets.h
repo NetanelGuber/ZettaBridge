@@ -1,7 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <optional>
+#include <vector>
 #include <string>
 #include <unordered_map>
 
@@ -32,8 +35,57 @@ public:
     std::int64_t length(std::uint64_t asset) override {
         auto it = open_.find(asset);
         if (it == open_.end()) return -1;
+        if (length_override) return *length_override;
         return static_cast<std::int64_t>(it->second.content.size());
     }
+
+    std::int64_t remaining_length(std::uint64_t asset) override {
+        auto it = open_.find(asset);
+        return it == open_.end() ? -1 : static_cast<std::int64_t>(it->second.content.size() - it->second.cursor);
+    }
+
+    std::int64_t seek(std::uint64_t asset, std::int64_t offset, int whence) override {
+        auto it = open_.find(asset);
+        if (it == open_.end()) return -1;
+        const std::int64_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ?
+            static_cast<std::int64_t>(it->second.cursor) : whence == SEEK_END ?
+            static_cast<std::int64_t>(it->second.content.size()) : -1;
+        if (base < 0 || offset < -base || offset > static_cast<std::int64_t>(it->second.content.size()) - base)
+            return -1;
+        it->second.cursor = static_cast<std::size_t>(base + offset);
+        return base + offset;
+    }
+
+    int is_allocated(std::uint64_t asset) override { return open_.contains(asset) ? 1 : -1; }
+
+    std::uint64_t open_dir(std::uint64_t manager, const std::string& name) override {
+        if (manager != kManagerHandle) return 0;
+        const std::string prefix = name.empty() ? "" : name + "/";
+        Directory dir;
+        for (const auto& [path, content] : files_) {
+            (void)content;
+            if (path.starts_with(prefix)) {
+                const std::string suffix = path.substr(prefix.size());
+                if (suffix.find('/') == std::string::npos) dir.names.push_back(suffix);
+            }
+        }
+        const auto handle = next_dir_++;
+        directories_[handle] = std::move(dir);
+        return handle;
+    }
+
+    const char* next_file_name(std::uint64_t directory) override {
+        auto it = directories_.find(directory);
+        if (it == directories_.end() || it->second.cursor == it->second.names.size()) return nullptr;
+        return it->second.names[it->second.cursor++].c_str();
+    }
+
+    void rewind_dir(std::uint64_t directory) override {
+        auto it = directories_.find(directory);
+        if (it != directories_.end()) it->second.cursor = 0;
+    }
+
+    void close_dir(std::uint64_t directory) override { directories_.erase(directory); }
 
     const void* buffer(std::uint64_t asset) override {
         auto it = open_.find(asset);
@@ -71,13 +123,17 @@ public:
     int fake_fd = 3;
     std::int64_t fake_fd_start = 1000;
     std::int64_t fake_fd_length = 42;
+    std::optional<std::int64_t> length_override;
 
 private:
     struct OpenAsset {
         std::string content;
         std::size_t cursor = 0;
     };
+    struct Directory { std::vector<std::string> names; std::size_t cursor = 0; };
     std::unordered_map<std::string, std::string> files_;
     std::unordered_map<std::uint64_t, OpenAsset> open_;
+    std::unordered_map<std::uint64_t, Directory> directories_;
     std::uint64_t next_asset_ = 1;
+    std::uint64_t next_dir_ = 1;
 };
