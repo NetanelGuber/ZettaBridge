@@ -77,11 +77,23 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(mapping["liba.so"][1], 1)
         self.assertEqual(mapping["libb.so"][2]["path"], "lib/armeabi-v7a/libb.so")
 
+    def test_matching_x86_variants_select_only_arm32_libraries(self):
+        report = {"status": "analyzed", "files": [item(None, [
+            lib("x86", "liba.so"), lib("armeabi-v7a", "liba.so"),
+            lib("x86", "libb.so"), lib("armeabi-v7a", "libb.so")])],
+            "findings": []}
+        base, mapping = c.source_layout(report, [(Path("base.apk"), "base")])
+        self.assertEqual(base, 0)
+        self.assertEqual(set(mapping), {"liba.so", "libb.so"})
+        self.assertTrue(all(entry[2]["abi"] == "armeabi-v7a" for entry in mapping.values()))
+
     def test_duplicate_same_abi_and_host_abi_fail_closed(self):
         for files, message in (
             ([item(None, [lib("armeabi", "liba.so")]),
               item("feature", [lib("armeabi", "liba.so")])], "duplicate"),
-            ([item(None, [lib("arm64-v8a", "liba.so")])], "ARM32-only"),
+            ([item(None, [lib("arm64-v8a", "liba.so")])], "matching x86 variants only"),
+            ([item(None, [lib("armeabi-v7a", "liba.so"), lib("x86", "libb.so")])],
+             "no ARM32 counterpart"),
             ([item(None, [lib("armeabi", "libzbridge.so")])], "collides")):
             with self.subTest(message=message):
                 report = {"status": "analyzed", "files": files, "findings": []}

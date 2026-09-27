@@ -1,4 +1,5 @@
 set(ZB_HOST_TESTS
+    cp15_test
     fault_pc_test
     egl_marshal_test
     elf_fixups_test

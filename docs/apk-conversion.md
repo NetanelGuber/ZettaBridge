@@ -3,8 +3,11 @@
 `tools/apk_convert.py` transforms a signed ARM32 APK or complete split set into
 new ARM64-installable APKs. It never installs, removes, or modifies an input APK.
 It accepts only the bounded Step 02 preflight structure, one package/version/signing
-identity, and ARM32 native libraries. NativeActivity and shared-UID inputs are
-rejected by preflight. A converted APK has a new signing identity.
+identity, and ARM32 native libraries. A CLI input may also contain matching x86
+copies of the ARM32 libraries; these unused copies are removed and recorded.
+ARM64 libraries and x86-only library names are rejected. NativeActivity and
+shared-UID inputs are rejected by preflight. A converted APK has a new signing
+identity.
 
 ## Build inputs
 
@@ -52,7 +55,7 @@ adds the ARM64 bridge/proxies and bootstrap DEX, aligns, signs, then verifies
 every APK and publishes the directory atomically. Unselected ARM32 ABI variants
 are recorded and removed. Unsigned intermediates are deleted before publication
 and on failure. Duplicate ZIP names, ambiguous same-ABI library names across
-splits, collisions with bridge names, non-ARM32 packaged native libraries, and
+splits, collisions with bridge names, unsupported native ABIs, and
 generated asset/name collisions fail closed. Host `.so` files are compressed and
 the manifest requests native extraction, so Android extracts real ARM64 files
 for `dladdr`; guest `.so` files are only app-private assets.
@@ -85,6 +88,21 @@ signature compatibility and old-target install policy, but does not repair
 unrelated manifest parse errors or signer and key failures. Raising the target
 SDK further would opt into more platform behavior changes without changing the
 APK signer or its signing keys.
+
+The Manager's Java converter now follows the CLI's mixed-ABI rule: it selects
+the best ARM32 copy of each library (`armeabi-v7a` before `armeabi`), validates
+and removes same-named x86 copies, and rejects x86-only or ARM64 source
+libraries. Its report lists every removed ABI variant. The refreshed Manager
+bundle includes the CP15 virtual-timer bridge used for the Google Play NFS
+Most Wanted run. `:manager:testDebugUnitTest` and `:manager:assembleDebug`
+passed; the built APK's embedded bridge SHA-256 matched the Android build.
+The pre-version-bump Manager APK with the same converter/runtime update
+installed and its activity launched on the Pixel. The release build is version
+0.2.0; its APK signature and embedded runtime were verified after rebuilding,
+but the Pixel was disconnected before that final package could be installed.
+An end-to-end in-app conversion of this particular Play APK was not run during
+this update. Updating the existing CLI conversion through Manager requires
+importing the same personal signing key to preserve its installed data.
 
 The first converted GP Retro APK was rejected by PackageManager. On-device
 probes isolated the cause to its second injected bootstrap provider: Android

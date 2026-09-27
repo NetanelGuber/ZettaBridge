@@ -5,8 +5,22 @@ Speed Most Wanted** on the Pixel 11 Pro XL. It is separate from `plan.md`.
 Use it to drive a playable local-game result, while implementing reusable
 ZettaBridge capabilities rather than package-name-specific exceptions.
 
-**Status:** matching version `1003128` inputs found; implementation can begin.
-Static pairing checks passed, but game startup and OBB recognition are untested.
+**Status (2026-09-26 Play extraction):** Gates 0 and 1 passed for the APK and
+matching OBB pulled from the user's Google Play installation. The Pixel
+recognized the OBB, loaded all five guest libraries, passed `libapp.so`
+`JNI_OnLoad`, rendered the loading screen, and reached EA's first-run agreement.
+The user completed the first local race in first place with correct scene and
+HUD rendering; touch events and FMOD processing are recorded. The user confirmed
+sound and responsive controls. Browsing across locked cars later caused one
+guest `SIGSEGV` in `libapp.so` (write to `0x30`); Gate 4 is therefore not fully
+accepted. The diagnostic run and normal-speed retest did not reproduce it.
+Android Home/resume and a subsequent cold process launch succeeded with the
+new save intact. The earlier
+EasyAPK build
+exited in its own protector before
+ZettaBridge ran; its evidence remains below as a separate historical attempt.
+See [device evidence](docs/nfs-device-evidence.md) for the gate results and
+local artifact inventory.
 
 ## Goal and scope
 
@@ -25,7 +39,35 @@ integrity decision. If signing identity prevents authorized play, report that
 boundary. Core gameplay is the initial target; the bundled live wallpaper,
 optional purchases, and online social features are separate follow-ups.
 
-## Inputs and verified baseline (2026-09-26)
+## Active inputs and verified baseline (2026-09-26)
+
+The active pair came from the user's previously played Google Play installation
+on a Xiaomi 22071212AG (Android API 35). Only its installed base APK and
+matching OBB were pulled; no save or app-private data was copied. The Pixel's
+earlier converted test package was uninstalled before installing this pair, so
+the Pixel game began with fresh app data. The old phone's progress was untouched.
+
+| Item | Observed value |
+| --- | --- |
+| Pixel | Pixel 11 Pro XL `67161FDDV0011Q`, Android 17/API 37, build `CD1A.260905.001.B1` |
+| Original phone | Xiaomi `AIBAJFNZCMV8LFLN`, Android API 35, installer `com.android.vending`; no APK splits |
+| APK | `play-phone/NFS-Play-base.apk`, 19,445,609 bytes; package `com.ea.games.nfs13_row`, version `1003128`/`1.3.128`, min SDK 16, target SDK 28 |
+| APK SHA-256 | `de219abfec8d98aec29fb7f0cc3c22de360a87ce543487a940b0db998912df5f` |
+| Source signer | `5bff7d614e1ba11a566abb589c863b013f79aa747bd2146733366c5625a5f0d2` (EAM DSA) |
+| OBB | `main.1003128.com.ea.games.nfs13_row.obb`, 623,470,192 bytes |
+| OBB SHA-256 | `66dd4e695e698929f789e7c825eabe3ba5a50ed2ce28b628c96e5dbc008043a1` |
+| Pair check | `unzip -t` passed; shared `gothamblack.ttf` hash matched in APK and OBB |
+| Native code | Five `armeabi-v7a` libraries and five matching x86 variants; no ARM64 libraries |
+| Preflight | `analyzed`, zero missing guest libraries and zero unresolved strong symbols with sysroot and guest library roots |
+| Converted APK | `converted-timer/base.apk`, SHA-256 `8d230e277aa206e14e41b9eebc320714d259700b774dc105970bab0509256301`, signed with personal certificate `d3fe5a914ad2f4139c645ae3a09ba845d484b2f946a50826326beb41d5575c00` |
+
+The converter now accepts matching x86 variants while selecting the ARM32
+libraries as guests and removing the unused x86 copies. It still rejects x86
+library names with no ARM32 counterpart. The Play APK uses
+`android.support.multidex.MultiDexApplication`, so the EasyAPK protector path
+described below does not apply. See the evidence file for the device run.
+
+## Historical EasyAPK input and first device attempt
 
 | Item | Observed value |
 | --- | --- |
@@ -41,7 +83,7 @@ optional purchases, and online social features are separate follow-ups.
 | Cross-file asset | `published/fonts/gothamblack.ttf` has SHA-256 `a4ae98b474a05b9a047bf3c1643964ab166e99c08525f4cafda6b3243e3a6b89` in both APK and OBB |
 | Repository at assessment | `main` at `7e4bcdd`; `third_party/dynarmic` was already modified and must be preserved |
 
-**Pairing result:** The APK package and version code match the OBB filename,
+**Historical pairing result:** The APK package and version code match the OBB filename,
 the OBB passes `unzip -t`, and one shared game asset matches byte-for-byte.
 These are sufficient static checks to begin implementation. They do not prove
 the game will locate the OBB, accept a re-signed APK, or play on Android 17.
@@ -66,14 +108,14 @@ It had mixed ARM32/x86 libraries and 31 unresolved guest GL imports, but it
 is no longer the selected input. Do not carry those blockers into work on
 version `1003128`.
 
-The selected APK has one base package and five `armeabi-v7a` libraries:
+The EasyAPK APK has one base package and five `armeabi-v7a` libraries:
 `libapp.so`, `libNimble.so`, `libc++_shared.so`, `libfmodevent.so` and
 `libfmodex.so`. It has no x86 libraries. It uses a Java `GLSurfaceView`,
 ARM32 JNI entry points, GLES 3 declarations, FMOD and Java `AudioTrack`.
 It is not a NativeActivity or Vulkan guest. The embedded
 `res/raw/wallpaper.apk` is an optional secondary APK, not the game's OBB.
-There is currently no installed package or OBB under this package's
-`/sdcard/Android/obb` directory on the device.
+At the time of the EasyAPK assessment, there was no installed package or OBB
+under this package's `/sdcard/Android/obb` directory on the Pixel.
 
 Read-only preflight with the current sysroot and `build/guest/lib` reports
 zero missing guest libraries and zero unresolved strong symbols for the
@@ -89,25 +131,24 @@ the app will run.
 
 ### 0. Preserve and confirm the selected APK/OBB pair
 
-1. Recheck the hashes and package/version in the table before using either
-   file. Record that this APK came from EasyAPK on Telegram, not a verified
-   Play extraction. Keep user-owned APK/OBB files out of Git and releases.
+1. Recheck the active pair's hashes and package/version before using either
+   file. Record its Google Play installer provenance and keep user-owned
+   APK/OBB files out of Git and releases.
 2. Inspect the game's expansion lookup and validation behavior. Preserve the
    OBB filename and contents; confirm recognition during the device run.
 3. Store original inputs separately from any converted APK and retain their
    hashes. Check for an original-signed installed package and its data before
    any install or replacement.
 
-**Gate:** Static package/version, archive and shared-asset checks have passed
-for the selected pair. Runtime OBB recognition remains part of Gate 3.
+**Gate:** Static package/version, archive and shared-asset checks passed for
+the Play pair. The Pixel also reported `EXPANSION FILE DELIVERED!` for the
+placed, hash-matched OBB.
 
-### 1. Convert the selected ARM32-only input and review early startup
+### 1. Convert the selected ARM32 input and review early startup
 
-The selected APK contains only `armeabi-v7a` libraries, so the earlier
-mixed-ABI converter rejection does not apply. Trace the custom Application's
-`attachBaseContext` calls and reflective `onCreate` path for native loads,
-dynamic DEX loading and signing assumptions before the bootstrap provider.
-Then run the existing converter and output verifier. Fix only
+The active Play APK contains matching `armeabi-v7a` and x86 libraries. The
+converter selects the ARM32 set and removes x86 copies. Then run the existing
+converter and output verifier. Fix only
 observed generic conversion/startup failures. Preserve source DEX, resources,
 manifest, package identity and optional wallpaper asset.
 
@@ -201,14 +242,15 @@ toolchain, device, input hashes and available OBB/APK pair first. For read-only
 input checks, the relevant commands are:
 
 ```sh
-adb shell sha256sum /sdcard/Download/NFS.apk
-adb shell sha256sum /sdcard/Download/main.1003128.com.ea.games.nfs13_row.obb
+sha256sum /path/to/NFS-Play-base.apk
+sha256sum /path/to/main.1003128.com.ea.games.nfs13_row.obb
 python3 tools/apk_preflight.py \
   --apksigner "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" \
   --sysroot sysroot --guest-lib-dir build/guest/lib \
   /path/to/selected.apk > /path/outside-git/preflight.json
 ```
 
-The selected version `1003128` APK is already on the phone. If its hash
-changes, rerun preflight and reassess the library and graphics findings
-before relying on this handoff.
+The active Play pair is stored outside Git under
+`C:\Users\Netanel\Documents\Codex\nfs-compat-20260926\play-phone`. If either
+hash changes, rerun preflight and reassess the findings before relying on this
+handoff.

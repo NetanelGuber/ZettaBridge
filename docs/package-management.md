@@ -21,8 +21,10 @@ not recur; its cause remains unknown. The manager-signed output was not
 installed because the existing CLI-converted package has a different signer.
 Manager-path installation and runtime startup remain unverified.
 
-The manager currently accepts one converted base APK. The in-app converter only
-accepts one signed ARM32 APK and refuses split sets, custom default processes,
+The manager currently accepts one converted base APK. The in-app converter
+accepts one signed APK with ARM32 libraries. It selects `armeabi-v7a` before
+`armeabi`, validates and discards same-named x86 copies, and rejects x86-only
+or ARM64 source libraries. It refuses split sets, custom default processes,
 shared UIDs, unsupported component layouts, signer changes, downgrades, and any
 device with another Android user or work profile. The manager must run as system user 0.
 The root user check is a fixed `pm list users` call before every install/remove.

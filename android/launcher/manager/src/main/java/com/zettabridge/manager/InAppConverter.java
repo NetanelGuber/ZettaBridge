@@ -47,7 +47,7 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Converts one signed ARM32 APK on-device into the same ARM64-installable format as
+ * Converts one signed APK containing ARM32 libraries on-device into the same ARM64-installable format as
  * tools/apk_convert.py. It performs no privileged operation and never edits its input.
  */
 final class InAppConverter {
@@ -78,7 +78,7 @@ final class InAppConverter {
         }
     }
 
-    private static final class Library {
+    static final class Library {
         final String path;
         final String abi;
         final int rank;
@@ -237,7 +237,6 @@ final class InAppConverter {
         List<String> processes = extraProcesses(info);
 
         byte[] manifest;
-        Map<String, Library> candidates = new TreeMap<>();
         List<Library> allLibraries = new ArrayList<>();
         Set<String> dexNames = new HashSet<>();
         long total = 0;
@@ -286,24 +285,18 @@ final class InAppConverter {
                     String[] parts = name.split("/", -1);
                     if (parts.length != 3 || !LIB.matcher(parts[2]).matches())
                         throw new IOException("unsupported native library path: " + name);
-                    if (!"armeabi".equals(parts[1]) && !"armeabi-v7a".equals(parts[1]))
-                        throw new IOException("converter currently accepts ARM32-only native libraries");
+                    String abi = parts[1];
+                    if (!"armeabi".equals(abi) && !"armeabi-v7a".equals(abi) && !"x86".equals(abi))
+                        throw new IOException("converter accepts ARM32 libraries and matching x86 variants only");
                     if (size > MAX_NATIVE) throw new IOException("native library exceeds 64 MiB: " + name);
                     byte[] elf = readEntry(zip, entry, (int) MAX_NATIVE);
-                    validateArm32Elf(elf, name);
-                    String abi = parts[1];
+                    if ("x86".equals(abi)) validateX86Elf(elf, name);
+                    else validateArm32Elf(elf, name);
                     String libraryName = parts[2];
-                    if ("libzbridge.so".equals(libraryName)) throw new IOException("guest library conflicts with libzbridge.so");
-                    int rank = "armeabi-v7a".equals(abi) ? 1 : 0;
+                    int rank = "armeabi-v7a".equals(abi) ? 1 : "armeabi".equals(abi) ? 0 : -1;
                     Library found = new Library(name, abi, rank, size);
                     found.sha256 = sha256(elf);
                     allLibraries.add(found);
-                    Library old = candidates.get(libraryName);
-                    if (old != null && old.rank == rank)
-                        throw new IOException("duplicate guest library at the same ABI: " + libraryName);
-                    if (old == null || rank > old.rank) {
-                        candidates.put(libraryName, found);
-                    }
                     continue;
                 }
                 drainEntry(zip, entry, size);
@@ -313,6 +306,7 @@ final class InAppConverter {
         if (BinaryManifestInjector.rootAttribute(manifest, "split") != null)
             throw new IOException("split APKs are not supported by the current installer");
         if (dexNames.isEmpty()) throw new IOException("base APK has no classes*.dex file");
+        Map<String, Library> candidates = selectGuestLibraries(allLibraries);
         if (candidates.isEmpty()) throw new IOException("APK has no ARM32 native libraries to translate");
         int maxDex = 1;
         for (String name : dexNames) maxDex = Math.max(maxDex, dexEntry(name).number);
@@ -324,6 +318,31 @@ final class InAppConverter {
         return new Source(info, packageName, version, minSdk, targetSdk, manifest,
                 processes, candidates, allLibraries, dexNames,
                 maxDex, sha256(sourceCertificates.get(0).getEncoded()), hashFile(input), total);
+    }
+
+    static Map<String, Library> selectGuestLibraries(List<Library> allLibraries) throws IOException {
+        Map<String, Library> selected = new TreeMap<>();
+        Set<String> x86Names = new HashSet<>();
+        for (Library library : allLibraries) {
+            String name = new File(library.path).getName();
+            if ("x86".equals(library.abi)) {
+                x86Names.add(name);
+                continue;
+            }
+            if ("libzbridge.so".equals(name))
+                throw new IOException("guest library conflicts with libzbridge.so");
+            Library old = selected.get(name);
+            if (old != null && old.rank == library.rank)
+                throw new IOException("duplicate guest library at the same ABI: " + name);
+            if (old == null || library.rank > old.rank) selected.put(name, library);
+        }
+        x86Names.removeAll(selected.keySet());
+        if (!x86Names.isEmpty()) {
+            List<String> unmatched = new ArrayList<>(x86Names);
+            Collections.sort(unmatched);
+            throw new IOException("x86 library has no ARM32 counterpart: " + String.join(", ", unmatched));
+        }
+        return selected;
     }
 
     private PackageInfo packageInfo(File apk) {
@@ -829,6 +848,17 @@ final class InAppConverter {
         if (headerSize != 52 || phEntrySize != 32 || phCount <= 0
                 || phOffset + (long) phEntrySize * phCount > data.length)
             throw new IOException("malformed ARM32 ELF program-header table: " + name);
+    }
+
+    private static void validateX86Elf(byte[] data, String name) throws IOException {
+        if (data.length < 52 || data[0] != 0x7f || data[1] != 'E' || data[2] != 'L' || data[3] != 'F'
+                || data[4] != 1 || data[5] != 1 || data[6] != 1 || u16(data, 16) != 3 || u16(data, 18) != 3)
+            throw new IOException("native library is not a little-endian x86 shared ELF: " + name);
+        int headerSize = u16(data, 40), phEntrySize = u16(data, 42), phCount = u16(data, 44);
+        long phOffset = u32(data, 28);
+        if (headerSize != 52 || phEntrySize != 32 || phCount <= 0
+                || phOffset + (long) phEntrySize * phCount > data.length)
+            throw new IOException("malformed x86 ELF program-header table: " + name);
     }
 
     private static void validateArm64Elf(byte[] data, String name) throws IOException {

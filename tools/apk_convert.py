@@ -199,13 +199,17 @@ def source_layout(report, staged):
     if len(bases) != 1:
         raise pre.Invalid("no unique base APK")
     chosen = {}
+    x86_names = set()
     for i, f in enumerate(files):
         for lib in f["libraries"]:
-            if lib["abi"] not in ("armeabi", "armeabi-v7a"):
-                raise pre.Invalid("converter accepts ARM32-only packaged native libraries")
             name = Path(lib["path"]).name
             if not LIB_NAME.fullmatch(name):
                 raise pre.Invalid("unsupported native library name")
+            if lib["abi"] == "x86":
+                x86_names.add(name)
+                continue
+            if lib["abi"] not in ("armeabi", "armeabi-v7a"):
+                raise pre.Invalid("converter accepts ARM32 libraries and matching x86 variants only")
             if name == "libzbridge.so":
                 raise pre.Invalid("guest library collides with ARM64 bridge name")
             rank = 1 if lib["abi"] == "armeabi-v7a" else 0
@@ -214,6 +218,9 @@ def source_layout(report, staged):
                 raise pre.Invalid(f"duplicate guest library at same ABI: {name}")
             if entry is None or rank > entry[0]:
                 chosen[name] = (rank, i, lib)
+    unmatched = sorted(x86_names - chosen.keys())
+    if unmatched:
+        raise pre.Invalid("x86 library has no ARM32 counterpart: " + ", ".join(unmatched))
     return bases[0], chosen
 
 

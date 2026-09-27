@@ -8,7 +8,7 @@
 
 namespace zb {
 
-// Minimal CP15 for user mode: only the thread ID registers used by bionic's TLS access.
+// Minimal CP15 for user mode: thread IDs and the read-only generic timer.
 //   MRC p15, 0, Rt, c13, c0, 3  -> TPIDRURO (read-only for user mode, set via __ARM_NR_set_tls)
 //   MRC/MCR p15, 0, Rt, c13, c0, 2 -> TPIDRURW
 class Cp15 final : public Dynarmic::A32::Coprocessor {
